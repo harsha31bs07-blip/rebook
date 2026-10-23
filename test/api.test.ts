@@ -10,6 +10,7 @@ import { POST as propose } from "../app/api/workspaces/[id]/plans/route";
 import { POST as approve } from "../app/api/workspaces/[id]/plans/[planId]/approve/route";
 import { POST as reset } from "../app/api/workspaces/[id]/reset/route";
 import { POST as interpret } from "../app/api/workspaces/[id]/interpret/route";
+import { GET as planDetails } from "../app/api/workspaces/[id]/plans/[planId]/route";
 import { demoDisruption, demoDisruptionFor } from "../lib/seed/seed";
 import { DAY } from "../lib/domain/time";
 import { replan } from "../lib/solver/replan";
@@ -36,6 +37,32 @@ function post(body: unknown = {}, ip = randomUUID()) {
 }
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 describe("workspace API", () => {
+  it("returns explanations and customer drafts before and after cancelled sessions leave the schedule", async () => {
+    const state = seedStudio();
+    state.sessions = state.sessions.slice(0, 1);
+    state.bookings = state.bookings.filter((booking) => booking.sessionId === state.sessions[0].id);
+    state.bookings.forEach((booking) => { booking.payment!.simulated = true; });
+    const { id } = getRepository().createWorkspace(state);
+    for (const booking of state.bookings) getRepository().appendLedger({ workspaceId: id, bookingId: booking.id,
+      kind: "capture", amount: booking.amount, paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId,
+      requestId: `capture-${booking.id}`, status: "SIMULATED" });
+    const plan = await (await propose(post({ disruption: { kind: "closure", from: "2026-11-05T15:00:00Z", to: "2026-11-30T05:00:00Z" } }), context(id))).json();
+    expect(plan.sessionChanges.some((change: { remedy: string }) => change.remedy === "cancel")).toBe(true);
+    const params = { params: Promise.resolve({ id, planId: plan.id }) };
+    const beforeResponse = await planDetails(new Request("http://localhost"), params);
+    expect(beforeResponse.status).toBe(200);
+    const before = await beforeResponse.json();
+    expect(before.explanation.bullets.join(" ")).toContain(plan.totals.refundAmount);
+    expect(before.messages).toHaveLength(plan.bookingActions.length);
+    expect(before.plan).not.toHaveProperty("basis");
+    expect((await approve(post(), params)).status).toBe(200);
+    const after = await (await planDetails(new Request("http://localhost"), params)).json();
+    expect(after.plan.status).toBe("executed");
+    expect(after.plan).not.toHaveProperty("basis");
+    expect(after.messages).toEqual(before.messages);
+    expect(after.sessions).toEqual(before.sessions);
+    expect((await planDetails(new Request("http://localhost"), { params: Promise.resolve({ id, planId: randomUUID() }) })).status).toBe(404);
+  });
   it("returns the persisted week and uses it with the real clock for interpretation and planning", async () => {
     const now = "2026-12-03T15:00:00.000Z";
     vi.setSystemTime(new Date(now));

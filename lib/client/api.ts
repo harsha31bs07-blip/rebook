@@ -1,0 +1,41 @@
+import type { Interpretation } from "../ai/interpret";
+import type { PlanExplanation } from "../ai/explain";
+import type { CustomerMessage } from "../ai/messages";
+import type { Disruption } from "../domain/types";
+import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../store";
+
+export type PublicPlan = Omit<StoredPlan, "basis">;
+export type WorkspaceResponse = Workspace & {
+  plans: PublicPlan[];
+  ledger: LedgerEvent[];
+  ledgerSummary: Record<string, unknown>;
+};
+export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
+export type { Interpretation, ExecutionResult };
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+
+async function request<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api/workspaces${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store", signal,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new ApiError(response.status, data.message ?? data.error ?? "Something went wrong. Please try again.");
+  return data as T;
+}
+
+const workspacePath = (id: string) => `/${encodeURIComponent(id)}`;
+export const api = {
+  create: () => request<{ id: string }>("", {}),
+  workspace: (id: string, signal?: AbortSignal) => request<WorkspaceResponse>(workspacePath(id), undefined, signal),
+  interpret: (id: string, text: string) => request<Interpretation>(`${workspacePath(id)}/interpret`, { text }),
+  plan: (id: string, disruption: Disruption) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption }),
+  details: (id: string, planId: string) => request<PlanDetails>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`),
+  approve: (id: string, planId: string) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, {}),
+  reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
+};

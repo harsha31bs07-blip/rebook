@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@paypal/paypal-server-sdk": "^2.5.0",
     "ag-grid-community": "^36.2.0",
     "ag-grid-react": "^36.2.0",
     "ag-studio": "^3.0.0",

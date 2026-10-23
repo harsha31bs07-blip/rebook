@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { addLocalDays, localParts } from "../domain/time";
 import type { State } from "../domain/types";
 import { createCardCapture, PayPalError } from "../paypal/client";
-import { seedStudio } from "../seed/seed";
+import { demoDisruption, floodDisruption, seedStudio } from "../seed/seed";
+import { affectedSessions } from "../solver/validate";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
 
 export type SeedProgress = { completed: number; total: number; bookingId: string; status: "COMPLETED" | "SIMULATED" | "FAILED" };
@@ -11,23 +11,23 @@ export class WorkspaceCreationError extends StoreError {
   constructor(public workspaceId: string) { super(502, "Some sandbox captures failed; the workspace and successful captures were preserved"); }
 }
 
-/** The explicit capture window is Monday and Tuesday; the current seed's Wednesday flood is simulated. */
+/** Capture only the bookings that either demo scenario can affect, using the seed's own clock. */
 export function realCaptureBookingIds(state: State): Set<string> {
-  const days = state.sessions.map((session) => localParts(session.start, state.studio.timezone).dateKey).sort();
-  if (!days.length) return new Set();
-  const cutoff = addLocalDays(days[0], 2);
-  const sessions = new Set(state.sessions.filter((session) => localParts(session.start, state.studio.timezone).dateKey < cutoff).map((session) => session.id));
+  const now = state.sessions.map((session) => session.start).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+  if (!now) return new Set();
+  const sessions = new Set([demoDisruption, floodDisruption].flatMap((disruption) => affectedSessions(state, disruption, now)).map((session) => session.id));
   return new Set(state.bookings.filter((booking) => sessions.has(booking.sessionId)).map((booking) => booking.id));
 }
 
 async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions, repository: Repository, owner: string): Promise<Workspace> {
-  const initial = repository.requireWorkspace(workspaceId).state;
+  const initial = repository.requireWorkspace(workspaceId, true).state;
   const realIds = process.env.DEMO_REAL_CAPTURES === "0" ? new Set<string>() : realCaptureBookingIds(initial);
   let completed = 0;
   let failed = false;
   let nextIndex = 0;
   const report = (bookingId: string, status: SeedProgress["status"]) => {
     completed += 1;
+    repository.updatePreparation(workspaceId, "preparing", { done: completed, total: initial.bookings.length });
     // An observer must never turn a completed payment into a failed operation.
     try { options.onProgress?.({ completed, total: initial.bookings.length, bookingId, status }); }
     catch { console.error("Workspace progress callback failed"); }
@@ -41,7 +41,9 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
         requestId: `${workspaceId}${booking.id}`, status: real ? "REQUESTED" : "SIMULATED" });
     }
   });
-  for (const booking of initial.bookings) if (!realIds.has(booking.id)) report(booking.id, "SIMULATED");
+  repository.transaction(() => {
+    for (const booking of initial.bookings) if (!realIds.has(booking.id)) report(booking.id, "SIMULATED");
+  });
   const realBookings = initial.bookings.filter((booking) => realIds.has(booking.id));
   const worker = async () => {
     while (nextIndex < realBookings.length) {
@@ -52,7 +54,7 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
       try {
         const payment = await createCardCapture(booking.amount, { workspaceId, bookingId: booking.id, requestId });
         repository.transaction(() => {
-          const current = repository.requireWorkspace(workspaceId).state;
+          const current = repository.requireWorkspace(workspaceId, true).state;
           current.bookings.find((item) => item.id === booking.id)!.payment = { orderId: payment.orderId, captureId: payment.captureId, simulated: false };
           repository.saveState(workspaceId, current);
           repository.appendLedger({ ...input, paypalId: payment.captureId, captureId: payment.captureId, status: payment.status, debugId: payment.debugId });
@@ -65,10 +67,11 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
       }
     }
   };
-  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, realBookings.length) }, worker));
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(8, realBookings.length) }, worker));
   if (workers.some((result) => result.status === "rejected")) failed = true;
+  const workspace = repository.savePreparation(workspaceId, failed ? "failed" : "ready", { done: completed, total: initial.bookings.length });
   if (failed) throw new WorkspaceCreationError(workspaceId);
-  return repository.requireWorkspace(workspaceId);
+  return workspace;
 }
 
 function initialState(reset = false): State {
@@ -86,16 +89,78 @@ function initialState(reset = false): State {
 
 export async function createWorkspace(options: CreateWorkspaceOptions = {}): Promise<Workspace> {
   const repository = options.repository ?? getRepository();
-  const workspace = repository.createWorkspace(initialState());
-  return withWorkspaceLock(repository, workspace.id, (owner) => seedPayments(workspace.id, options, repository, owner));
+  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true });
+  return prepare(workspace.id, options, repository);
+}
+
+async function prepare(id: string, options: CreateWorkspaceOptions, repository: Repository): Promise<Workspace> {
+  try { return await withWorkspaceLock(repository, id, (owner) => seedPayments(id, options, repository, owner)); }
+  catch (error) {
+    const workspace = repository.requireWorkspace(id, true);
+    repository.savePreparation(id, "failed", workspace.progress);
+    throw error;
+  }
+}
+
+// Keep background promises alive for this server process. No payment work runs in a DB transaction.
+const processSeeding = globalThis as typeof globalThis & { rebookSeeding?: {
+  background: Set<Promise<unknown>>; poolFills: WeakMap<Repository, Promise<void>>;
+} };
+const { background, poolFills } = processSeeding.rebookSeeding ??= {
+  background: new Set<Promise<unknown>>(), poolFills: new WeakMap<Repository, Promise<void>>(),
+};
+function track<T>(promise: Promise<T>): Promise<T> {
+  background.add(promise);
+  void promise.finally(() => background.delete(promise)).catch(() => {});
+  return promise;
+}
+function backgroundPreparation(id: string, options: CreateWorkspaceOptions, repository: Repository): Promise<Workspace> {
+  // Yield to the HTTP response before even the simulated ledger/progress writes begin.
+  return track(new Promise<void>((resolve) => setImmediate(resolve)).then(() => prepare(id, options, repository)));
+}
+
+export function startWarmPool(repository: Repository = getRepository()): Promise<void> {
+  if (process.env.DEMO_WARM_POOL !== "1" || repository.readyPoolWorkspace()) return Promise.resolve();
+  const pending = poolFills.get(repository);
+  if (pending) return pending;
+  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true, pooled: true });
+  const filling = track(backgroundPreparation(workspace.id, {}, repository).then(() => {}, () => {
+    console.error("Warm workspace preparation failed");
+  }).finally(() => poolFills.delete(repository)));
+  poolFills.set(repository, filling);
+  return filling;
+}
+
+/** Return before captures finish; GET exposes durable status and progress. */
+export function beginWorkspace(options: CreateWorkspaceOptions = {}): Workspace {
+  const repository = options.repository ?? getRepository();
+  if (process.env.DEMO_WARM_POOL === "1") {
+    const claimed = repository.claimPoolWorkspace();
+    void startWarmPool(repository);
+    if (claimed) return claimed;
+  }
+  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true });
+  void backgroundPreparation(workspace.id, options, repository).catch(() => {
+    console.error("Workspace preparation failed", { workspaceId: workspace.id });
+  });
+  return workspace;
+}
+
+export async function waitForWorkspacePreparation(): Promise<void> {
+  await Promise.allSettled([...background]);
 }
 
 export async function resetWorkspace(workspaceId: string, options: CreateWorkspaceOptions = {}): Promise<Workspace> {
   const repository = options.repository ?? getRepository();
+  repository.requireReadyWorkspace(workspaceId);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     if (repository.listPlans(workspaceId).some((plan) => plan.status === "executing")) throw new StoreError(409, "An interrupted execution must finish before reset");
     if (repository.latestMoneyEvents(workspaceId).some((event) => event.status === "REQUESTED")) throw new StoreError(409, "An unresolved payment must be reconciled before reset");
-    repository.transaction(() => { repository.saveState(workspaceId, initialState(true)); repository.clearPlans(workspaceId); });
+    repository.transaction(() => {
+      const state = initialState(true);
+      repository.saveState(workspaceId, state); repository.clearPlans(workspaceId);
+      repository.savePreparation(workspaceId, "preparing", { done: 0, total: state.bookings.length });
+    });
     return seedPayments(workspaceId, options, repository, owner);
   });
 }

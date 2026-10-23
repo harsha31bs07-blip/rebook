@@ -1,6 +1,7 @@
+import { setSdkTransport } from "./paypalTransport";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureOrder, createCardCapture, createCheckoutOrder, getCapture, PayPalError, refundCapture, verifyWebhookSignature } from "../lib/paypal/client";
+import { captureOrder, createCardCapture, createCheckoutOrder, getCapture, listTransactions, PayPalError, refundCapture, verifyWebhookSignature } from "../lib/paypal/client";
 
 const reply = (body: unknown, status = 200, headers?: Record<string, string>) => new Response(JSON.stringify(body), { status, headers });
 beforeEach(() => {
@@ -11,12 +12,40 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("PayPal client", () => {
+  it("recovers after a failed token exchange without poisoning the cached client", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ name: "INVALID_CLIENT", message: "Bad credentials", debug_id: "auth-debug" }, 401))
+      .mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
+      .mockResolvedValueOnce(reply({ id: "capture", status: "COMPLETED", amount: { currency_code: "USD", value: "18.00" } }));
+    setSdkTransport(fetch);
+    await expect(getCapture("capture")).rejects.toMatchObject({ status: 401, name: "INVALID_CLIENT", debugId: "auth-debug" });
+    expect(await getCapture("capture")).toMatchObject({ id: "capture", amount: { currency_code: "USD", value: "18.00" } });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+  it("lists all transaction pages with whole-second dates and rejects windows above 31 days", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
+      .mockResolvedValueOnce(reply({ transaction_details: [{ transaction_info: { transaction_id: "first" } }], total_pages: 2 }))
+      .mockResolvedValueOnce(reply({ transaction_details: [{ transaction_info: { transaction_id: "second" } }], total_pages: 2 }));
+    setSdkTransport(fetch);
+    const result = await listTransactions("2026-10-01T00:00:00.123Z", "2026-11-01T00:00:00.123Z");
+    expect(result.transactionDetails?.map((item) => item.transactionInfo?.transactionId)).toEqual(["first", "second"]);
+    const url = new URL(fetch.mock.calls[1][0]);
+    expect(url.pathname).toBe("/v1/reporting/transactions");
+    expect(url.searchParams.get("start_date")).toBe("2026-10-01T00:00:00Z");
+    expect(url.searchParams.get("end_date")).toBe("2026-11-01T00:00:00Z");
+    expect(new URL(fetch.mock.calls[2][0]).searchParams.get("page")).toBe("2");
+    fetch.mockClear();
+    for (const [start, end] of [["invalid", "2026-11-01"], ["2026-11-01", "2026-10-01"], ["2026-10-01", "2026-11-02"]]) {
+      await expect(listTransactions(start, end)).rejects.toThrow("at most 31 days");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("caches a token, shares concurrent refreshes, and refreshes 60 seconds before expiry", async () => {
     let time = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => time);
     const fetch = vi.fn(async (url: string | URL | Request) => String(url).endsWith("/token")
-      ? reply({ access_token: "token", expires_in: 120 }) : reply({ id: "capture", status: "COMPLETED" }));
-    vi.stubGlobal("fetch", fetch);
+      ? reply({ access_token: "token", token_type: "Bearer", expires_in: 120 }) : reply({ id: "capture", status: "COMPLETED" }));
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     await Promise.all([getCapture("one"), getCapture("two")]);
     expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/token"))).toHaveLength(1);
     time += 59_000;
@@ -29,11 +58,11 @@ describe("PayPal client", () => {
 
   it("retries 429 and 5xx with the same PayPal-Request-Id and body", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", expires_in: 3600 }))
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
       .mockResolvedValueOnce(reply({}, 429, { "retry-after": "0" }))
       .mockResolvedValueOnce(reply({}, 503))
       .mockResolvedValueOnce(reply({ id: "refund", status: "COMPLETED" }, 201));
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     const result = refundCapture("capture", "18.00", "Class cancelled", "same-request");
     await vi.runAllTimersAsync();
     expect((await result).id).toBe("refund");
@@ -45,9 +74,9 @@ describe("PayPal client", () => {
 
   it("exposes the upstream name, status and debug id and limits retries", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", expires_in: 3600 }))
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
       .mockImplementation(async () => reply({ name: "UNPROCESSABLE_ENTITY", message: "Cannot refund" }, 422, { "paypal-debug-id": "debug-123" }));
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     await expect(refundCapture("capture", "18.00", "Refund", "request")).rejects.toMatchObject({
       status: 422, name: "UNPROCESSABLE_ENTITY", message: "Cannot refund", debugId: "debug-123",
     });
@@ -57,9 +86,9 @@ describe("PayPal client", () => {
   it("stops after three server error attempts", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", expires_in: 3600 }))
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
       .mockImplementation(async () => reply({ name: "INTERNAL_SERVER_ERROR" }, 500));
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     const result = expect(getCapture("capture")).rejects.toBeInstanceOf(PayPalError);
     await vi.runAllTimersAsync();
     await result;
@@ -67,9 +96,9 @@ describe("PayPal client", () => {
   });
 
   it("creates a sandbox card capture and passes decimal USD amounts", async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", expires_in: 3600 }))
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
       .mockResolvedValueOnce(reply({ id: "order", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "capture", status: "COMPLETED" }] } }] }, 201, { "paypal-debug-id": "debug" }));
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     expect(await createCardCapture("18.00", { workspaceId: "workspace", bookingId: "booking" })).toEqual({ orderId: "order", captureId: "capture", status: "COMPLETED", debugId: "debug" });
     const init = fetch.mock.calls[1][1] as RequestInit;
     expect((init.headers as Record<string, string>)["PayPal-Request-Id"]).toBe("workspacebooking");
@@ -77,10 +106,10 @@ describe("PayPal client", () => {
   });
 
   it("supports checkout approval and subsequent capture", async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", expires_in: 3600 }))
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
       .mockResolvedValueOnce(reply({ id: "order", status: "PAYER_ACTION_REQUIRED", links: [{ rel: "payer-action", href: "https://example.com/approve" }] }))
       .mockResolvedValueOnce(reply({ id: "order", status: "COMPLETED" }));
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     expect((await createCheckoutOrder("22.00", { workspaceId: "w", bookingId: "b" }, "https://example.com/return", "https://example.com/cancel")).status).toBe("PAYER_ACTION_REQUIRED");
     expect((await captureOrder("order", "capture-key")).status).toBe("COMPLETED");
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ payment_source: { paypal: { experience_context: { user_action: "PAY_NOW", return_url: "https://example.com/return" } } } });
@@ -88,7 +117,7 @@ describe("PayPal client", () => {
 
   it("refuses unknown environments and live demo cards", async () => {
     const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     vi.stubEnv("PAYPAL_ENV", "production");
     await expect(getCapture("capture")).rejects.toThrow("sandbox or live");
     vi.stubEnv("PAYPAL_ENV", "live");
@@ -98,7 +127,7 @@ describe("PayPal client", () => {
 
   it("does not send verification when required signature headers are missing", async () => {
     const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     expect(await verifyWebhookSignature(new Headers(), "{}", "webhook")).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });

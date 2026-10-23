@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController, PaymentsController, PaypalExperienceUserAction, TransactionSearchController } from "@paypal/paypal-server-sdk";
+import type { ApiResponse, CapturedPayment, OAuthToken, Order, Refund, SearchResponse } from "@paypal/paypal-server-sdk";
 import { MoneySchema } from "../domain/schemas";
 
 export class PayPalError extends Error {
@@ -20,6 +22,86 @@ type Config = { baseUrl: string; clientId: string; secret: string; key: string }
 type Token = { value: string; expiresAt: number };
 const tokens = new Map<string, Token>();
 const pendingTokens = new Map<string, Promise<Token>>();
+let sharedSdk: { key: string; client: Client; authFailure: { error?: unknown } } | undefined;
+
+function sdk(): Client {
+  const settings = config();
+  if (sharedSdk?.key !== settings.key) {
+    let pending: Promise<OAuthToken> | undefined;
+    const authFailure: { error?: unknown } = {};
+    const client = new Client({
+      environment: settings.baseUrl.includes("sandbox") ? Environment.Sandbox : Environment.Production,
+      timeout: 20_000,
+      clientCredentialsAuthCredentials: {
+        oAuthClientId: settings.clientId, oAuthClientSecret: settings.secret, oAuthClockSkew: 60,
+        oAuthTokenProvider: async (_lastToken, manager) => {
+          // The runtime can enter the provider concurrently. Share a single exchange, and always
+          // resolve: a rejected provider promise otherwise poisons this SDK client's auth cache.
+          pending ??= manager.fetchToken().then((token) => { authFailure.error = undefined; return token; }, (error) => {
+            authFailure.error = error;
+            return { accessToken: "", tokenType: "Bearer", expiry: BigInt(0) };
+          }).finally(() => { pending = undefined; });
+          return pending;
+        },
+      },
+      httpClientOptions: { retryConfig: {
+        maxNumberOfRetries: 2, maximumRetryWaitTime: 4, retryInterval: 0.25, backoffFactor: 2,
+        retryOnTimeout: false, httpMethodsToRetry: ["GET", "POST"],
+        httpStatusCodesToRetry: [429, ...Array.from({ length: 100 }, (_, index) => 500 + index)],
+      } },
+    });
+    const factory = client.getRequestBuilderFactory();
+    client.getRequestBuilderFactory = () => (method, path) => {
+      const builder = factory(method, path);
+      builder.throwOn = new Proxy(builder.throwOn, { apply(target, receiver, args) {
+        // Core 0.10 throws explicit endpoint errors inside its retry interceptor, treating them
+        // as timeouts. Let transient responses reach the SDK retry policy and default error mapper.
+        const status = args[0];
+        if (typeof status === "number" && (status === 429 || status >= 500)) return;
+        return Reflect.apply(target, receiver, args);
+      } });
+      return builder;
+    };
+    sharedSdk = { key: settings.key, client, authFailure };
+  }
+  return sharedSdk.client;
+}
+
+function debugHeader(headers: Record<string, string>): string | undefined {
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === "paypal-debug-id")?.[1];
+}
+
+async function sdkCall<T>(operation: () => Promise<ApiResponse<T>>): Promise<ApiResponse<T>> {
+  try { return await operation(); }
+  catch (error) {
+    error = sharedSdk?.authFailure.error ?? error;
+    // CustomError extends ApiError; unmapped statuses may only have a raw body.
+    if (!(error instanceof ApiError)) throw error;
+    let body: Record<string, unknown> = {};
+    try { body = error.result ?? JSON.parse(typeof error.body === "string" ? error.body : "{}"); } catch { /* Non-JSON upstream error. */ }
+    const debugId = debugHeader(error.headers) ?? (typeof body?.debug_id === "string" ? body.debug_id : undefined);
+    const mapped = new PayPalError(error.statusCode, typeof body?.name === "string" ? body.name : "PAYPAL_ERROR",
+      typeof body?.message === "string" ? body.message : "PayPal request failed", debugId);
+    console.error("PayPal request failed", { status: mapped.status, name: mapped.name, debugId });
+    throw mapped;
+  }
+}
+
+function paymentResult(payment: CapturedPayment | Refund): PayPalPayment {
+  return { id: payment.id!, status: payment.status!, ...(payment.amount ? {
+    amount: { currency_code: payment.amount.currencyCode, value: payment.amount.value },
+  } : {}) };
+}
+
+function orderResult(response: ApiResponse<Order>): PayPalOrder {
+  const order = response.result;
+  return { id: order.id!, status: order.status!, debugId: debugHeader(response.headers),
+    ...(order.purchaseUnits ? { purchase_units: order.purchaseUnits.map((unit) => ({
+      ...(unit.payments ? { payments: { captures: unit.payments.captures?.map(paymentResult) } } : {}),
+    })) } : {}),
+    ...(order.links ? { links: order.links.map((link) => ({ rel: link.rel, href: link.href })) } : {}),
+  };
+}
 
 function config(): Config {
   const environment = process.env.PAYPAL_ENV || "sandbox";
@@ -93,47 +175,71 @@ export async function request<T>(path: string, options: { method?: "GET" | "POST
   return read<T>(response);
 }
 
-const usd = (amount: string) => ({ currency_code: "USD", value: MoneySchema.parse(amount) });
+const usd = (amount: string) => ({ currencyCode: "USD", value: MoneySchema.parse(amount) });
 const purchaseUnits = (amount: string, refs: PaymentRefs) => [{
-  reference_id: refs.bookingId, custom_id: `${refs.workspaceId}:${refs.bookingId}`, amount: usd(amount),
+  referenceId: refs.bookingId, customId: `${refs.workspaceId}:${refs.bookingId}`, amount: usd(amount),
 }];
 
 export async function createCardCapture(amount: string, refs: PaymentRefs): Promise<{ orderId: string; captureId: string; status: string; debugId?: string }> {
   // These test card details must never be sent to a live account.
   if ((process.env.PAYPAL_ENV || "sandbox") !== "sandbox") throw new Error("Demo card captures require PayPal sandbox");
-  const order = await request<PayPalOrder>("/v2/checkout/orders", {
-    requestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`,
-    body: { intent: "CAPTURE", purchase_units: purchaseUnits(amount, refs), payment_source: { card: {
-      number: "4111111111111111", expiry: "2030-12", security_code: "123", name: "Rebook Sandbox Member",
-      billing_address: { address_line_1: "123 Main St", admin_area_2: "San Jose", admin_area_1: "CA", postal_code: "95131", country_code: "US" },
+  const order = orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
+    paypalRequestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`, prefer: "return=representation",
+    body: { intent: CheckoutPaymentIntent.Capture, purchaseUnits: purchaseUnits(amount, refs), paymentSource: { card: {
+      number: "4111111111111111", expiry: "2030-12", securityCode: "123", name: "Rebook Sandbox Member",
+      billingAddress: { addressLine1: "123 Main St", adminArea2: "San Jose", adminArea1: "CA", postalCode: "95131", countryCode: "US" },
     } } },
-  });
+  })));
   const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
   if (!capture?.id || capture.status !== "COMPLETED") throw new PayPalError(502, "CAPTURE_INCOMPLETE", "Sandbox card capture did not complete", order.debugId);
   return { orderId: order.id, captureId: capture.id, status: capture.status, debugId: order.debugId };
 }
 
-export function createCheckoutOrder(amount: string, refs: PaymentRefs, returnUrl: string, cancelUrl: string): Promise<PayPalOrder> {
-  return request("/v2/checkout/orders", { requestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`,
-    body: { intent: "CAPTURE", purchase_units: purchaseUnits(amount, refs), payment_source: { paypal: {
-      experience_context: { return_url: returnUrl, cancel_url: cancelUrl, user_action: "PAY_NOW" },
-    } } } });
+export async function createCheckoutOrder(amount: string, refs: PaymentRefs, returnUrl: string, cancelUrl: string): Promise<PayPalOrder> {
+  return orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
+    paypalRequestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`, prefer: "return=representation",
+    body: { intent: CheckoutPaymentIntent.Capture, purchaseUnits: purchaseUnits(amount, refs), paymentSource: { paypal: {
+      experienceContext: { returnUrl, cancelUrl, userAction: PaypalExperienceUserAction.PayNow },
+    } } } })));
 }
 
-export function captureOrder(orderId: string, requestId: string): Promise<PayPalOrder> {
-  return request(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, { requestId, body: {} });
+export async function captureOrder(orderId: string, requestId: string): Promise<PayPalOrder> {
+  return orderResult(await sdkCall(() => new OrdersController(sdk()).captureOrder({
+    id: orderId, paypalRequestId: requestId, prefer: "return=representation", body: {},
+  })));
 }
 
-export function refundCapture(captureId: string, amount: string, note: string, requestId: string): Promise<PayPalPayment> {
-  return request(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, { requestId,
-    body: { amount: usd(amount), note_to_payer: note.slice(0, 255), invoice_id: requestId } });
+export async function refundCapture(captureId: string, amount: string, note: string, requestId: string): Promise<PayPalPayment> {
+  const response = await sdkCall(() => new PaymentsController(sdk()).refundCapturedPayment({
+    captureId, paypalRequestId: requestId, prefer: "return=representation",
+    body: { amount: usd(amount), noteToPayer: note.slice(0, 255), invoiceId: requestId },
+  }));
+  return { ...paymentResult(response.result), debugId: debugHeader(response.headers) };
 }
 
-export function getCapture(captureId: string): Promise<PayPalPayment> {
-  return request(`/v2/payments/captures/${encodeURIComponent(captureId)}`, { method: "GET" });
+export async function getCapture(captureId: string): Promise<PayPalPayment> {
+  const response = await sdkCall(() => new PaymentsController(sdk()).getCapturedPayment({ captureId }));
+  return { ...paymentResult(response.result), debugId: debugHeader(response.headers) };
+}
+
+export async function listTransactions(startIso: string, endIso: string): Promise<SearchResponse> {
+  const start = Date.parse(startIso), end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 31 * 86_400_000) {
+    throw new Error("Transaction window must be positive and at most 31 days");
+  }
+  const seconds = (time: number) => new Date(time).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const result: SearchResponse = { transactionDetails: [] };
+  for (let page = 1; ; page += 1) {
+    const response = await sdkCall(() => new TransactionSearchController(sdk()).searchTransactions({
+      startDate: seconds(start), endDate: seconds(end), fields: "all", pageSize: 500, page,
+    }));
+    result.transactionDetails!.push(...(response.result.transactionDetails ?? []));
+    if (page >= (response.result.totalPages ?? 1)) return { ...response.result, transactionDetails: result.transactionDetails };
+  }
 }
 
 export async function verifyWebhookSignature(headers: Headers, rawBody: string, webhookId: string): Promise<boolean> {
+  // Server SDK 2.5.0 has no webhook verification endpoint; keep this call on fetch.
   const fields = { auth_algo: headers.get("paypal-auth-algo"), cert_url: headers.get("paypal-cert-url"),
     transmission_id: headers.get("paypal-transmission-id"), transmission_sig: headers.get("paypal-transmission-sig"),
     transmission_time: headers.get("paypal-transmission-time") };

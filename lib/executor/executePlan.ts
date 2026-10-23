@@ -8,11 +8,12 @@ const reserved = (event: LedgerEvent) => ["REQUESTED", "PENDING", "COMPLETED", "
 
 /** A durable REQUESTED event precedes every refund. Crash recovery uses the same PayPal request ID. */
 export async function executePlan(workspaceId: string, planId: string, repository: Repository = getRepository()): Promise<{ plan: StoredPlan; results: ExecutionResult[] }> {
+  repository.requireReadyWorkspace(workspaceId);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let plan = repository.getPlan(workspaceId, planId);
     if (!plan) throw new StoreError(404, "Plan not found");
     if (plan.status === "executed" || plan.status === "partially_failed") return { plan, results: plan.results };
-    const workspace = repository.requireWorkspace(workspaceId);
+    const workspace = repository.requireReadyWorkspace(workspaceId);
     if (plan.status !== "proposed" && (plan.status !== "executing" || !plan.basis)) throw new StoreError(409, "Plan cannot be executed");
     const basis = plan.status === "proposed" ? workspace.state : plan.basis!;
     const validation = validate(basis, plan);

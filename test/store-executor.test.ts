@@ -1,3 +1,4 @@
+import { setSdkTransport } from "./paypalTransport";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,12 +41,12 @@ function prepared(simulated = false) {
 function mockedRefunds(status: (index: number) => string = () => "COMPLETED") {
   let count = 0;
   const fetch = vi.fn(async (url: string | URL | Request) => {
-    if (String(url).endsWith("/token")) return Response.json({ access_token: "token", expires_in: 3600 });
+    if (String(url).endsWith("/token")) return Response.json({ access_token: "token", token_type: "Bearer", expires_in: 3600 });
     count += 1;
     const next = status(count);
     return Response.json(next === "FAILED" ? { name: "UNPROCESSABLE_ENTITY", message: "Declined" } : { id: `refund-${count}`, status: next }, { status: next === "FAILED" ? 422 : 201 });
   });
-  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
   return fetch;
 }
 
@@ -113,7 +114,7 @@ describe("plan execution", () => {
   it("never calls PayPal for simulated payments", async () => {
     const { workspace, plan } = prepared(true);
     const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     const result = await executePlan(workspace.id, plan.id, repository);
     expect(result.plan.status).toBe("executed");
     expect(result.results.every((item) => item.status === "SIMULATED")).toBe(true);
@@ -125,7 +126,7 @@ describe("plan execution", () => {
     plan.bookingActions[0].amount = "9999.00";
     repository.savePlan(plan);
     const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
     await expect(executePlan(workspace.id, plan.id, repository)).rejects.toThrow("no longer valid");
     expect(fetch).not.toHaveBeenCalled();
     expect(repository.getPlan(workspace.id, plan.id)?.status).toBe("proposed");

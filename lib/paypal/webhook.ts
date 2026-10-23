@@ -29,7 +29,8 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
     const captureId = resource.capture_id ?? resource.supplementary_data?.related_ids?.capture_id ?? captureLink;
     const match = repository.findPayment(resource.id, captureId);
     if (!match) return { duplicate: false, matched: false };
-    const workspace = repository.requireWorkspace(match.workspaceId);
+    // Private pool captures still receive PayPal events before a visitor claims them.
+    const workspace = repository.requireWorkspace(match.workspaceId, true);
     const latest = repository.latestMoneyEvents(workspace.id);
     const capture = latest.find((item) => item.kind === "capture" && item.captureId === match.captureId);
     if (!capture || capture.status === "SIMULATED") return { duplicate: false, matched: false };

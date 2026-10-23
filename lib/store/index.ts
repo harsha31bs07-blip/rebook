@@ -11,7 +11,10 @@ export type StoredPlan = Plan & {
   id: string; workspaceId: string; status: "proposed" | "executing" | "executed" | "partially_failed";
   createdAt: string; results: ExecutionResult[]; basis?: State;
 };
-export type Workspace = { id: string; state: State; createdAt: string; updatedAt: string };
+export type Workspace = {
+  id: string; state: State; createdAt: string; updatedAt: string;
+  status: "preparing" | "ready" | "failed"; progress: { done: number; total: number }; pooled?: true;
+};
 export type LedgerEvent = {
   id: string; workspaceId: string; bookingId: string; kind: "capture" | "refund";
   amount: string; paypalId: string; status: string; createdAt: string; debugId?: string;
@@ -52,23 +55,58 @@ export class Repository {
     try { const value = operation(); this.db.exec("COMMIT"); return value; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
-  createWorkspace(state: State, id = randomBytes(8).toString("base64url").slice(0, 10)): Workspace {
+  createWorkspace(state: State, id = randomBytes(8).toString("base64url").slice(0, 10), options: { preparing?: boolean; pooled?: true } = {}): Workspace {
     const now = new Date().toISOString();
-    const workspace = { id, state: StateSchema.parse(state), createdAt: now, updatedAt: now };
+    const workspace: Workspace = { id, state: StateSchema.parse(state), createdAt: now, updatedAt: now,
+      status: options.preparing ? "preparing" : "ready", progress: { done: options.preparing ? 0 : state.bookings.length, total: state.bookings.length },
+      ...(options.pooled ? { pooled: true } : {}),
+    };
     this.db.prepare("INSERT INTO workspaces VALUES (?, ?, ?)").run(id, JSON.stringify(workspace), now);
     return workspace;
   }
-  getWorkspace(id: string): Workspace | undefined {
+  getWorkspace(id: string, includePooled = false): Workspace | undefined {
     const row = this.db.prepare("SELECT data FROM workspaces WHERE id = ?").get(id) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) as Workspace : undefined;
+    if (!row) return undefined;
+    const workspace = JSON.parse(row.data) as Workspace;
+    if (workspace.pooled && !includePooled) return undefined;
+    // Workspaces persisted before background seeding was introduced were fully seeded.
+    return { ...workspace, status: workspace.status ?? "ready",
+      progress: workspace.progress ?? { done: workspace.state.bookings.length, total: workspace.state.bookings.length } };
   }
-  requireWorkspace(id: string): Workspace {
-    const workspace = this.getWorkspace(id);
+  requireWorkspace(id: string, includePooled = false): Workspace {
+    const workspace = this.getWorkspace(id, includePooled);
     if (!workspace) throw new StoreError(404, "Workspace not found");
     return workspace;
   }
+  requireReadyWorkspace(id: string): Workspace {
+    const workspace = this.requireWorkspace(id);
+    if (workspace.status !== "ready") throw new StoreError(409, "Workspace is not ready");
+    return workspace;
+  }
+  savePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"]): Workspace {
+    this.updatePreparation(id, status, progress);
+    return this.requireWorkspace(id, true);
+  }
+  updatePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"]): void {
+    this.db.prepare("UPDATE workspaces SET data = json_set(data, '$.status', ?, '$.progress', json(?), '$.updatedAt', ?) WHERE id = ?")
+      .run(status, JSON.stringify(progress), new Date().toISOString(), id);
+  }
+  readyPoolWorkspace(): Workspace | undefined {
+    const rows = this.db.prepare("SELECT data FROM workspaces WHERE json_extract(data, '$.pooled') = 1 AND json_extract(data, '$.status') = 'ready' LIMIT 1").all() as JsonRow[];
+    return rows[0] ? JSON.parse(rows[0].data) as Workspace : undefined;
+  }
+  claimPoolWorkspace(): Workspace | undefined {
+    return this.transaction(() => {
+      const pooled = this.readyPoolWorkspace();
+      if (!pooled) return undefined;
+      const workspace = this.createWorkspace(pooled.state);
+      for (const event of this.listLedger(pooled.id)) this.appendLedger({ ...event, workspaceId: workspace.id });
+      this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(pooled.id);
+      return workspace;
+    });
+  }
   saveState(id: string, state: State): Workspace {
-    const workspace = { ...this.requireWorkspace(id), state: StateSchema.parse(state), updatedAt: new Date().toISOString() };
+    const workspace = { ...this.requireWorkspace(id, true), state: StateSchema.parse(state), updatedAt: new Date().toISOString() };
     this.db.prepare("UPDATE workspaces SET data = ? WHERE id = ?").run(JSON.stringify(workspace), id);
     return workspace;
   }
@@ -132,7 +170,7 @@ export class Repository {
     return (this.db.prepare("SELECT raw_body FROM webhook_events WHERE id = ?").get(id) as { raw_body: string } | undefined)?.raw_body;
   }
   acquireLock(workspaceId: string): string {
-    this.requireWorkspace(workspaceId);
+    this.requireWorkspace(workspaceId, true);
     const owner = randomUUID();
     const result = this.db.prepare(`INSERT INTO workspace_locks VALUES (?, ?, ?)
       ON CONFLICT(workspace_id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
@@ -154,19 +192,22 @@ export class Repository {
   }
 }
 
-let shared: { directory: string; repository: Repository } | undefined;
+// Instrumentation and route handlers can load separate bundles in the same Next.js process.
+const processStore = globalThis as typeof globalThis & { rebookStore?: { directory: string; repository: Repository } };
 export function getRepository(): Repository {
   const directory = resolve(/* turbopackIgnore: true */ process.env.DATA_DIR || "./.data");
+  let shared = processStore.rebookStore;
   if (shared?.directory !== directory) {
     shared?.repository.close();
     shared = { directory, repository: new Repository(directory) };
+    processStore.rebookStore = shared;
   }
   return shared.repository;
 }
 
 export function closeRepository(): void {
-  shared?.repository.close();
-  shared = undefined;
+  processStore.rebookStore?.repository.close();
+  processStore.rebookStore = undefined;
 }
 
 export async function withWorkspaceLock<T>(repository: Repository, workspaceId: string, operation: (owner: string) => Promise<T> | T): Promise<T> {

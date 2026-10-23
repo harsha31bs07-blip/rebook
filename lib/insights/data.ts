@@ -22,6 +22,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       id: event.id, kind: event.kind, amount: dollars(event.amount), status: event.status,
       paypal_id: event.paypalId, created_at: event.createdAt, booking_id: event.bookingId,
       plan_id: plan?.id ?? null,
+      booking_action_id: plan ? `${plan.id}:${event.bookingId}` : null,
       reason: plan?.bookingActions.find((action) => action.bookingId === event.bookingId)?.reason ?? "",
       // Issued money excludes pending/failed requests; simulations remain clearly labelled.
       issued_refund: event.kind === "refund" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
@@ -73,7 +74,10 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         created_at: plan.createdAt,
         covers: plan.sessionChanges.filter((change) => change.remedy === "substitute").map((change) => {
           const name = (id: string) => state.instructors.find((item) => item.id === id)?.name ?? id;
-          return `${name(change.after!.instructorId)} covered ${name(change.before.instructorId)} (${change.sessionId})`;
+          const session = change.before;
+          const local = localParts(session.start, state.studio.timezone);
+          const time = `${String(Math.floor(local.minutesOfDay / 60)).padStart(2, "0")}:${String(local.minutesOfDay % 60).padStart(2, "0")}`;
+          return `${name(change.after!.instructorId)} covered ${name(change.before.instructorId)} for ${sessions.get(change.sessionId)?.title ?? "Class"}, ${local.dateKey} at ${time}`;
         }).join("; "),
       };
     }),

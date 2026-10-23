@@ -8,6 +8,8 @@ import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { applyPlan } from "../lib/solver/validate";
 import { buildStudioData, insightRelationships } from "../lib/insights/studio-data";
+import { initialReport, REPORT_STATE_VERSION, restoreReportState } from "../lib/insights/report";
+import { recoveryDisruptions, recoveryReceipts } from "../lib/insights/ai";
 import type { Insights } from "../lib/insights/data";
 
 let directory: string;
@@ -37,6 +39,12 @@ describe("workspace insights", () => {
     expect(data.disruptions).toHaveLength(1);
     expect(data.disruptions[0]).toMatchObject({ id: plan.id, status: "executed" });
     expect(data.money_events).toHaveLength(1);
+    expect(data.money_events[0].booking_action_id).toBe(`${plan.id}:${action.bookingId}`);
+    const receipt = recoveryReceipts(data)[0];
+    expect(receipt.class).toContain(" at ");
+    expect(receipt.customer).not.toBe(action.bookingId);
+    expect(JSON.stringify(receipt)).not.toContain(plan.id);
+    expect(JSON.stringify(receipt)).not.toContain(action.bookingId);
     expect(data.money_events[0]).toMatchObject({ paypal_id: "REF-1", status: "COMPLETED", plan_id: plan.id, issued_refund: Number(action.amount) });
     expect(data.sessions.some((row) => row.status === "cancelled")).toBe(true);
     const first = data.sessions.find((session) => session.id === state.sessions[0].id)!;
@@ -72,6 +80,8 @@ describe("workspace insights", () => {
     const data: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
     expect(data.disruptions[0]).toMatchObject({ applied_affected: 0, applied_saved: 0, applied_revenue_kept: 0 });
     expect(data.disruptions[0].covers).toContain("covered Maya");
+    expect(data.disruptions[0].covers).not.toMatch(/session-\d+/);
+    expect(JSON.stringify(recoveryDisruptions(data))).not.toContain(data.disruptions[0].id);
   });
 
   it("rejects invalid, missing and preparing workspaces", async () => {
@@ -79,5 +89,55 @@ describe("workspace insights", () => {
     expect((await GET(new Request("http://localhost"), context("missing123"))).status).toBe(404);
     const workspace = getRepository().createWorkspace(seedStudio(), undefined, { preparing: true });
     expect((await GET(new Request("http://localhost"), context(workspace.id))).status).toBe(409);
+  });
+});
+
+
+describe("initial Studio report", () => {
+  it("silently discards old, unversioned and malformed saved reports", () => {
+    for (const saved of [null, "broken", JSON.stringify(initialReport), JSON.stringify({ version: REPORT_STATE_VERSION - 1, state: initialReport })]) {
+      expect(restoreReportState(saved)).toBe(initialReport);
+    }
+    const state = { ...initialReport, selectedPageId: "disruptions" };
+    expect(restoreReportState(JSON.stringify({ version: REPORT_STATE_VERSION, state }))).toEqual(state);
+  });
+
+  it("uses valid mapped fields, supported single-field sorts and unambiguous relationships", async () => {
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const data: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
+    const model = buildStudioData(data);
+    const fields = new Set(model.sources.flatMap((source) => ("fields" in source ? source.fields ?? [] : []).map((field) => `${source.id}.${field.id}`)));
+    for (const expression of model.expressions ?? []) fields.add(expression.id);
+    // There is no exported report validator. Check the widget constraints enforced by Studio's hydrator.
+    expect(initialReport.pages.some((page) => page.id === initialReport.selectedPageId)).toBe(true);
+    for (const page of initialReport.pages) for (const [id, widget] of Object.entries(page.widgets ?? {})) {
+      if (!widget) continue;
+      expect(page.widgetLayout?.[id]).toBeDefined();
+      expect(("sort" in widget ? widget.sort?.length : 0) ?? 0).toBeLessThanOrEqual(1);
+      for (const mapping of Object.values(widget.dataMapping)) for (const field of mapping ?? []) expect(fields.has(field.id), field.id).toBe(true);
+      for (const sort of ("sort" in widget ? widget.sort : []) ?? []) expect(fields.has(sort.field.id), sort.field.id).toBe(true);
+      if (widget.type === "grid") expect(widget.dataMapping.cols.every((field) => !/\.(id|.*_id)$/.test(field.id))).toBe(true);
+    }
+    // An undirected forest has exactly one path between any connected pair, including the receipt/action queries.
+    const parents = new Map(model.sources.map((source) => [source.id, source.id]));
+    const root = (id: string): string => parents.get(id) === id ? id : root(parents.get(id)!);
+    for (const relation of insightRelationships) {
+      if (!("tableId" in relation.target)) continue;
+      const from = root(relation.source.tableId), to = root(relation.target.tableId);
+      expect(from, `Cycle at ${relation.id}`).not.toBe(to);
+      parents.set(from, to);
+    }
+    expect(new Set([...parents.keys()].map(root)).size).toBe(1);
+    const actions = initialReport.pages[1].widgets!.actions!;
+    if (actions.type !== "grid") throw new Error("Expected booking actions grid");
+    const sort = actions.sort![0];
+    const values = ["keep", "refund", "move"].sort((a, b) => sort.direction === "desc" ? b.localeCompare(a) : a.localeCompare(b));
+    expect(values).toEqual(["refund", "move", "keep"]);
+    for (const id of ["revenue_booked_kpi", "revenue_kept_kpi", "refunds_issued_kpi"]) {
+      expect(model.expressions!.find((field) => field.id === id)?.formatOptions).toEqual({ format: "$#,##0" });
+    }
+    const sessions = model.sources.find((source) => source.id === "sessions")!;
+    if (!("fields" in sessions)) throw new Error("Expected explicit session fields");
+    expect(sessions.fields!.find((field) => field.id === "price")?.formatOptions).toEqual({ format: "$#,##0.00" });
   });
 });

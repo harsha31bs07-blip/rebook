@@ -6,7 +6,7 @@ import { AgStudioAiModule, type AgReportState } from "ag-studio";
 import type { Insights } from "@/lib/insights/data";
 import { buildStudioData } from "@/lib/insights/studio-data";
 import { buildRecoveryAi } from "@/lib/insights/ai";
-import { initialReport } from "@/lib/insights/report";
+import { initialReport, REPORT_STATE_VERSION, restoreReportState } from "@/lib/insights/report";
 import { rebookStudioTheme } from "@/lib/insights/theme";
 import { customWidgets, type StudioRegistry } from "./widgets";
 
@@ -20,11 +20,7 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
   const key = `rebook:studio:${id}`;
   const [initialState] = useState<AgReportState<StudioRegistry>>(() => {
     try {
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const state = JSON.parse(saved);
-        if (Array.isArray(state.pages) && state.pages.length && state.pages.every((page: { id?: unknown } | null) => page && typeof page.id === "string") && state.pages.some((page: { id: string }) => page.id === state.selectedPageId)) return state;
-      }
+      return restoreReportState(localStorage.getItem(key));
     } catch { /* Storage can be unavailable or contain stale JSON. Start with the built-in report. */ }
     return initialReport;
   });
@@ -35,7 +31,7 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
   const ai = useMemo(() => buildRecoveryAi(id, data), [id, data]);
   const save = (state: AgReportState) => {
     setSelectedPage(state.selectedPageId);
-    try { localStorage.setItem(key, JSON.stringify(state)); } catch { setNotice("Changes work for this visit. Browser storage is unavailable."); }
+    try { localStorage.setItem(key, JSON.stringify({ version: REPORT_STATE_VERSION, state })); } catch { setNotice("Changes work for this visit. Browser storage is unavailable."); }
   };
   const changePage = (pageId: string) => {
     const api = ref.current?.api;
@@ -44,6 +40,7 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
   return <section className="insights-report" aria-label="Studio report">
     <div className="insights-toolbar"><nav aria-label="Insight pages">{pages.map((page) => <button key={page.id} aria-pressed={page.id === selectedPage} onClick={() => changePage(page.id)}>{page.label}</button>)}</nav>
       <div><button aria-pressed={edit} onClick={() => setEdit(!edit)}>{edit ? "Done editing" : "Edit report"}</button><button className="primary" onClick={() => {
+        setEdit(true);
         const api = ref.current?.api;
         if (api) { const state = api.getState(); api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: false } } }); }
       }}>Ask Recovery analyst</button></div>

@@ -9,7 +9,10 @@ import { GET as read } from "../app/api/workspaces/[id]/route";
 import { POST as propose } from "../app/api/workspaces/[id]/plans/route";
 import { POST as approve } from "../app/api/workspaces/[id]/plans/[planId]/approve/route";
 import { POST as reset } from "../app/api/workspaces/[id]/reset/route";
-import { demoDisruption } from "../lib/seed/seed";
+import { POST as interpret } from "../app/api/workspaces/[id]/interpret/route";
+import { demoDisruption, demoDisruptionFor } from "../lib/seed/seed";
+import { DAY } from "../lib/domain/time";
+import { replan } from "../lib/solver/replan";
 import { closeRepository, getRepository } from "../lib/store";
 import { seedStudio } from "../lib/seed/seed";
 import { startWarmPool, waitForWorkspacePreparation } from "../lib/demo/createWorkspace";
@@ -17,6 +20,8 @@ import { register } from "../instrumentation";
 
 let directory: string;
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-05T15:00:00Z"));
   directory = mkdtempSync(join(tmpdir(), "rebook-api-"));
   vi.stubEnv("DATA_DIR", directory); vi.stubEnv("DEMO_REAL_CAPTURES", "0");
   vi.stubGlobal("fetch", vi.fn());
@@ -24,13 +29,38 @@ beforeEach(() => {
 afterEach(async () => {
   await waitForWorkspacePreparation();
   closeRepository(); rmSync(directory, { recursive: true, force: true });
-  vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers();
 });
 function post(body: unknown = {}, ip = randomUUID()) {
   return new Request("http://localhost/api/workspaces", { method: "POST", headers: { "Content-Type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify(body) });
 }
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 describe("workspace API", () => {
+  it("returns the persisted week and uses it with the real clock for interpretation and planning", async () => {
+    const now = "2026-12-03T15:00:00.000Z";
+    vi.setSystemTime(new Date(now));
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const { id } = await (await create(post())).json();
+    await waitForWorkspacePreparation();
+    const workspace = await (await read(new Request("http://localhost"), context(id))).json();
+    const { weekStart, timezone } = workspace.state.studio;
+    expect(weekStart).toBe("2026-12-07T05:00:00.000Z");
+    const monday = await (await interpret(post({ text: "Maya has the flu Monday" }), context(id))).json();
+    const disruption = demoDisruptionFor(weekStart, timezone);
+    expect(monday.disruption).toMatchObject({ from: disruption.from, to: disruption.to });
+    const today = await (await interpret(post({ text: "Maya has the flu today" }), context(id))).json();
+    expect(today.disruption.from).toBe("2026-12-03T05:00:00.000Z");
+    expect(today.notes).toContain("No classes are scheduled then");
+    const response = await propose(post({ disruption }), context(id));
+    expect(response.status).toBe(200);
+    const plan = await response.json();
+    const horizonDays = Math.ceil((Date.parse(weekStart) - Date.parse(now)) / DAY) + 14;
+    const expected = replan(workspace.state, disruption, { now, horizonDays });
+    expect(plan).toMatchObject(expected);
+    expect(plan.now).toBe(now);
+    expect(plan.totals.sessionsAffected).toBe(3);
+    expect(new Set(plan.bookingActions.map((action: { action: string }) => action.action))).toEqual(new Set(["keep", "move", "refund"]));
+  });
   it("returns status and progress and rejects plans and approval until ready", async () => {
     const repository = getRepository();
     const workspace = repository.createWorkspace(seedStudio(), undefined, { preparing: true });

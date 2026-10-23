@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { State } from "../domain/types";
 import { createCardCapture, PayPalError } from "../paypal/client";
-import { demoDisruption, floodDisruption, seedStudio } from "../seed/seed";
+import { demoDisruptionFor, floodDisruptionFor, nextWeekStart, seedStudio } from "../seed/seed";
 import { affectedSessions } from "../solver/validate";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
 
@@ -15,7 +15,9 @@ export class WorkspaceCreationError extends StoreError {
 export function realCaptureBookingIds(state: State): Set<string> {
   const now = state.sessions.map((session) => session.start).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
   if (!now) return new Set();
-  const sessions = new Set([demoDisruption, floodDisruption].flatMap((disruption) => affectedSessions(state, disruption, now)).map((session) => session.id));
+  const { weekStart, timezone } = state.studio;
+  const sessions = new Set([demoDisruptionFor(weekStart, timezone), floodDisruptionFor(weekStart, timezone)]
+    .flatMap((disruption) => affectedSessions(state, disruption, now)).map((session) => session.id));
   return new Set(state.bookings.filter((booking) => sessions.has(booking.sessionId)).map((booking) => booking.id));
 }
 
@@ -75,7 +77,7 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
 }
 
 function initialState(reset = false): State {
-  const state = seedStudio();
+  const state = seedStudio(42, nextWeekStart(new Date().toISOString(), "America/New_York"));
   const realIds = process.env.DEMO_REAL_CAPTURES === "0" ? new Set<string>() : realCaptureBookingIds(state);
   // Reset keeps its workspace and audit history. New booking identities give every capture a fresh key.
   const generation = reset ? `${randomBytes(6).toString("hex")}-` : "";

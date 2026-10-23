@@ -13,6 +13,7 @@ export const WindowSchema = z.object({ from: IsoSchema, to: IsoSchema })
   .refine((window) => Date.parse(window.from) < Date.parse(window.to), "Window must have positive duration");
 export const StudioSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), timezone: z.string().min(1),
+  weekStart: IsoSchema,
   // Weekdays use the studio's IANA time zone: 0 is Sunday. Missing weekdays are closed.
   openHours: z.record(z.coerce.number().int().min(0).max(6), z.array(HoursSchema)),
   currency: z.literal("USD"),

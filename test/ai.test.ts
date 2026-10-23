@@ -16,6 +16,7 @@ import { closeRepository, getRepository } from "../lib/store";
 
 const now = "2026-11-08T15:00:00Z";
 const state = seedStudio();
+const weekStart = "2026-11-09T05:00:00.000Z";
 const objectSchema = { type: "OBJECT", properties: { ok: { type: "BOOLEAN" } }, required: ["ok"] };
 const OkSchema = z.object({ ok: z.boolean() });
 const response = (data: unknown) => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(data) }] } }] });
@@ -98,7 +99,7 @@ describe("disruption interpretation", () => {
     ["Alex can't do evenings this week", "instructor_unavailable", "instructor-02", "2026-11-09T22:00:00.000Z", "2026-11-10T02:00:00.000Z"],
   ])("resolves %s with rules when every model is unavailable", async (text, kind, id, from, to) => {
     fetchMock.mockResolvedValue(new Response("unavailable", { status: 503 }));
-    const result = await interpretDisruption(text!, state, now);
+    const result = await interpretDisruption(text!, state, now, weekStart);
     expect(result).toMatchObject({ source: "rules", disruption: { kind, from, to, reason: text } });
     if (result.disruption.kind === "instructor_unavailable") expect(result.disruption.instructorId).toBe(id);
     if (result.disruption.kind === "room_unavailable") expect(result.disruption.roomId).toBe(id);
@@ -106,9 +107,34 @@ describe("disruption interpretation", () => {
     if (text!.includes("until")) expect(result.notes.join(" ")).toContain("availability resumes");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+  it.each(["2026-12-03T15:00:00Z", "2026-12-06T15:00:00Z", "2026-12-07T15:00:00Z"])("keeps weekdays inside the seeded week when now is %s", async (clock) => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const week = "2026-12-07T05:00:00.000Z";
+    const december = seedStudio(42, week);
+    for (const [text, date, minutes] of [
+      ["Maya has the flu Monday", "2026-12-07", 0],
+      ["Cycle Lab is broken Wednesday afternoon", "2026-12-09", 720],
+      ["studio closed Saturday", "2026-12-12", 0],
+    ] as const) {
+      const result = await interpretDisruption(text, december, clock, week);
+      expect(localParts(result.disruption.from, december.studio.timezone)).toMatchObject({ dateKey: date, minutesOfDay: minutes });
+    }
+  });
+  it("keeps today and tomorrow relative to now and notes empty windows for rules and Gemini", async () => {
+    for (const source of ["rules", "gemini"] as const) {
+      vi.stubEnv("GEMINI_API_KEY", source === "rules" ? "" : "test-key");
+      for (const [day, date] of [["today", "2026-12-03"], ["tomorrow", "2026-12-04"]] as const) {
+        fetchMock.mockResolvedValue(response(intent({ day })));
+        const result = await interpretDisruption(`Maya is sick ${day}`, state, "2026-12-03T15:00:00Z", weekStart);
+        expect(result.source).toBe(source);
+        expect(localParts(result.disruption.from, state.studio.timezone).dateKey).toBe(date);
+        expect(result.notes).toContain("No classes are scheduled then");
+      }
+    }
+  });
   it("resolves model names and local clocks itself, ignoring model-made IDs and instants", async () => {
     fetchMock.mockImplementation(async () => response(intent({ instructorId: "attacker-id", from: "1900-01-01T00:00:00Z", to: "2099-01-01T00:00:00Z" })));
-    const result = await interpretDisruption("Maya is sick Monday", state, now);
+    const result = await interpretDisruption("Maya is sick Monday", state, now, weekStart);
     expect(result).toMatchObject({ source: "gemini", model: "first", disruption: {
       instructorId: "instructor-01", from: "2026-11-09T05:00:00.000Z", to: "2026-11-10T05:00:00.000Z",
     } });
@@ -121,22 +147,22 @@ describe("disruption interpretation", () => {
   });
   it("falls back to rules for unknown model names and rejects unknown owner names", async () => {
     fetchMock.mockImplementation(async () => response(intent({ name: "Beatrice Unknown" })));
-    expect((await interpretDisruption("Maya is sick Monday", state, now)).source).toBe("rules");
-    await expect(interpretDisruption("Beatrice is sick Monday", state, now)).rejects.toBeInstanceOf(InterpretationError);
+    expect((await interpretDisruption("Maya is sick Monday", state, now, weekStart)).source).toBe("rules");
+    await expect(interpretDisruption("Beatrice is sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
   });
   it("rejects hallucinated known resources that are absent from the text", async () => {
     fetchMock.mockImplementation(async () => response(intent()));
-    await expect(interpretDisruption("Beatrice is sick Monday", state, now)).rejects.toThrow("Maya Chen");
+    await expect(interpretDisruption("Beatrice is sick Monday", state, now, weekStart)).rejects.toThrow("Maya Chen");
   });
   it("does not widen an instructor absence into a hallucinated studio closure", async () => {
     fetchMock.mockImplementation(async () => response(intent({ kind: "closure", name: null })));
-    expect((await interpretDisruption("Maya is sick Monday", state, now)).disruption.kind).toBe("instructor_unavailable");
+    expect((await interpretDisruption("Maya is sick Monday", state, now, weekStart)).disruption.kind).toBe("instructor_unavailable");
   });
   it("rejects low-confidence ambiguous inputs with helpful known names", async () => {
     fetchMock.mockImplementation(async () => response(intent({ confidence: 0.1 })));
-    await expect(interpretDisruption("Something happened", state, now)).rejects.toThrow("Cycle Lab");
-    await expect(interpretDisruption("Maya is sick Monday", state, now)).rejects.toBeInstanceOf(InterpretationError);
-    await expect(interpretDisruption("Maya and Alex are sick Monday", state, now)).rejects.toBeInstanceOf(InterpretationError);
+    await expect(interpretDisruption("Something happened", state, now, weekStart)).rejects.toThrow("Cycle Lab");
+    await expect(interpretDisruption("Maya is sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
+    await expect(interpretDisruption("Maya and Alex are sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
   });
   it.each([
     ["Myaa is sick tomorrow morning", "2026-11-09", 420, 720],
@@ -145,14 +171,14 @@ describe("disruption interpretation", () => {
     ["Maya is sick Monday from 14:30 to 16:00", "2026-11-09", 870, 960],
   ])("supports local rules for %s", async (text, dateKey, fromMinutes, toMinutes) => {
     vi.stubEnv("GEMINI_API_KEY", "");
-    const { disruption } = await interpretDisruption(text, state, now);
+    const { disruption } = await interpretDisruption(text, state, now, weekStart);
     expect(localParts(disruption.from, state.studio.timezone)).toMatchObject({ dateKey, minutesOfDay: fromMinutes });
     expect(localParts(disruption.to, state.studio.timezone).minutesOfDay).toBe(toMinutes);
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("uses the studio-local day near midnight and converts across DST locally", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
-    const { disruption } = await interpretDisruption("Maya is sick tomorrow all day", state, "2026-11-01T03:30:00Z");
+    const { disruption } = await interpretDisruption("Maya is sick tomorrow all day", state, "2026-11-01T03:30:00Z", weekStart);
     expect(disruption.from).toBe("2026-11-01T04:00:00.000Z");
     expect(disruption.to).toBe("2026-11-02T05:00:00.000Z");
   });

@@ -12,7 +12,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { text } = await jsonBody(request, InputSchema);
     const state = getRepository().requireWorkspace(id).state;
     try {
-      return await interpretDisruption(text, state, new Date().toISOString());
+      return await interpretDisruption(text, state, new Date().toISOString(), state.studio.weekStart);
     } catch (error) {
       if (error instanceof InterpretationError) throw new StoreError(422, error.message);
       throw error;

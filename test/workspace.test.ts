@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { beginWorkspace, createWorkspace, realCaptureBookingIds, resetWorkspace, startWarmPool, waitForWorkspacePreparation, WorkspaceCreationError } from "../lib/demo/createWorkspace";
 import { Repository } from "../lib/store";
-import { demoDisruption, floodDisruption, seedStudio } from "../lib/seed/seed";
+import { demoDisruptionFor, floodDisruptionFor, seedStudio } from "../lib/seed/seed";
+import { localParts } from "../lib/domain/time";
 import { affectedSessions } from "../lib/solver/validate";
 
 let directory: string;
@@ -42,6 +43,15 @@ function mockedCaptures(failFirst = false) {
   return { fetch, maxActive: () => maxActive };
 }
 describe("workspace seeding", () => {
+  it("seeds and persists the following Monday when created on a Thursday", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-03T15:00:00Z"));
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    const workspace = await createWorkspace({ repository });
+    expect(workspace.state.studio.weekStart).toBe("2026-12-07T05:00:00.000Z");
+    expect(repository.requireWorkspace(workspace.id).state.studio.weekStart).toBe(workspace.state.studio.weekStart);
+    expect(localParts(workspace.state.sessions[0].start, workspace.state.studio.timezone).dateKey).toBe("2026-12-07");
+  });
   it("can seed entirely simulated payments without credentials or network", async () => {
     vi.stubEnv("DEMO_REAL_CAPTURES", "0");
     vi.stubEnv("PAYPAL_CLIENT_SECRET", "");
@@ -60,7 +70,10 @@ describe("workspace seeding", () => {
     vi.stubEnv("DEMO_REAL_CAPTURES", "1");
     const { fetch, maxActive } = mockedCaptures();
     const workspace = await createWorkspace({ repository });
-    const state = seedStudio();
+    const state = workspace.state;
+    const { weekStart, timezone } = state.studio;
+    const demoDisruption = demoDisruptionFor(weekStart, timezone);
+    const floodDisruption = floodDisruptionFor(weekStart, timezone);
     const now = state.sessions.map((session) => session.start).sort()[0];
     const realSessions = [demoDisruption, floodDisruption].flatMap((disruption) => affectedSessions(state, disruption, now));
     const realIds = new Set(realSessions.map((session) => session.id));
@@ -156,5 +169,23 @@ describe("workspace seeding", () => {
     const nextCaptures = repository.latestMoneyEvents(first.id).filter((event) => event.status === "COMPLETED");
     expect(nextCaptures).toHaveLength(captures.length * 2);
     expect(new Set(nextCaptures.map((event) => event.paypalId)).size).toBe(captures.length * 2);
+  });
+  it("discards a stale pool week at claim and prepares a fresh workspace and pool", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-03T15:00:00Z"));
+    vi.stubEnv("DEMO_WARM_POOL", "1");
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    await startWarmPool(repository);
+    const stale = repository.readyPoolWorkspace()!;
+    expect(stale.state.studio.weekStart).toBe("2026-12-07T05:00:00.000Z");
+    vi.setSystemTime(new Date("2026-12-07T05:00:00Z"));
+    const fresh = beginWorkspace({ repository });
+    expect(fresh.status).toBe("preparing");
+    expect(fresh.state.studio.weekStart).toBe("2026-12-14T05:00:00.000Z");
+    expect(repository.getWorkspace(stale.id, true)).toBeUndefined();
+    expect(repository.listLedger(stale.id)).toEqual([]);
+    await waitForWorkspacePreparation();
+    expect(repository.requireReadyWorkspace(fresh.id).state.studio.weekStart).toBe(fresh.state.studio.weekStart);
+    expect(repository.readyPoolWorkspace()?.state.studio.weekStart).toBe(fresh.state.studio.weekStart);
   });
 });

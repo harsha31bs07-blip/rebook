@@ -14,7 +14,7 @@ const closure: Disruption = { kind: "closure", from: now, to: sick.to };
 
 function fixture(): State {
   return {
-    studio: { id: "studio", name: "Studio", timezone: "UTC", currency: "USD",
+    studio: { id: "studio", name: "Studio", timezone: "UTC", currency: "USD", weekStart: "2026-11-09T00:00:00Z",
       openHours: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ open: "07:00", close: "21:00" }]])) },
     instructors: [
       { id: "i1", name: "One", skills: ["yoga"], maxSessionsPerDay: 3 },

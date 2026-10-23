@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Plan, State } from "../domain/types";
 import { PlanSchema, StateSchema } from "../domain/schemas";
-import { fromCents, toCents } from "../domain/time";
+import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "../domain/time";
+import { nextWeekStart } from "../seed/seed";
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
@@ -69,6 +70,15 @@ export class Repository {
     if (!row) return undefined;
     const workspace = JSON.parse(row.data) as Workspace;
     if (workspace.pooled && !includePooled) return undefined;
+    // Older persisted workspaces predate the explicit seed-week field.
+    if (!workspace.state.studio.weekStart) {
+      const { timezone } = workspace.state.studio;
+      const first = workspace.state.sessions.map((session) => session.start).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+      const local = first ? localParts(first, timezone) : undefined;
+      workspace.state.studio.weekStart = local
+        ? zonedTimeToUtc(addLocalDays(local.dateKey, -((local.weekday + 6) % 7)), "00:00", timezone)
+        : nextWeekStart(workspace.createdAt, timezone);
+    }
     // Workspaces persisted before background seeding was introduced were fully seeded.
     return { ...workspace, status: workspace.status ?? "ready",
       progress: workspace.progress ?? { done: workspace.state.bookings.length, total: workspace.state.bookings.length } };
@@ -97,7 +107,12 @@ export class Repository {
   }
   claimPoolWorkspace(): Workspace | undefined {
     return this.transaction(() => {
-      const pooled = this.readyPoolWorkspace();
+      const now = new Date().toISOString();
+      let pooled = this.readyPoolWorkspace();
+      while (pooled && pooled.state.studio.weekStart !== nextWeekStart(now, pooled.state.studio.timezone)) {
+        this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(pooled.id);
+        pooled = this.readyPoolWorkspace();
+      }
       if (!pooled) return undefined;
       const workspace = this.createWorkspace(pooled.state);
       for (const event of this.listLedger(pooled.id)) this.appendLedger({ ...event, workspaceId: workspace.id });

@@ -11,6 +11,12 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+/** Local midnight on the next Monday, strictly after today's local date. */
+export function nextWeekStart(nowIso: string, tz: string): string {
+  const today = localParts(nowIso, tz);
+  return zonedTimeToUtc(addLocalDays(today.dateKey, (8 - today.weekday) % 7 || 7), "00:00", tz);
+}
+
 /** A reproducible boutique week. weekStart is normalized to its studio-local calendar day. */
 export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): State {
   const random = mulberry32(seed);
@@ -19,6 +25,7 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
   const state: State = {
     studio: {
       id: "studio-rebook", name: "Northstar Movement Studio", timezone, currency: "USD",
+      weekStart: zonedTimeToUtc(base, "00:00", timezone),
       openHours: Object.fromEntries(Array.from({ length: 7 }, (_, day) =>
         [day, [{ open: "07:00", close: day === 0 || day === 6 ? "13:00" : "21:00" }]])),
     },
@@ -129,17 +136,27 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
   return state;
 }
 
-/** These disruptions match seedStudio()'s default studio-local week. */
-export const demoDisruption: Disruption = {
-  kind: "instructor_unavailable", instructorId: "instructor-01",
-  from: zonedTimeToUtc("2026-11-09", "00:00", "America/New_York"),
-  to: zonedTimeToUtc("2026-11-10", "00:00", "America/New_York"),
-  reason: "Maya is sick and cannot teach Monday's classes.",
-};
+/** Scenario windows follow the seeded studio-local week. */
+export function demoDisruptionFor(weekStart: string, tz: string): Disruption {
+  const date = localParts(weekStart, tz).dateKey;
+  return {
+    kind: "instructor_unavailable", instructorId: "instructor-01",
+    from: zonedTimeToUtc(date, "00:00", tz),
+    to: zonedTimeToUtc(addLocalDays(date, 1), "00:00", tz),
+    reason: "Maya is sick and cannot teach Monday's classes.",
+  };
+}
 
-export const floodDisruption: Disruption = {
-  kind: "room_unavailable", roomId: "room-01",
-  from: zonedTimeToUtc("2026-11-11", "16:00", "America/New_York"),
-  to: zonedTimeToUtc("2026-11-11", "21:00", "America/New_York"),
-  reason: "A leak closes Movement Hall on Wednesday evening.",
-};
+export function floodDisruptionFor(weekStart: string, tz: string): Disruption {
+  const date = addLocalDays(localParts(weekStart, tz).dateKey, 2);
+  return {
+    kind: "room_unavailable", roomId: "room-01",
+    from: zonedTimeToUtc(date, "16:00", tz),
+    to: zonedTimeToUtc(date, "21:00", tz),
+    reason: "A leak closes Movement Hall on Wednesday evening.",
+  };
+}
+
+// Preserve the original reproducible fixtures for callers that do not select a week.
+export const demoDisruption = demoDisruptionFor("2026-11-09T00:00:00-05:00", "America/New_York");
+export const floodDisruption = floodDisruptionFor("2026-11-09T00:00:00-05:00", "America/New_York");

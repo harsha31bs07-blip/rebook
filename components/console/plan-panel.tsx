@@ -30,7 +30,8 @@ export default function PlanPanel({ details, plan, state, busy, results, onAppro
   const proposed = plan.status === "proposed";
   return <>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
-    <h2>{details.explanation.headline}</h2>
+    <h2>{plan.status === "executed" ? "Recovery complete" : details.explanation.headline}</h2>
+    {plan.status === "executed" && <p className="muted plan-context">{totals.kept + totals.moved} bookings saved · {money(totals.revenueKept)} kept · {totals.refunded} refund{totals.refunded === 1 ? "" : "s"}{results.some((result) => result.status === "PENDING") ? " (some pending)" : " processed"}.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
     <div className="stats">
       <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>

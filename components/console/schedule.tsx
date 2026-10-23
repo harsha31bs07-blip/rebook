@@ -21,7 +21,8 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan }: 
     rowHeight: zoom === "week" ? 76 : 112, barMargin: 5, eventLayout: "stack", eventStyle: "filled",
     // Week cards fill day cells; their labels retain exact times. Day view uses true hourly widths.
     fillTicks: zoom === "week", weekStartDay: 1, workingTime: visibleWorkingTime,
-    startDate: `${startKey}T07:00:00`, endDate: `${endKey}T00:00:00`,
+    autoAdjustTimeAxis: false,
+    startDate: `${startKey}T${zoom === "week" ? "00" : "07"}:00:00`, endDate: `${endKey}T00:00:00`,
     timeZone: state.studio.timezone,
     viewPreset: {
       id: `rebook-${zoom}`, tickWidth: zoom === "week" ? 240 : 150,

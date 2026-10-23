@@ -184,6 +184,51 @@ textarea { resize: vertical; min-height: 120px; }
 .placeholder-page .eyebrow { margin: 48px 0 16px; }
 .placeholder-page .muted { margin: 16px 0 32px; }
 
+.insights-app { height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.insights-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 24px 12px; flex-shrink: 0; }
+.insights-heading h1 { font-size: 23px; margin-top: 4px; }
+.insights-heading > p { font-size: 12px; }
+.insights-report { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.insights-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 24px 8px; flex-shrink: 0; }
+.insights-toolbar nav, .insights-toolbar > div { display: flex; gap: 8px; }
+.insights-toolbar nav { border: 1px solid var(--border); border-radius: 10px; padding: 3px; background: #fff; }
+.insights-toolbar button { min-height: 30px; font-size: 11px; padding: 6px 12px; }
+.insights-toolbar nav button { border: 0; background: transparent; color: var(--muted); border-radius: 7px; }
+.insights-toolbar nav button[aria-pressed="true"] { background: #eff6ff; color: var(--primary); }
+.insights-studio { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.insights-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 24px 8px; color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.insights-footer button { border: 0; background: transparent; font-size: 10px; color: var(--muted); min-height: 28px; padding: 4px; }
+.insights-storage-note { padding: 4px 24px; color: #b45309; font-size: 11px; }
+.insight-loading { flex: 1; padding: 32px; color: var(--muted); }
+.insight-loading button { margin-top: 16px; }
+.insight-empty { display: grid; align-content: center; gap: 8px; height: 100%; padding: 12px; color: var(--muted); font-size: 12px; }
+.insight-empty strong { color: var(--foreground); font-size: 14px; }
+.recovery-impact { height: 100%; overflow: auto; display: flex; flex-direction: column; justify-content: center; gap: 12px; font-size: 11px; }
+.recovery-impact label { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+.recovery-impact select { flex: 1; min-width: 0; max-width: 100%; padding: 5px 8px; background: #f8fafc; color: var(--foreground); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.impact-headline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.impact-headline strong { font-size: clamp(15px, 1.4vw, 21px); letter-spacing: -.025em; }
+.impact-headline strong > span { font-weight: 400; color: var(--muted); }
+.impact-headline .pill { white-space: nowrap; font-size: 10px; }
+.impact-bar { height: 20px; display: flex; overflow: hidden; border-radius: 6px; background: #f1f5f9; flex-shrink: 0; }
+.impact-0 { background: #15803d; }
+.impact-1 { background: #1d4ed8; }
+.impact-2 { background: #b91c1c; }
+.impact-legend { display: flex; gap: 20px; }
+.impact-legend > span { display: flex; align-items: center; gap: 6px; }
+.impact-legend i { width: 8px; height: 8px; border-radius: 2px; }
+.receipt-list { height: 100%; overflow: auto; }
+.receipt { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+.receipt:first-child { padding-top: 2px; }
+.receipt > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.receipt > div + div { margin-top: 6px; }
+.receipt code { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.receipt-completed { background: #dcfce7; color: #15803d; }
+.receipt-pending { background: #fef3c7; color: #92400e; }
+.receipt-simulated { background: #f1f5f9; color: #475569; }
+.receipt-failed, .receipt-unknown { background: #fee2e2; color: #b91c1c; }
+@media (max-width: 720px) { .insights-heading { padding: 12px 16px; } .insights-heading > p { display: none; } .insights-toolbar { padding: 0 12px 8px; flex-wrap: wrap; } .insights-toolbar button { padding: 6px 8px; } .insights-footer { padding-inline: 12px; } .insights-footer > span { max-width: 65%; } }
+
 .skeleton { background: #e2e8f0; border-radius: 6px; }
 .schedule-skeleton { height: 100%; opacity: .6; }
 .skeleton-header { height: 64px; border-radius: 0; }

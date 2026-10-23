@@ -10,6 +10,7 @@ import { useWorkspace } from "./use-workspace";
 import DisruptionPanel from "./disruption-panel";
 import PlanPanel from "./plan-panel";
 import MessagesDrawer from "./messages-drawer";
+import ConsoleHeader from "./console-header";
 
 const Schedule = dynamic(() => import("./schedule"), { ssr: false, loading: () => <ScheduleSkeleton /> });
 function ScheduleSkeleton() {
@@ -78,11 +79,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   }
 
   return <main className="console-app">
-    <header className="console-header">
-      <Link href="/" className="wordmark" aria-label="Rebook home"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span></Link>
-      <div className="header-divider" /><div className="studio-heading"><strong>{state?.studio.name ?? "Your studio"}</strong><span>{state ? weekBounds(state).label : "Loading your week…"}</span></div>
-      <div className="header-actions"><span className="pill sandbox"><span />PayPal sandbox</span><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></div>
-    </header>
+    <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
     {confirmReset && <div className="reset-confirm" role="group" aria-label="Confirm reset"><span>Start a fresh demo week? Existing sandbox transactions stay in the ledger.</span><button className="danger-button" onClick={() => void reset()}>Reset this demo</button><button onClick={() => setConfirmReset(false)}>Keep this week</button></div>}
     <div className="console-body">
       <section className="timeline-panel" aria-label="Studio schedule">

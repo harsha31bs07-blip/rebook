@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Plan, State } from "../domain/types";
+import { formatMoney } from "../domain/time";
 import { AiUnavailable, generateJson } from "./gemini";
 
 export type PlanExplanation = { headline: string; bullets: string[]; source: "template" | "gemini" };
@@ -10,13 +11,15 @@ const spelledNumber = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|te
 /** Templates are immediate by default; callers may explicitly request a guarded wording pass. */
 export async function explainPlan(plan: Plan, state: State, opts: { rephrase?: boolean } = {}): Promise<PlanExplanation> {
   const totals = plan.totals;
+  const refund = formatMoney(totals.refundAmount, state.studio.currency);
+  const revenue = formatMoney(totals.revenueKept, state.studio.currency);
   const template: PlanExplanation = {
     headline: "Your studio recovery plan is ready",
     bullets: [
       `${totals.sessionsAffected} sessions affected; ${totals.kept} bookings stay at their original time.`,
       `${totals.moved} bookings move to a new time.`,
-      `${totals.refunded} bookings receive refunds totaling ${state.studio.currency} ${totals.refundAmount}.`,
-      `${state.studio.currency} ${totals.revenueKept} in revenue stays with your studio.`,
+      `${totals.refunded} bookings receive refunds totaling ${refund}.`,
+      `${revenue} in revenue stays with your studio.`,
     ],
     source: "template",
   };
@@ -30,7 +33,7 @@ export async function explainPlan(plan: Plan, state: State, opts: { rephrase?: b
     // Per-line equality also rejects omitted/repeated amounts and moving a count onto another claim.
     if (data.headline !== template.headline || data.bullets.length !== template.bullets.length ||
       data.bullets.some((bullet, index) => spelledNumber.test(bullet) || numbers(bullet) !== numbers(template.bullets[index]) ||
-        (template.bullets[index].includes(state.studio.currency) && !bullet.includes(state.studio.currency)))) return template;
+        (index === 2 && !bullet.includes(refund)) || (index === 3 && !bullet.includes(revenue)))) return template;
     return { ...data, source: "gemini" };
   } catch (error) {
     if (!(error instanceof AiUnavailable)) throw error;

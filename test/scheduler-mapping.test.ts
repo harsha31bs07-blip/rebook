@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classColors, disruptionLabel, formatTime, mapSchedule, weekBounds } from "../lib/client/scheduler-mapping";
+import { classColors, disruptionLabel, formatDisruptionWindow, formatTime, interpretationSource, mapSchedule, recoveryBounds, visibleWorkingTime, weekBounds } from "../lib/client/scheduler-mapping";
+import { localParts } from "../lib/domain/time";
 import { demoDisruption, seedStudio } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { applyPlan } from "../lib/solver/validate";
@@ -20,6 +21,7 @@ describe("scheduler presentation mapping", () => {
         expect(mapped.details[session.id].location).toBe(mode === "instructors"
           ? state.rooms.find((room) => room.id === session.roomId)!.name
           : state.instructors.find((instructor) => instructor.id === session.instructorId)!.name);
+        expect(mapped.details[session.id].room).toBe(state.rooms.find((room) => room.id === session.roomId)!.name);
       }
       expect(mapped.dependencies).toEqual([]);
       expect(mapped.resourceTimeRanges).toEqual([]);
@@ -35,14 +37,20 @@ describe("scheduler presentation mapping", () => {
     const replacements = plan.sessionChanges.filter((change) => change.after);
     expect(mapped.events.filter((event) => String(event.cls).includes("ghost"))).toHaveLength(replacements.length);
     expect(mapped.events.filter((event) => String(event.cls).includes("replacement"))).toHaveLength(replacements.length);
-    expect(mapped.dependencies).toHaveLength(replacements.length);
+    expect(mapped.dependencies).toHaveLength(replacements.filter((change) => change.remedy === "move_time").length);
     for (const change of replacements) {
       expect(mapped.events.find((event) => event.id === `${change.sessionId}-new`)).toMatchObject({
         resourceId: change.after!.instructorId, startDate: change.after!.start, endDate: change.after!.end,
       });
-      expect(mapped.dependencies.find((dependency) => dependency.id === `${change.sessionId}-recovery`)).toMatchObject({
-        from: `${change.sessionId}-original`, to: `${change.sessionId}-new`, type: 2,
-      });
+      if (change.remedy === "move_time") {
+        expect(mapped.dependencies.find((dependency) => dependency.id === `${change.sessionId}-recovery`)).toMatchObject({
+          from: `${change.sessionId}-original`, to: `${change.sessionId}-new`, type: 2,
+        });
+        expect(mapped.details[`${change.sessionId}-new`].badge).toBe("Moved");
+      } else {
+        expect(mapped.dependencies.some((dependency) => dependency.id === `${change.sessionId}-recovery`)).toBe(false);
+        expect(mapped.details[`${change.sessionId}-new`].badge).toBe("Covered by Alex");
+      }
       const session = state.sessions.find((item) => item.id === change.sessionId)!;
       const retained = state.bookings.filter((booking) => booking.sessionId === session.id &&
         !plan.bookingActions.some((action) => action.bookingId === booking.id && action.action === "refund")).length;
@@ -98,5 +106,38 @@ describe("scheduler presentation mapping", () => {
     expect(label.subject).toContain("Maya");
     expect(label.window).toContain("Mon, Nov 9");
     expect(Object.keys(classColors)).toHaveLength(6);
+  });
+  it.each(["2026-10-26T04:00:00Z", "2026-11-09T05:00:00Z"])("includes every class in visible working time for %s, including 7am", (week) => {
+    const state = seedStudio(42, week);
+    const mapped = mapSchedule(state, "instructors");
+    expect(state.sessions.filter((session) => localParts(session.start, state.studio.timezone).minutesOfDay === 420)).toHaveLength(7);
+    for (const event of mapped.events) {
+      const start = localParts(String(event.startDate), state.studio.timezone);
+      const end = localParts(String(event.endDate), state.studio.timezone);
+      expect(start.dateKey).toBe(end.dateKey);
+      expect(start.minutesOfDay).toBeGreaterThanOrEqual(visibleWorkingTime.fromHour * 60);
+      expect(end.minutesOfDay).toBeLessThanOrEqual(visibleWorkingTime.toHour * 60);
+    }
+  });
+  it("focuses preview and approved recovery on all affected days and retains only Updated badges after approval", () => {
+    const state = seedStudio();
+    const plan = replan(state, demoDisruption);
+    expect(recoveryBounds(state, plan)).toEqual({ startKey: "2026-11-09", endKey: "2026-11-11" });
+    const settled = mapSchedule(applyPlan(state, plan), "instructors", undefined, plan);
+    expect(settled.dependencies).toEqual([]);
+    expect(settled.resourceTimeRanges).toEqual([]);
+    expect(settled.events.some((event) => String(event.cls).match(/ghost|replacement/))).toBe(false);
+    for (const change of plan.sessionChanges) expect(settled.details[change.sessionId].badge).toBe("Updated");
+    expect(mapSchedule(applyPlan(state, plan), "instructors").events.every((event) => !String(event.cls).includes("updated"))).toBe(true);
+  });
+  it("formats full local days, inclusive multi-day windows, and partial days, including DST", () => {
+    const tz = "America/New_York";
+    expect(formatDisruptionWindow("2026-10-26T04:00:00Z", "2026-10-27T04:00:00Z", tz)).toBe("All day Mon, Oct 26");
+    expect(formatDisruptionWindow("2026-10-26T04:00:00Z", "2026-10-29T04:00:00Z", tz)).toBe("Mon, Oct 26 - Wed, Oct 28 (all day)");
+    expect(formatDisruptionWindow("2026-10-28T16:00:00Z", "2026-10-28T21:00:00Z", tz)).toBe("Wed, Oct 28, 12:00 PM - 5:00 PM");
+    expect(formatDisruptionWindow("2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z", tz)).toBe("All day Sun, Nov 1");
+    expect(interpretationSource("gemini", "gemini-2.5-flash-lite")).toBe("Gemini Flash-Lite");
+    expect(interpretationSource("gemini", "gemini-2.5-flash")).toBe("Gemini Flash");
+    expect(interpretationSource("rules")).toBe("Rules");
   });
 });

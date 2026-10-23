@@ -2,6 +2,8 @@ import type { Customer, Studio } from "./types";
 
 export const MINUTE = 60_000;
 export const DAY = 24 * 60 * MINUTE;
+export const formatMoney = (value: string, currency: string): string =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency, useGrouping: false }).format(Number(value));
 export const iso = (value: string | number): string => new Date(value).toISOString();
 export const addMinutes = (value: string, minutes: number): string => iso(Date.parse(value) + minutes * MINUTE);
 export const addDays = (value: string, days: number): string => iso(Date.parse(value) + days * DAY);

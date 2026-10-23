@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import type { Interpretation } from "@/lib/client/api";
 import type { State } from "@/lib/domain/types";
-import { disruptionLabel } from "@/lib/client/scheduler-mapping";
+import { disruptionLabel, interpretationSource } from "@/lib/client/scheduler-mapping";
 
 const examples = ["Maya has the flu and can't teach Monday", "The Cycle Lab AC is broken Wednesday afternoon", "Studio closed Saturday morning for a burst pipe"];
 
@@ -23,7 +23,7 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
       <p className="try-label">Or try an example</p><div className="examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
-      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill">{interpretation.source === "gemini" ? `Gemini ${interpretation.model ?? ""}` : "Rules"}</span></div>
+      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill">{interpretationSource(interpretation.source, interpretation.model)}</span></div>
       <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone} · {Math.round(interpretation.confidence * 100)}% confidence</p>
       {interpretation.notes.length > 0 && <ul>{interpretation.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
       <div className="button-row"><button className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>

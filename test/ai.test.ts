@@ -206,6 +206,9 @@ describe("plan explanations and customer messages", () => {
     const result = await explainPlan(plan, state);
     expect(result.source).toBe("template");
     expect(result.bullets).toHaveLength(4);
+    expect(result.bullets[2]).toContain("$95.00");
+    expect(result.bullets[3]).toContain("$96.00");
+    expect(result.bullets.join(" ")).not.toContain("USD");
     for (const value of Object.values(plan.totals)) expect(result.bullets.join(" ")).toContain(String(value));
     expect(fetchMock).not.toHaveBeenCalled();
   });

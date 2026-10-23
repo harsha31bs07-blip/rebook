@@ -12,7 +12,7 @@ import { POST as reset } from "../app/api/workspaces/[id]/reset/route";
 import { POST as interpret } from "../app/api/workspaces/[id]/interpret/route";
 import { GET as planDetails } from "../app/api/workspaces/[id]/plans/[planId]/route";
 import { demoDisruption, demoDisruptionFor } from "../lib/seed/seed";
-import { DAY } from "../lib/domain/time";
+import { addLocalDays, localParts, zonedTimeToUtc } from "../lib/domain/time";
 import { replan } from "../lib/solver/replan";
 import { closeRepository, getRepository } from "../lib/store";
 import { seedStudio } from "../lib/seed/seed";
@@ -81,12 +81,33 @@ describe("workspace API", () => {
     const response = await propose(post({ disruption }), context(id));
     expect(response.status).toBe(200);
     const plan = await response.json();
-    const horizonDays = Math.ceil((Date.parse(weekStart) - Date.parse(now)) / DAY) + 14;
-    const expected = replan(workspace.state, disruption, { now, horizonDays });
+    const horizonEnd = zonedTimeToUtc(addLocalDays(localParts(weekStart, timezone).dateKey, 7), "00:00", timezone);
+    const expected = replan(workspace.state, disruption, { now, horizonEnd });
     expect(plan).toMatchObject(expected);
     expect(plan.now).toBe(now);
     expect(plan.totals.sessionsAffected).toBe(3);
     expect(new Set(plan.bookingActions.map((action: { action: string }) => action.action))).toEqual(new Set(["keep", "move", "refund"]));
+  });
+  it.each(["2026-10-26T04:00:00Z", "2026-11-09T05:00:00Z"])("never moves outside the viewed week starting %s", async (week) => {
+    vi.setSystemTime(new Date("2026-10-23T15:00:00Z"));
+    const state = seedStudio(42, week);
+    const { id } = getRepository().createWorkspace(state);
+    const startKey = localParts(week, state.studio.timezone).dateKey;
+    const horizonEnd = zonedTimeToUtc(addLocalDays(startKey, 7), "00:00", state.studio.timezone);
+    const response = await propose(post({ disruption: demoDisruptionFor(week, state.studio.timezone) }), context(id));
+    expect(response.status).toBe(200);
+    const plan = await response.json();
+    expect(plan.sessionChanges.filter((change: { remedy: string }) => change.remedy === "move_time")).toHaveLength(2);
+    for (const change of plan.sessionChanges) {
+      expect(Date.parse(change.after.start)).toBeGreaterThanOrEqual(Date.parse(week));
+      expect(Date.parse(change.after.end)).toBeLessThanOrEqual(Date.parse(horizonEnd));
+      if (change.remedy === "move_time") {
+        expect(localParts(change.after.start, state.studio.timezone).dateKey).toBe(addLocalDays(startKey, 1));
+      }
+    }
+    // No fallback into next week when the entire visible week is disrupted (including DST Sunday).
+    const closed = await (await propose(post({ disruption: { kind: "closure", from: week, to: horizonEnd } }), context(id))).json();
+    expect(closed.sessionChanges.every((change: { remedy: string }) => change.remedy === "cancel")).toBe(true);
   });
   it("returns status and progress and rejects plans and approval until ready", async () => {
     const repository = getRepository();

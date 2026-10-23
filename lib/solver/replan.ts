@@ -19,7 +19,8 @@ const reasons: Record<Remedy, string> = {
 
 /**
  * Greedy, deterministic allocation in session-ID order. Each chosen remedy reserves its resources.
- * Default horizon is [now, now + 7 days], including the entire replacement duration.
+ * Default horizon ends at now + 7 days; horizonEnd supplies an exact exclusive boundary.
+ * Moves never precede the original session, and must finish inside the horizon.
  * If now is omitted, the earliest session start is used (or disruption.from for an empty state).
  * Move-time slots use a 15-minute grid plus original times and resource/opening boundaries.
  * Lower scores win; ties use start, instructor ID, room ID, then remedy.
@@ -30,7 +31,7 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
   const now = iso(options.now ?? state.sessions.reduce((earliest, session) =>
     Date.parse(session.start) < Date.parse(earliest) ? session.start : earliest,
   state.sessions[0]?.start ?? disruption.from));
-  const horizon = Date.parse(now) + (options.horizonDays ?? 7) * DAY;
+  const horizon = options.horizonEnd ? Date.parse(options.horizonEnd) : Date.parse(now) + (options.horizonDays ?? 7) * DAY;
   const tz = state.studio.timezone;
   const weights = { ...defaultWeights, ...options.weights };
   const affected = affectedSessions(state, disruption, now);
@@ -74,13 +75,14 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
         ...instructors.flatMap((instructor) => (instructor.unavailability ?? []).map((window) => Date.parse(window.to)))];
       const originalClock = localParts(session.start, tz).minutesOfDay;
       const originalTime = `${String(Math.floor(originalClock / 60)).padStart(2, "0")}:${String(Math.floor(originalClock % 60)).padStart(2, "0")}`;
-      for (let dateKey = localParts(now, tz).dateKey;
+      const earliest = Math.max(Date.parse(now), Date.parse(session.start));
+      for (let dateKey = localParts(iso(earliest), tz).dateKey;
         Date.parse(zonedTimeToUtc(dateKey, "00:00", tz)) < horizon; dateKey = addLocalDays(dateKey, 1)) {
         const day = Date.parse(zonedTimeToUtc(dateKey, "00:00", tz));
         const dayOfWeek = localParts(iso(day), tz).weekday;
         const hours = state.studio.openHours[dayOfWeek] ?? [];
         for (const window of hours) {
-          const open = Math.max(Date.parse(zonedTimeToUtc(dateKey, window.open, tz)), Date.parse(now));
+          const open = Math.max(Date.parse(zonedTimeToUtc(dateKey, window.open, tz)), earliest);
           const last = Math.min(Date.parse(zonedTimeToUtc(dateKey, window.close, tz)), horizon) - duration;
           const slots = new Set<number>([open, Date.parse(zonedTimeToUtc(dateKey, originalTime, tz)) + (originalClock % 1) * MINUTE]);
           for (let start = day + Math.ceil((open - day) / SLOT_MS) * SLOT_MS; start <= last; start += SLOT_MS) slots.add(start);

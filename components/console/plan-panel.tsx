@@ -4,9 +4,9 @@ import dynamic from "next/dynamic";
 import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api";
 import type { State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
+import { formatMoney } from "@/lib/domain/time";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" aria-label="Loading booking actions" /> });
-const money = (value: string) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(value));
 
 export function RefundResults({ results, state }: { results: ExecutionResult[]; state: State }) {
   if (!results.length) return null;
@@ -25,6 +25,7 @@ export default function PlanPanel({ details, plan, state, busy, results, onAppro
   onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
+  const money = (value: string) => formatMoney(value, state.studio.currency);
   const label = disruptionLabel(plan, state);
   const proposed = plan.status === "proposed";
   return <>

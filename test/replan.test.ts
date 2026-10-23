@@ -379,6 +379,15 @@ describe("time and money boundaries", () => {
     after.start = zonedTimeToUtc("2026-11-02", "19:00", tz);
     expect(scoreCandidate("move_time", before, after, [], { ...defaultWeights, delay: 0 }, tz)).toBe(defaultWeights.moveTime + defaultWeights.weekdayChange);
   });
+  it("prefers next-day recovery over later days and next week's same weekday", () => {
+    const before = fixture().sessions[0];
+    const score = (days: number) => scoreCandidate("move_time", before,
+      { ...before, start: iso(Date.parse(before.start) + days * DAY), end: iso(Date.parse(before.end) + days * DAY) },
+      [], defaultWeights, "UTC");
+    expect(score(1)).toBeLessThan(score(2));
+    expect(score(2)).toBeLessThan(score(7));
+    expect(score(2) - score(1)).toBe(40);
+  });
 
   it("uses half-open intervals and normalizes ISO offsets", () => {
     expect(overlaps("2026-11-09T10:00:00Z", "2026-11-09T11:00:00Z", "2026-11-09T11:00:00Z", "2026-11-09T12:00:00Z")).toBe(false);

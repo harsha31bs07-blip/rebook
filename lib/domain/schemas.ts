@@ -90,6 +90,7 @@ export const WeightsSchema = z.object({
 });
 export const ReplanOptionsSchema = z.object({
   horizonDays: z.number().int().min(0).max(365).optional(), now: IsoSchema.optional(),
+  horizonEnd: IsoSchema.optional(),
   weights: WeightsSchema.partial().optional(),
 });
 

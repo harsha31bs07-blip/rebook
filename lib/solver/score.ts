@@ -3,7 +3,7 @@ import { byId, DAY, fitsPreferences, fromCents, localParts, MINUTE, toCents } fr
 
 export const defaultWeights: Weights = {
   substitute: 0, moveRoom: 1_000_000, moveTime: 2_000_000, cancel: 1_000_000_000,
-  weekdayChange: 100, timeShift: 0.01, delay: 0.0001, refund: 10,
+  weekdayChange: 60, timeShift: 0.01, delay: 40, refund: 10,
 };
 
 export const isActiveBooking = (booking: Booking): boolean =>
@@ -50,7 +50,8 @@ export function scoreCandidate(
     const replacement = localParts(after.start, tz);
     score += (original.weekday === replacement.weekday ? 0 : weights.weekdayChange);
     score += Math.abs(replacement.minutesOfDay - original.minutesOfDay) * weights.timeShift;
-    score += Math.abs(Date.parse(after.start) - Date.parse(before.start)) / DAY * weights.delay;
+    // Calendar days keep the original clock preferable within a day, including across DST.
+    score += Math.abs(Date.parse(replacement.dateKey) - Date.parse(original.dateKey)) / DAY * weights.delay;
   }
   return score;
 }

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Interpretation, type PlanDetails } from "@/lib/client/api";
 import { classColors, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
-import type { State } from "@/lib/domain/types";
+import type { Plan, State } from "@/lib/domain/types";
 import { useWorkspace } from "./use-workspace";
 import DisruptionPanel from "./disruption-panel";
 import PlanPanel from "./plan-panel";
@@ -23,6 +23,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const [interpretation, setInterpretation] = useState<Interpretation>();
   const [details, setDetails] = useState<PlanDetails>();
   const [basis, setBasis] = useState<State>();
+  const [updatedPlan, setUpdatedPlan] = useState<Plan>();
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [mode, setMode] = useState<RowMode>("instructors");
@@ -54,13 +55,14 @@ export default function OwnerConsole({ id }: { id: string }) {
     await run("plan", async () => {
       const proposed = await api.plan(id, interpretation.disruption);
       const next = await api.details(id, proposed.id);
-      setBasis({ ...state, sessions: next.sessions }); setDetails(next); await refresh();
+      setBasis({ ...state, sessions: next.sessions }); setDetails(next); setUpdatedPlan(undefined); setZoom("week"); await refresh();
     });
   }
   async function approve() {
     if (!plan) return;
     await run("approve", async () => {
       const outcome = await api.approve(id, plan.id);
+      setUpdatedPlan(outcome.plan);
       setDetails((previous) => previous ? { ...previous, plan: outcome.plan } : previous); await refresh();
       const completed = outcome.results.filter((item) => item.status === "COMPLETED").length;
       const simulated = outcome.results.filter((item) => item.status === "SIMULATED").length;
@@ -72,7 +74,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   }
   async function reset() {
     setConfirmReset(false);
-    await run("reset", async () => { clearPlan(); setText(""); await api.reset(id); await refresh(); setToast("Demo reset. Your new week is ready."); });
+    await run("reset", async () => { clearPlan(); setUpdatedPlan(undefined); setText(""); await api.reset(id); await refresh(); setToast("Demo reset. Your new week is ready."); });
   }
 
   return <main className="console-app">
@@ -86,9 +88,9 @@ export default function OwnerConsole({ id }: { id: string }) {
       <section className="timeline-panel" aria-label="Studio schedule">
         <div className="timeline-heading"><div><p className="eyebrow">Your studio, in sync</p><h1>The week ahead</h1></div><span className={`schedule-state ${preview ? "preview-state" : ""}`}>{preview ? "Preview · awaiting approval" : ready ? "Schedule up to date" : "Getting ready"}</span></div>
         <div className="schedule-toolbar"><div className="row-controls"><span className="muted">Rows:</span><div className="segmented" aria-label="Schedule rows"><button aria-pressed={mode === "instructors"} onClick={() => setMode("instructors")}>Instructors</button><button aria-pressed={mode === "rooms"} onClick={() => setMode("rooms")}>Rooms</button></div></div><div className="zoom-controls">{zoom === "day" && <><button aria-label="Previous day" disabled={day === 0} onClick={() => setDay(day - 1)}>‹</button><span>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]}</span><button aria-label="Next day" disabled={day === 6} onClick={() => setDay(day + 1)}>›</button></>}<div className="segmented" aria-label="Schedule zoom"><button aria-pressed={zoom === "day"} onClick={() => setZoom("day")}>Day</button><button aria-pressed={zoom === "week"} onClick={() => setZoom("week")}>Week</button></div></div></div>
-        {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Arrows connect each change</span></div>}
+        {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Arrows connect time moves</span></div>}
         <div className="schedule-canvas">
-          {timelineState && ready ? <Schedule key={`${id}-${mode}-${zoom}-${day}`} state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} /> : <ScheduleSkeleton />}
+          {timelineState && ready ? <Schedule key={`${id}-${mode}-${zoom}-${day}`} state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} /> : <ScheduleSkeleton />}
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2>{workspace?.status === "failed" ? "We couldn’t prepare this demo" : "Preparing your studio"}</h2><p className="muted">{workspace?.status === "failed" ? "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
         </div>
         <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · 7am–9pm · Scroll to explore</span></footer>

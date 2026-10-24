@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AgAiToolLabelParams, AgDefaultRegistry, AgFieldDefinition } from "ag-studio";
+import type { AgAiTool, AgAiToolContext, AgAiToolInvocation, AgAiToolLabelParams, AgDefaultRegistry, AgFieldDefinition } from "ag-studio";
 import { buildInsights } from "../lib/insights/data";
-import { buildRecoveryAi } from "../lib/insights/ai";
+import { buildRecoveryAi, withDelegationSummary } from "../lib/insights/ai";
 import { agentTools, recoveryDelegates } from "../lib/insights/agent-protocol";
-import { heatmapCells, heatmapDayKey, heatmapDayLabel } from "../lib/insights/heatmap";
+import { heatmapCells, heatmapDayKey, heatmapDayLabel, heatmapWeekDays } from "../lib/insights/heatmap";
 import { recoveryMetric } from "../lib/insights/metrics";
 import { initialReport, reportLayout, reportPages, REPORT_TRACKS } from "../lib/insights/report";
 import { buildStudioData } from "../lib/insights/studio-data";
@@ -43,7 +43,7 @@ describe("C4 Studio depth", () => {
 
   it("aggregates utilisation per instructor/day without repeating session capacity", () => {
     const cells = heatmapCells([
-      { instructor: "Maya", local_day: new Date("2026-10-26T00:00:00Z"), booked: 8, capacity: 10, disrupted: false },
+      { instructor: "Maya", local_day: new Date(2026, 9, 26), booked: 8, capacity: 10, disrupted: false },
       { instructor: "Maya", local_day: "2026-10-26", booked: 4, capacity: 10, disrupted: true },
       { instructor: "Leo", local_day: "2026-10-26", booked: 0, capacity: 0 },
       { instructor: "Maya", local_day: "2026-10-27", booked: 3, capacity: 6 },
@@ -55,6 +55,28 @@ describe("C4 Studio depth", () => {
     expect(cells[2]).toMatchObject({ day: "2026-10-27", utilisation: 0.5 });
     expect(heatmapDayKey(cells[0].dayValue)).toBe("2026-10-26");
     expect(heatmapDayLabel("2026-10-26")).toBe("Mon Oct 26");
+  });
+
+  it("keeps the heatmap's viewer-local Date values on Monday and displays the workspace's seven days", () => {
+    expect(heatmapDayKey(new Date(2026, 9, 26))).toBe("2026-10-26");
+    const days = heatmapWeekDays("2026-10-26");
+    expect(days).toHaveLength(7);
+    expect(days.map(heatmapDayLabel)).toEqual(["Mon Oct 26", "Tue Oct 27", "Wed Oct 28", "Thu Oct 29", "Fri Oct 30", "Sat Oct 31", "Sun Nov 1"]);
+    expect(days).not.toContain("2026-10-25");
+  });
+
+  it("hides empty delegation hand-backs while retaining real summaries and failures", async () => {
+    const execute = vi.fn().mockResolvedValue({ success: true, response: "(the delegate finished without a summary)" });
+    const tool: AgAiTool = { name: "delegate_to", description: "Delegate", kind: "client", schema: () => undefined, execute };
+    const wrapped = withDelegationSummary(tool);
+    const call = {} as AgAiToolInvocation, context = {} as AgAiToolContext;
+    expect(await wrapped.execute!(call, context)).toEqual({ success: true, response: "" });
+    const summary = { success: true, response: "Added a chart: Refunds by reason" };
+    execute.mockResolvedValue(summary);
+    expect(await wrapped.execute!(call, context)).toEqual(summary);
+    const failure = { success: false, issues: [{ message: "Chart could not be added" }] };
+    execute.mockResolvedValue(failure);
+    expect(await wrapped.execute!(call, context)).toEqual(failure);
   });
 
   it("shows explicit empty KPI values and computes applied/issued totals in cents", () => {

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { BryntumScheduler, type BryntumSchedulerProps } from "@bryntum/scheduler-react";
 import { StringHelper, TimeZoneHelper, type ResourceModel } from "@bryntum/scheduler";
 import { checkAdjustment, type OwnerAdjustment } from "@/lib/solver/adjust";
 import type { Plan, State } from "@/lib/domain/types";
-import { addLocalDays } from "@/lib/domain/time";
-import { mapSchedule, recoveryBounds, resourceUtilisation, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
+import { addLocalDays, zonedTimeToUtc } from "@/lib/domain/time";
+import { mapSchedule, recoveryBounds, recoveryDropStart, resourceUtilisation, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
 
 export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, highlightedSessionId, busy, onAdjust, onMove }: {
   state: State; mode: RowMode; zoom: "day" | "week"; day: number; plan?: Plan; updatedPlan?: Plan; highlightedSessionId?: string; busy?: boolean; onAdjust?: (input: OwnerAdjustment) => Promise<void>; onMove?: (sessionId: string) => void;
@@ -23,16 +23,17 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     return mapped;
   }, [state, mode, plan, updatedPlan, highlightedSessionId]);
   const bounds = weekBounds(state);
-  // Axis dates represent wall time in the studio; event ISO instants are converted by timeZone.
+  // Initial axis bounds are instants: the project's timeZone converts them along with events.
   const startKey = zoom === "day" ? addLocalDays(bounds.startKey, day) : bounds.startKey;
   const endKey = addLocalDays(startKey, zoom === "day" ? 1 : 7);
   const [config] = useState<BryntumSchedulerProps>(() => ({
-    height: "100%", width: "100%", readOnly: true, snap: true, multiEventSelect: false,
+    height: "100%", width: "100%", snap: true, multiEventSelect: false,
     rowHeight: 112, barMargin: 5, eventLayout: "stack", eventStyle: "filled",
     // Week cards fill day cells; their labels retain exact times. Day view uses true hourly widths.
     fillTicks: zoom === "week", weekStartDay: 1, workingTime: visibleWorkingTime,
     autoAdjustTimeAxis: false,
-    startDate: `${startKey}T${zoom === "week" ? "00" : "07"}:00:00`, endDate: `${endKey}T00:00:00`,
+    startDate: zonedTimeToUtc(startKey, zoom === "week" ? "00:00" : "07:00", state.studio.timezone),
+    endDate: zonedTimeToUtc(endKey, "00:00", state.studio.timezone),
     timeZone: state.studio.timezone,
     viewPreset: {
       id: `rebook-${zoom}`, tickWidth: zoom === "week" ? 240 : 150,
@@ -43,12 +44,13 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     getDateConstraints: () => ({ start: new Date(`${bounds.startKey}T00:00:00`), end: new Date(`${addLocalDays(bounds.startKey, 7)}T00:00:00`) }),
     eventDragFeature: {
       constrainDragToTimeline: true, constrainDragToResource: false, copyKey: "", showTooltip: true, showExactDropPosition: true,
-      validatorFn: ({ eventRecords, startDate, newResource }) => {
+      validatorFn: ({ eventRecords, startDate, newResource }, event) => {
         const current = latest.current;
         const change = current.plan?.sessionChanges.find((item) => `${item.sessionId}-new` === String(eventRecords[0]?.id));
         if (!current.plan || !change?.after || current.busy || !current.onAdjust || !newResource) return { valid: false, message: "Only recovery blocks in a preview can be moved." };
+        const target = zoom === "week" ? schedulerRef.current?.instance.getDateFromDomEvent(event, "floor") ?? startDate : startDate;
         return checkAdjustment(current.state, current.plan, { sessionId: change.sessionId,
-          start: TimeZoneHelper.fromTimeZone(startDate, current.state.studio.timezone).toISOString(),
+          start: recoveryDropStart(change.after.start, target, current.state.studio.timezone, zoom),
           ...(current.mode === "instructors" ? { instructorId: String(newResource.id) } : { roomId: String(newResource.id) }) });
       },
     }, eventResizeFeature: false, eventDragCreateFeature: false,
@@ -73,7 +75,8 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
   useEffect(() => {
     const scheduler = schedulerRef.current?.instance;
     if (!scheduler || zoom !== "week" || !focusStart || !focusEnd) return;
-    const startDate = new Date(`${focusStart}T07:00:00`);
+    // Runtime timeline methods use wall dates after the project's initial timezone conversion.
+    const startDate = new Date(`${focusStart}T00:00:00`);
     const endDate = new Date(`${focusEnd}T00:00:00`);
     const days = Math.round((Date.parse(focusEnd) - Date.parse(focusStart)) / 86400000);
     const fit = () => {
@@ -99,8 +102,12 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),
       ...(zoom === "day" && mode === "rooms" ? [{ tag: "span", text: info.room }] : []),
       ...(info.badge ? [{ tag: "span", className: "session-badge", text: info.badge }] : []),
+      ...(plan?.sessionChanges.some((change) => change.after && `${change.sessionId}-new` === String(eventRecord.id)) && onMove ? [{
+        tag: "button", type: "button", className: "recovery-move", text: "Move", disabled: Boolean(busy),
+        "aria-label": `Move ${info.title} to…`, "aria-haspopup": "dialog",
+      }] : []),
     ] }];
-  }, [data.details, zoom, mode]);
+  }, [data.details, zoom, mode, plan, onMove, busy]);
   const tooltip = useMemo(() => ({ template: ({ eventRecord }: { eventRecord: { id: string | number } }) => {
     const info = data.details[String(eventRecord.id)];
     const location = info && (mode === "rooms" ? `${info.room} · ${info.location}` : info.location);
@@ -118,16 +125,39 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     },
   }], [state, mode, plan, zoom, day]);
   const editable = Boolean(plan && onAdjust && !busy);
-  return <><BryntumScheduler ref={schedulerRef} {...config} resources={data.resources} events={data.events}
+  useEffect(() => {
+    const scheduler = schedulerRef.current?.instance;
+    scheduler?.features.eventDrag.setConfig({ disabled: !editable });
+  }, [editable]);
+  function openMove(event: SyntheticEvent<HTMLElement>) {
+    if (!editable || !onMove) return;
+    const record = schedulerRef.current?.instance.resolveEventRecord(event.target as HTMLElement);
+    const change = plan?.sessionChanges.find((item) => item.after && `${item.sessionId}-new` === String(record?.id));
+    if (change) { event.preventDefault(); event.stopPropagation(); onMove(change.sessionId); }
+  }
+  return <div className="schedule-interactions" onClickCapture={(event) => {
+    if ((event.target as HTMLElement).closest(".recovery-move")) openMove(event);
+  }} onKeyDownCapture={(event) => {
+    if (event.key === "Enter" || event.key === " ") openMove(event);
+  }}><BryntumScheduler ref={schedulerRef} {...config} resources={data.resources} events={data.events}
     dependencies={data.dependencies} resourceTimeRanges={data.resourceTimeRanges} timeRanges={data.timeRanges}
     columns={columns} readOnly={!editable}
-    onBeforeEventDrag={({ eventRecord }) => editable && Boolean(plan?.sessionChanges.some((item) => item.after && `${item.sessionId}-new` === String(eventRecord.id)))}
-    onBeforeEventDropFinalize={({ context }) => {
+    onBeforeEventDrag={({ eventRecord, domEvent }) => editable && !(domEvent.target as HTMLElement).closest("button") && Boolean(plan?.sessionChanges.some((item) => item.after && `${item.sessionId}-new` === String(eventRecord.id)))}
+    onBeforeEventDropFinalize={({ context, domEvent }) => {
       context.async = true;
       const change = plan?.sessionChanges.find((item) => `${item.sessionId}-new` === String(context.eventRecords[0]?.id));
-      if (!editable || !change || !onAdjust || !context.valid) { context.finalize(false); return; }
+      if (!editable || !change?.after || !onAdjust || !context.valid) { context.finalize(false); return; }
+      const target = zoom === "week" ? schedulerRef.current?.instance.getDateFromDomEvent(domEvent, "floor") ?? context.startDate : context.startDate;
+      const start = recoveryDropStart(change.after.start, target, state.studio.timezone, zoom);
+      context.startDate = TimeZoneHelper.toTimeZone(new Date(start), state.studio.timezone);
+      context.endDate = TimeZoneHelper.toTimeZone(new Date(Date.parse(start) + Date.parse(change.after.end) - Date.parse(change.after.start)), state.studio.timezone);
+      for (const drop of context.dropData.events) {
+        if (String(drop.eventRecord.id) === `${change.sessionId}-new`) {
+          drop.startDate = context.startDate; drop.endDate = context.endDate;
+        }
+      }
       setDropError("");
-      void onAdjust({ sessionId: change.sessionId, start: TimeZoneHelper.fromTimeZone(context.startDate, state.studio.timezone).toISOString(),
+      void onAdjust({ sessionId: change.sessionId, start,
         ...(mode === "instructors" ? { instructorId: String(context.newResource.id) } : { roomId: String(context.newResource.id) }) })
         .then(() => context.finalize(true), (error: unknown) => {
           setDropError(error instanceof Error ? error.message : "This placement is unavailable.");
@@ -135,11 +165,11 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
         });
     }}
     onEventKeyDown={({ eventRecords, event }) => {
-      if (event.key !== "Enter" || !editable) return;
+      if (!["Enter", " "].includes(event.key) || !editable) return;
       const change = plan?.sessionChanges.find((item) => item.after && `${item.sessionId}-new` === String(eventRecords[0]?.id));
       if (change) { event.preventDefault(); onMove?.(change.sessionId); }
     }}
     eventRenderer={renderer} eventTooltipFeature={tooltip} labelsFeature={false} />
     {dropError && <div className="drop-reason" role="tooltip"><span role="alert">{dropError}</span><button aria-label="Dismiss move error" onClick={() => setDropError("")}>Dismiss</button></div>}
-    </>;
+    </div>;
 }

@@ -8,7 +8,8 @@ import { buildStudioData } from "@/lib/insights/studio-data";
 import { buildRecoveryAi } from "@/lib/insights/ai";
 import { initialReport, REPORT_STATE_VERSION, reportLayout, reportPages, restoreReportState } from "@/lib/insights/report";
 import { rebookStudioTheme } from "@/lib/insights/theme";
-import { customWidgets, type StudioRegistry } from "./widgets";
+import { customWidgets, StudioWeekContext, type StudioRegistry } from "./widgets";
+import { localParts } from "@/lib/domain/time";
 import { recoveryToolDisplay } from "./tool-cards";
 import styles from "./insights.module.css";
 import { createWebMcpBridge } from "../../lib/webmcp/bridge";
@@ -65,14 +66,14 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
     </div>
     <p className={styles.pageDescription}>{reportPages.find((page) => page.id === selectedPage)?.description}</p>
     {notice && <p className="insights-storage-note" role="status">{notice}</p>}
-    <div className="insights-studio" ref={canvasRef}><AgStudioProvider modules={modules} licenseKey={process.env.NEXT_PUBLIC_AG_STUDIO_LICENSE || undefined}>
+    <div className="insights-studio" ref={canvasRef}><StudioWeekContext value={localParts(data.studio.week_start, data.studio.timezone).dateKey}><AgStudioProvider modules={modules} licenseKey={process.env.NEXT_PUBLIC_AG_STUDIO_LICENSE || undefined}>
       <AgStudio<StudioRegistry> ref={ref} style={style} data={studioData} dataOptions={dataOptions} theme={rebookStudioTheme} layout={layout} mode={edit ? "edit" : "view"} widgets={customWidgets} initialState={initialState} ai={ai} aiToolDisplay={recoveryToolDisplay}
         onStudioReady={({ api }) => { destroyTools(); aiTools.current = studioReadOnlyTools(api.getAiTools()); bridge.current = createWebMcpBridge(); reconcileTools(); }}
         onStateUpdated={({ state }) => { save(state); reconcileTools(); }}
         onRenderStateChanged={reconcileTools}
         onStudioPreDestroyed={destroyTools}
         onErrorRaised={(event) => { if (event.errorType === "state") setNotice("Some saved report settings could not be loaded. Edit the report or restore the default layout."); }} />
-    </AgStudioProvider></div>
+    </AgStudioProvider></StudioWeekContext></div>
     <footer className="insights-footer"><span>USD · Simulated payments labelled · Applied recoveries in KPIs</span><button onClick={() => { ref.current?.api.setState(initialReport); reconcileTools(); setNotice(""); }}>Restore default report</button></footer>
   </section>;
 }

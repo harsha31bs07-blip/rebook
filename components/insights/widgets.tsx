@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { createWidgets, type AgAiToolDisplay, type AgWidgetDefinition } from "ag-studio-react";
 import type { AgDefaultRegistry, AgRowsResult, AgStudioApi, AgWidgetDataFormat, AgWidgetFieldReference, AgWidgetParams, AgWidgetsConfig, AgWidgetToolbarItem } from "ag-studio";
 import { heatmapFields, receiptFields, recoveryFields } from "@/lib/insights/report";
-import { heatmapCells, heatmapDayKey, heatmapDayLabel } from "@/lib/insights/heatmap";
+import { heatmapCells, heatmapDayKey, heatmapDayLabel, heatmapWeekDays } from "@/lib/insights/heatmap";
 import { recoveryMetric } from "@/lib/insights/metrics";
 import { titleCase } from "@/lib/insights/formatting";
 import styles from "./insights.module.css";
 
 type CustomFormat = AgWidgetDataFormat<{ planId?: string; showValues?: boolean; metric?: string }>;
+export const StudioWeekContext = createContext<string | undefined>(undefined);
 export type RecoveryWidget = { type: "recovery-impact"; dataMapping: { rows: AgWidgetFieldReference[] }; format?: CustomFormat };
 export type ReceiptsWidget = { type: "refund-receipts"; dataMapping: { rows: AgWidgetFieldReference[] }; format?: CustomFormat };
 export type HeatmapWidget = { type: "week-heatmap"; dataMapping: { rows: AgWidgetFieldReference[] }; format?: CustomFormat };
@@ -48,8 +49,9 @@ function RecoveryMetric(params: AgWidgetParams<MetricWidget>) {
 
 function WeekHeatmap(params: AgWidgetParams<HeatmapWidget>) {
   const { rows, error } = useWidgetRows(params);
+  const weekStart = useContext(StudioWeekContext);
   const cells = heatmapCells(rows);
-  const days = [...new Set(cells.map((cell) => cell.day))].sort();
+  const days = weekStart ? heatmapWeekDays(weekStart) : [...new Set(cells.map((cell) => cell.day))].sort();
   const instructors = [...new Set(cells.map((cell) => cell.instructor))].sort();
   const instructorField = (params.dataMapping.rows ?? []).find((field) => field.fieldId === "sessions.instructor");
   const dayField = (params.dataMapping.rows ?? []).find((field) => field.fieldId === "sessions.local_day");

@@ -39,7 +39,14 @@ export default function PlanPanel({ details, plan, state, busy, results, approva
       <div><span>{proposed ? "Refunds planned" : "Refunds completed"}</span><strong className="danger-text">{proposed ? totals.refunded : results.filter((result) => result.status === "COMPLETED").length}</strong><small>{proposed ? "bookings" : `${results.filter((result) => ["PENDING", "REQUESTED"].includes(result.status)).length} pending · ${results.filter((result) => result.status === "SIMULATED").length} simulated`}</small></div>
       <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
     </div>
-    {proposed && <div className="recovery-adjustments"><p className="muted">Adjust a recovery before approving:</p>{plan.sessionChanges.filter((change) => change.after).map((change) => <button key={change.sessionId} disabled={busy} onClick={() => onMove?.(change.sessionId)}>Move {state.sessions.find((item) => item.id === change.sessionId)?.title ?? "class"} to...</button>)}
+    {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul>{plan.sessionChanges.map((change) => {
+      const session = state.sessions.find((item) => item.id === change.sessionId);
+      const placement = change.after;
+      return <li key={change.sessionId}><strong>{session?.title ?? "Class"}</strong>{placement ? <>
+        <span>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(placement.start))} · {state.instructors.find((item) => item.id === placement.instructorId)?.name}</span>
+        {onMove && <button className="move-session-link" disabled={busy} onClick={() => onMove(change.sessionId)} aria-label={`Move ${session?.title ?? "class"} to…`}>Move...</button>}
+      </> : <span>Cancelled · refunds planned</span>}</li>;
+    })}</ul>
       {onUndo && <button disabled={busy} onClick={onUndo}>Undo last adjustment</button>}
     </div>}
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>

@@ -29,6 +29,14 @@ export function weekBounds(state: State) {
   };
 }
 
+/** Bryntum interaction dates are wall dates; a week cell specifies a day, not a new clock time. */
+export function recoveryDropStart(original: string, target: Date, timezone: string, zoom: "day" | "week") {
+  const dateKey = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+  const minutes = zoom === "week" ? localParts(original, timezone).minutesOfDay : target.getHours() * 60 + target.getMinutes();
+  const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(Math.floor(minutes % 60)).padStart(2, "0")}`;
+  return new Date(Date.parse(zonedTimeToUtc(dateKey, clock, timezone)) + Math.round(minutes % 1 * 60_000)).toISOString();
+}
+
 export function formatDisruptionWindow(from: string, to: string, timezone: string) {
   const start = localParts(from, timezone);
   const end = localParts(to, timezone);

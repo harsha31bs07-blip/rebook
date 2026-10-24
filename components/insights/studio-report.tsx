@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgStudio, AgStudioProvider } from "ag-studio-react";
-import { AgStudioAiModule, type AgReportState } from "ag-studio";
+import { AgStudioAiModule, type AgAiTool, type AgReportState } from "ag-studio";
 import type { Insights } from "@/lib/insights/data";
 import { buildStudioData } from "@/lib/insights/studio-data";
 import { buildRecoveryAi } from "@/lib/insights/ai";
@@ -11,6 +11,8 @@ import { rebookStudioTheme } from "@/lib/insights/theme";
 import { customWidgets, type StudioRegistry } from "./widgets";
 import { recoveryToolDisplay } from "./tool-cards";
 import styles from "./insights.module.css";
+import { createWebMcpBridge } from "../../lib/webmcp/bridge";
+import { studioReadOnlyTools, studioTools } from "../../lib/webmcp/studio";
 
 const modules = [AgStudioAiModule];
 const style = { height: "100%", width: "100%" };
@@ -18,6 +20,11 @@ const dataOptions = { maxExportRows: 10_000 };
 
 export default function StudioReport({ id, data }: { id: string; data: Insights }) {
   const ref = useRef<AgStudio<StudioRegistry>>(null);
+  const bridge = useRef<ReturnType<typeof createWebMcpBridge> | undefined>(undefined);
+  const aiTools = useRef<AgAiTool[]>([]);
+  const reconcileTools = () => { void bridge.current?.sync(studioTools(aiTools.current)); };
+  const destroyTools = () => { bridge.current?.destroy(); bridge.current = undefined; aiTools.current = []; };
+  useEffect(() => () => { bridge.current?.destroy(); bridge.current = undefined; aiTools.current = []; }, []);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasHeight, setCanvasHeight] = useState(444);
   useEffect(() => {
@@ -46,23 +53,26 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
   };
   const changePage = (pageId: string) => {
     const api = ref.current?.api;
-    if (api) api.setState({ ...api.getState(), selectedPageId: pageId });
+    if (api) { api.setState({ ...api.getState(), selectedPageId: pageId }); reconcileTools(); }
   };
   return <section className="insights-report" aria-label="Studio report">
     <div className="insights-toolbar"><nav aria-label="Insight pages">{reportPages.map((page) => <button key={page.id} aria-pressed={page.id === selectedPage} onClick={() => changePage(page.id)}>{page.label}</button>)}</nav>
       <div><button aria-pressed={edit} onClick={() => setEdit(!edit)}>{edit ? "Done editing" : "Edit report"}</button><button className="primary" onClick={() => {
         setEdit(true);
         const api = ref.current?.api;
-        if (api) { const state = api.getState(); api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: false } } }); }
+        if (api) { const state = api.getState(); api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: false } } }); reconcileTools(); }
       }}>Ask Recovery analyst</button></div>
     </div>
     <p className={styles.pageDescription}>{reportPages.find((page) => page.id === selectedPage)?.description}</p>
     {notice && <p className="insights-storage-note" role="status">{notice}</p>}
     <div className="insights-studio" ref={canvasRef}><AgStudioProvider modules={modules} licenseKey={process.env.NEXT_PUBLIC_AG_STUDIO_LICENSE || undefined}>
       <AgStudio<StudioRegistry> ref={ref} style={style} data={studioData} dataOptions={dataOptions} theme={rebookStudioTheme} layout={layout} mode={edit ? "edit" : "view"} widgets={customWidgets} initialState={initialState} ai={ai} aiToolDisplay={recoveryToolDisplay}
-        onStateUpdated={({ state }) => save(state)}
+        onStudioReady={({ api }) => { destroyTools(); aiTools.current = studioReadOnlyTools(api.getAiTools()); bridge.current = createWebMcpBridge(); reconcileTools(); }}
+        onStateUpdated={({ state }) => { save(state); reconcileTools(); }}
+        onRenderStateChanged={reconcileTools}
+        onStudioPreDestroyed={destroyTools}
         onErrorRaised={(event) => { if (event.errorType === "state") setNotice("Some saved report settings could not be loaded. Edit the report or restore the default layout."); }} />
     </AgStudioProvider></div>
-    <footer className="insights-footer"><span>USD · Simulated payments labelled · Applied recoveries in KPIs</span><button onClick={() => { ref.current?.api.setState(initialReport); setNotice(""); }}>Restore default report</button></footer>
+    <footer className="insights-footer"><span>USD · Simulated payments labelled · Applied recoveries in KPIs</span><button onClick={() => { ref.current?.api.setState(initialReport); reconcileTools(); setNotice(""); }}>Restore default report</button></footer>
   </section>;
 }

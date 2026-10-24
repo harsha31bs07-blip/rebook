@@ -7,18 +7,27 @@ import { disruptionLabel, interpretationSource } from "@/lib/client/scheduler-ma
 
 const examples = ["Maya has the flu and can't teach Monday", "The Cycle Lab AC is broken Wednesday afternoon", "Studio closed Saturday morning for a burst pipe"];
 
-export default function DisruptionPanel({ state, text, setText, interpretation, onInterpret, onEdit, onPlan, busy }: {
+export default function DisruptionPanel({ state, text, setText, interpretation, onInterpret, onReport, onEdit, onPlan, busy }: {
   state: State; text: string; setText: (text: string) => void; interpretation?: Interpretation;
-  onInterpret: () => void; onEdit: () => void; onPlan: () => void; busy: boolean;
+  onInterpret: (text: string) => Promise<unknown>; onReport: (text: string) => Promise<unknown>; onEdit: () => void; onPlan: () => void; busy: boolean;
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const label = interpretation && disruptionLabel(interpretation, state);
   return <>
     <p className="eyebrow">A little change of plans</p><h2>Let’s get your week<br />back on track.</h2>
     <p className="muted">Tell us what changed. We’ll find the best way to take care of everyone.</p>
-    {!interpretation ? <form onSubmit={(event) => { event.preventDefault(); onInterpret(); }}>
+    {!interpretation ? <form {...(!busy ? { toolname: "preview_disruption", tooldescription: "Prepare a disruption recovery preview on the owner's timeline. No schedule changes or refunds occur until the owner reviews and clicks Approve and refund.", toolautosubmit: "" } : {})} onSubmit={(event) => {
+      event.preventDefault();
+      const value = (event.currentTarget.elements.namedItem("text") as HTMLTextAreaElement).value;
+      const native = event.nativeEvent as SubmitEvent & { agentInvoked?: boolean; respondWith?: (result: Promise<unknown>) => void };
+      if (native.agentInvoked) {
+        const result = onReport(value);
+        if (native.respondWith) native.respondWith(result);
+        else void result.catch(() => {});
+      } else void onInterpret(value);
+    }}>
       <label className="field-label" htmlFor="disruption">What happened?</label>
-      <textarea ref={textarea} id="disruption" maxLength={500} rows={4} placeholder="An instructor is out, a room is unavailable…" value={text} onChange={(event) => setText(event.target.value)} disabled={busy} required />
+      <textarea ref={textarea} id="disruption" name="text" {...{ toolparamdescription: "What changed: instructor absence, unavailable room, or studio closure, including the local day and time." }} maxLength={500} rows={4} placeholder="An instructor is out, a room is unavailable…" value={text} onChange={(event) => setText(event.target.value)} disabled={busy} required />
       <div className="input-caption"><span>Use your own words</span><span>{text.length}/500</span></div>
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
       <p className="try-label">Or try an example</p><div className="examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>

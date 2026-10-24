@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Interpretation, type PlanDetails } from "@/lib/client/api";
 import { classColors, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
 import type { Plan, State } from "@/lib/domain/types";
@@ -12,6 +12,8 @@ import PlanPanel from "./plan-panel";
 import MessagesDrawer from "./messages-drawer";
 import ConsoleHeader from "./console-header";
 import ExpiredDemo from "./expired-demo";
+import { useWebMcp } from "../../lib/webmcp/use-webmcp";
+import { ownerTools, planSummary } from "../../lib/webmcp/tools";
 
 const Schedule = dynamic(() => import("./schedule"), { ssr: false, loading: () => <ScheduleSkeleton /> });
 function ScheduleSkeleton() {
@@ -34,16 +36,21 @@ export default function OwnerConsole({ id }: { id: string }) {
   const [confirmReset, setConfirmReset] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [approvalRequested, setApprovalRequested] = useState("");
+  const actionInFlight = useRef(false);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 8000); return () => clearTimeout(timer); }, [toast]);
 
-  async function run(action: string, operation: () => Promise<void>) {
+  async function run<T,>(action: string, operation: () => Promise<T>, propagate = false): Promise<T | undefined> {
+    if (actionInFlight.current) { if (propagate) throw new Error("Another action is in progress. Try again when it finishes."); return; }
+    actionInFlight.current = true;
     setBusy(action); setError("");
-    try { await operation(); }
+    try { return await operation(); }
     catch (cause) {
       if (cause instanceof ApiError && cause.code === "expired") setEnded(true);
       setError(cause instanceof Error ? cause.message : "Something went wrong. Please try again.");
+      if (propagate) throw cause;
     }
-    finally { setBusy(""); }
+    finally { actionInFlight.current = false; setBusy(""); }
   }
   const state = workspace?.state;
   const livePlan = workspace?.plans.find((item) => item.id === details?.plan.id);
@@ -55,14 +62,39 @@ export default function OwnerConsole({ id }: { id: string }) {
   const ready = workspace?.status === "ready";
   const percent = workspace && workspace.progress.total ? Math.round(workspace.progress.done / workspace.progress.total * 100) : 0;
 
-  function clearPlan() { setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
+  function clearPlan() { setApprovalRequested(""); setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
+  async function interpretText(value: string, signal?: AbortSignal) {
+    setText(value); setApprovalRequested("");
+    const parsed = await api.interpret(id, value, signal);
+    signal?.throwIfAborted();
+    setInterpretation(parsed);
+    return parsed;
+  }
+  async function previewPlan(parsed: Interpretation, signal?: AbortSignal) {
+    if (!state) throw new Error("The studio is not ready.");
+    const proposed = await api.plan(id, parsed.disruption, signal);
+    const next = await api.details(id, proposed.id, signal);
+    signal?.throwIfAborted();
+    setApprovalRequested(""); setBasis({ ...state, sessions: next.sessions }); setDetails(next); setUpdatedPlan(undefined); setZoom("week"); await refresh();
+    return planSummary(next.plan, state.studio.currency);
+  }
   async function createPlan() {
     if (!interpretation || !state) return;
-    await run("plan", async () => {
-      const proposed = await api.plan(id, interpretation.disruption);
-      const next = await api.details(id, proposed.id);
-      setBasis({ ...state, sessions: next.sessions }); setDetails(next); setUpdatedPlan(undefined); setZoom("week"); await refresh();
-    });
+    await run("plan", () => previewPlan(interpretation));
+  }
+  async function reportDisruption(value: string, signal?: AbortSignal) {
+    return run("plan", async () => previewPlan(await interpretText(value, signal), signal), true);
+  }
+  async function requestApproval(planId: string, signal: AbortSignal) {
+    return run("review", async () => {
+      const next = await api.details(id, planId, signal);
+      signal.throwIfAborted();
+      if (next.plan.status !== "proposed") throw new Error("Only a proposed plan can be reviewed for approval.");
+      if (!state) throw new Error("The studio is not ready.");
+      setDetails(next); setBasis({ ...state, sessions: next.sessions }); setUpdatedPlan(undefined); setZoom("week");
+      setApprovalRequested(planId);
+      return { ...planSummary(next.plan, state.studio.currency), approval: "awaiting_owner_click", message: "An assistant prepared this plan. Review and approve." };
+    }, true);
   }
   async function approve() {
     if (!plan) return;
@@ -83,6 +115,8 @@ export default function OwnerConsole({ id }: { id: string }) {
     await run("reset", async () => { await api.reset(id); clearPlan(); setUpdatedPlan(undefined); setText(""); await refresh(); setToast("Demo reset. Your new week is ready."); });
   }
 
+  useWebMcp(() => ready && state && !expired && !ended ? ownerTools({ state, plans: workspace.plans, currentPlan: plan, busy: Boolean(busy), report: reportDisruption, requestApproval }) : []);
+
   if (expired || ended) return <ExpiredDemo />;
   return <main className="console-app">
     {state?.bookings.some((booking) => booking.payment?.unknown) && <p className="error error-box" role="status">payment unknown (simulated fallback) — some bookings could not be verified with PayPal. No new capture will be attempted.</p>}
@@ -102,8 +136,8 @@ export default function OwnerConsole({ id }: { id: string }) {
       <aside className="disruption-panel" aria-label="Recovery assistant" aria-busy={Boolean(busy)}>
         {ready && state ? <>
           {(error || loadError) && <p className="error error-box" role="alert">{error || loadError}</p>}
-          {details && plan ? <><PlanPanel details={details} plan={plan} state={basis ?? state} busy={Boolean(busy)} results={results} onApprove={() => void approve()} onDiscard={clearPlan} onMessages={() => setMessagesOpen(true)} />{plan.status !== "proposed" && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
-            : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={() => void run("interpret", async () => setInterpretation(await api.interpret(id, text)))} onEdit={() => setInterpretation(undefined)} onPlan={() => void createPlan()} />}
+          {details && plan ? <><PlanPanel details={details} plan={plan} state={basis ?? state} busy={Boolean(busy)} results={results} approvalRequested={approvalRequested === plan.id} onApprove={() => void approve()} onDiscard={clearPlan} onMessages={() => setMessagesOpen(true)} />{plan.status !== "proposed" && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
+            : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={(value) => run("interpret", () => interpretText(value))} onReport={reportDisruption} onEdit={() => setInterpretation(undefined)} onPlan={createPlan} />}
           {history.length > 0 && <section className="history"><h3>History <span>{history.length}</span></h3>{history.map((item) => <button key={item.id} disabled={Boolean(busy)} onClick={() => void run("history", async () => { const next = await api.details(id, item.id); setDetails(next); setBasis({ ...state, sessions: next.sessions }); })}><strong>{item.totals.sessionsAffected} sessions · {item.totals.refunded} refunds</strong><span>{item.status.replaceAll("_", " ")} · {new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</span></button>)}</section>}
         </> : <><p className="eyebrow">Recovery assistant</p><h2>A better plan<br />is on its way.</h2><p className="muted">Your schedule and recovery tools will be ready as soon as setup finishes.</p><div className="panel-skeleton skeleton" /><div className="panel-skeleton skeleton" /></>}
       </aside>

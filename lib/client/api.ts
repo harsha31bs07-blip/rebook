@@ -33,9 +33,9 @@ const workspacePath = (id: string) => `/${encodeURIComponent(id)}`;
 export const api = {
   create: () => request<{ id: string }>("", {}),
   workspace: (id: string, signal?: AbortSignal) => request<WorkspaceResponse>(workspacePath(id), undefined, signal),
-  interpret: (id: string, text: string) => request<Interpretation>(`${workspacePath(id)}/interpret`, { text }),
-  plan: (id: string, disruption: Disruption) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption }),
-  details: (id: string, planId: string) => request<PlanDetails>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`),
+  interpret: (id: string, text: string, signal?: AbortSignal) => request<Interpretation>(`${workspacePath(id)}/interpret`, { text }, signal),
+  plan: (id: string, disruption: Disruption, signal?: AbortSignal) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption }, signal),
+  details: (id: string, planId: string, signal?: AbortSignal) => request<PlanDetails>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, signal),
   approve: (id: string, planId: string) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, {}),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
 };

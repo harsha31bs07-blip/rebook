@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { bookingCatalog, Receipt } from "@/lib/checkout/service";
 import { calendarFile, eligibleCheckoutMethods, payLaterButtonTag, type CardSession, type EligibleMethods, type PayPalV6 } from "@/lib/client/paypal-v6";
+import AgentReadyChip from "../webmcp/agent-ready-chip";
+import { useWebMcp } from "../../lib/webmcp/use-webmcp";
+import { bookingTools } from "../../lib/webmcp/tools";
 
 type Catalog = ReturnType<typeof bookingCatalog>;
 type Class = Catalog["sessions"][number];
@@ -194,13 +197,19 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   }, [id, receipt?.orderId, receipt?.webhookConfigured, receipt?.webhookConfirmed]);
   const timezone = catalog?.studio.timezone ?? "America/Los_Angeles";
   const time = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(instant));
+  function selectClass(session: Class, prefill?: { name?: string; email?: string }) {
+    if (customerLocked || receipt || !session.seatsLeft) throw new Error("Checkout is unavailable or already in progress.");
+    setSelected(session);
+    if (prefill) setCustomer((previous) => ({ name: prefill.name ?? previous.name, email: prefill.email ?? previous.email }));
+  }
+  useWebMcp(catalog && !receipt ? bookingTools({ sessions: catalog.sessions, timezone, locked: customerLocked, select: selectClass }) : []);
   function downloadCalendar() {
     if (!receipt || !catalog) return;
     const url = URL.createObjectURL(new Blob([calendarFile(receipt, catalog.studio.name)], { type: "text/calendar;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "rebook-class.ics"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <main className="customer-booking">
-    <header className="booking-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span></Link><span className="pill sandbox">{sandbox ? "PayPal sandbox" : "PayPal checkout"}</span></header>
+    <header className="booking-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span></Link><AgentReadyChip /><span className="pill sandbox">{sandbox ? "PayPal sandbox" : "PayPal checkout"}</span></header>
     <p className="eyebrow">Make time for yourself</p><h1>{catalog?.studio.name ?? "Northstar Movement Studio"} · Book a class</h1>
     <p className="muted booking-intro">Find your next good hour. All class times are local to the studio ({timezone}).</p>
     {error && <p className="error" role="alert">{error}</p>}
@@ -210,7 +219,7 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
         {!catalog && !error && <p role="status">Loading classes…</p>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}
-        {catalog?.sessions.map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={!session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => setSelected(session)}><span><strong>{classTitle(session.title)}</strong><span>{time(session.start)}</span><span>{session.instructor} · {session.room}</span></span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}
+        {catalog?.sessions.map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={!session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => selectClass(session)}><span><strong>{classTitle(session.title)}</strong><span>{time(session.start)}</span><span>{session.instructor} · {session.room}</span></span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}
       </section><aside className="booking-checkout" aria-label="Class checkout">{selected ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selected.title)}</h2><p>{time(selected.start)}</p><p className="muted">{selected.room} · ${selected.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
         <Payments key={`${id}:${selected.id}`} id={id} session={selected} customer={customer} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />
       </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}

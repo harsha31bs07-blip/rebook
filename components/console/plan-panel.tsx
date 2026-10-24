@@ -20,9 +20,9 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, results, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, results, approvalRequested, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
-  onApprove: () => void; onDiscard: () => void; onMessages: () => void;
+  approvalRequested?: boolean; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
   const money = (value: string) => formatMoney(value, state.studio.currency);
@@ -41,7 +41,7 @@ export default function PlanPanel({ details, plan, state, busy, results, onAppro
     </div>
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-    {proposed && <div className="plan-actions"><button className="primary" disabled={busy} onClick={onApprove}>{busy ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted">Approval applies this schedule and starts sandbox refunds.</p></div>}
+    {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={onApprove}>{busy ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
     {plan.status === "executing" && <><p className="notice" role="status">Applying recovery and processing sandbox refunds…</p>{!busy && <button className="primary full-width" onClick={onApprove}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <><p className="warning">The schedule was updated, but some refunds need attention. Review the results below.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry refunds"}</button></>}
     <button className="message-button" disabled={busy} onClick={onMessages}>Preview customer messages</button>

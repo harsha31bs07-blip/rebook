@@ -325,3 +325,16 @@ textarea { resize: vertical; min-height: 120px; }
 @media (max-width: 600px) { .landing { padding: 0 24px; } .landing-header { min-height: 80px; } .landing-copy h1 { font-size: 40px; } .landing-footer { gap: 24px; flex-direction: column; } .header-divider { display: none; } .studio-heading { margin-left: auto; } .header-actions { width: 100%; justify-content: space-between; } .timeline-heading { align-items: flex-start; } .timeline-heading h1 { font-size: 22px; } .schedule-toolbar { padding: 8px; } .segmented button { padding: 4px 6px; } .schedule-footer { font-size: 9px; } .preview-key { gap: 8px; flex-wrap: wrap; } .preview-key > span:last-child { display: none; } .console-header .wordmark { font-size: 22px; } }
 @media (min-width: 1024px) { body:has(.console-app) { height: 100dvh; overflow: hidden; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; } }
+
+.agent-ready-chip { color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; white-space: nowrap; }
+.assistant-approval { border: 2px solid #1d4ed8; border-radius: 10px; padding: 12px; }
+.assistant-approval-banner { color: #1e3a8a; background: #eff6ff; padding: 10px; border-radius: 6px; font-weight: 600; }
+.assistant-approval > .primary { outline: 3px solid #bfdbfe; outline-offset: 3px; }
+.agent-ready-page { max-width: 1000px; margin: 0 auto; padding: 0 24px 64px; }
+.agent-ready-page article { max-width: 760px; margin: 32px auto; line-height: 1.7; }
+.agent-ready-page h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.15; margin-bottom: 24px; }
+.agent-ready-page h2 { font-size: 24px; margin: 32px 0 12px; }
+.agent-ready-page p, .agent-ready-page dd, .agent-ready-page li { margin-bottom: 16px; }
+.agent-ready-page dt { font-weight: 600; }
+.agent-ready-page code { overflow-wrap: anywhere; }
+.agent-ready-page ol { list-style: decimal; padding-left: 24px; }

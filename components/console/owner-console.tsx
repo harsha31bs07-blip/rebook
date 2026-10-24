@@ -80,11 +80,12 @@ export default function OwnerConsole({ id }: { id: string }) {
   }
   async function reset() {
     setConfirmReset(false);
-    await run("reset", async () => { clearPlan(); setUpdatedPlan(undefined); setText(""); await api.reset(id); await refresh(); setToast("Demo reset. Your new week is ready."); });
+    await run("reset", async () => { await api.reset(id); clearPlan(); setUpdatedPlan(undefined); setText(""); await refresh(); setToast("Demo reset. Your new week is ready."); });
   }
 
   if (expired || ended) return <ExpiredDemo />;
   return <main className="console-app">
+    {state?.bookings.some((booking) => booking.payment?.unknown) && <p className="error error-box" role="status">payment unknown (simulated fallback) — some bookings could not be verified with PayPal. No new capture will be attempted.</p>}
     <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/book`} target="_blank" rel="noopener noreferrer">Customer booking page</Link><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
     {confirmReset && <div className="reset-confirm" role="group" aria-label="Confirm reset"><span>Start a fresh demo week? Existing sandbox transactions stay in the ledger.</span><button className="danger-button" onClick={() => void reset()}>Reset this demo</button><button onClick={() => setConfirmReset(false)}>Keep this week</button></div>}
     <div className="console-body">

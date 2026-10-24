@@ -6,7 +6,7 @@ import { api, ApiError, type WorkspaceResponse } from "@/lib/client/api";
 function hasPendingRefunds(workspace?: WorkspaceResponse): boolean {
   const latest = new Map<string, string>();
   for (const event of workspace?.ledger ?? []) if (event.kind === "refund") latest.set(event.requestId, event.status);
-  return [...latest.values()].some((status) => ["PENDING", "REQUESTED"].includes(status));
+  return [...latest.values()].some((status) => ["PENDING", "REQUESTED", "UNKNOWN"].includes(status));
 }
 
 export function useWorkspace(id: string, watchExecution: boolean) {
@@ -47,6 +47,7 @@ export function useWorkspace(id: string, watchExecution: boolean) {
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let unresolvedSince: number | undefined;
     async function poll() {
       const current = ++revision.current;
       try {
@@ -54,12 +55,15 @@ export function useWorkspace(id: string, watchExecution: boolean) {
         if (controller.signal.aborted) return;
         if (current === revision.current) receive(next);
         const unresolved = next.plans.some((plan) => plan.status === "executing") || hasPendingRefunds(next);
-        timer = setTimeout(poll, next.status === "preparing" || watchExecution || unresolved ? 3000 : 5000);
+        unresolvedSince = unresolved ? unresolvedSince ?? Date.now() : undefined;
+        const age = unresolvedSince === undefined ? 0 : Date.now() - unresolvedSince;
+        const delay = age < 30_000 ? 3000 : age < 120_000 ? 10_000 : 30_000;
+        timer = setTimeout(poll, next.status === "preparing" || watchExecution ? 3000 : unresolved ? delay : 5000);
       } catch (cause) {
         if (controller.signal.aborted) return;
         if (cause instanceof ApiError && cause.code === "expired") { setExpired(true); return; }
         setError(cause instanceof Error ? cause.message : "Unable to load this workspace.");
-        timer = setTimeout(poll, 5000);
+        timer = setTimeout(poll, unresolvedSince === undefined ? 5000 : 30_000);
       }
     }
     void poll();

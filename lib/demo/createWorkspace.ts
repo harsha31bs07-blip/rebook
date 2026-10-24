@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { State } from "../domain/types";
-import { createCardCapture, PayPalError } from "../paypal/client";
+import { createCardCapture, lookupCardCapture, PayPalError } from "../paypal/client";
 import { demoDisruptionFor, floodDisruptionFor, nextWeekStart, seedStudio } from "../seed/seed";
 import { affectedSessions } from "../solver/validate";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
@@ -70,7 +70,26 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
       const requestId = persisted.find((item) => item.bookingId === booking.id)?.requestId ?? `${workspaceId}${booking.id}`;
       const input = { workspaceId, bookingId: booking.id, kind: "capture" as const, amount: booking.amount, requestId };
       try {
-        const payment = await createCardCapture(booking.amount, { workspaceId, bookingId: booking.id, requestId });
+        const previous = repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "capture" && event.requestId === requestId)!;
+        const firstAttemptAt = previous.firstAttemptAt ?? repository.listLedger(workspaceId)
+          .find((event) => event.kind === "capture" && event.requestId === requestId)!.createdAt;
+        const age = Date.now() - Date.parse(firstAttemptAt);
+        const expired = previous.status === "UNKNOWN" || !Number.isFinite(age) || age >= 6 * 3_600_000;
+        const payment = expired
+          ? await lookupCardCapture(booking.amount, { workspaceId, bookingId: booking.id, requestId }, firstAttemptAt)
+          : await createCardCapture(booking.amount, { workspaceId, bookingId: booking.id, requestId });
+        if (!payment) {
+          repository.transaction(() => {
+            const current = repository.requireWorkspace(workspaceId, true).state;
+            current.bookings.find((item) => item.id === booking.id)!.payment = {
+              orderId: `UNKNOWN-ORDER-${requestId}`, captureId: `UNKNOWN-CAP-${requestId}`, simulated: true, unknown: true,
+            };
+            repository.saveState(workspaceId, current);
+            repository.appendLedger({ ...input, paypalId: "", captureId: "", status: "UNKNOWN", error: "payment unknown (simulated fallback)" });
+          });
+          report(booking.id, "SIMULATED");
+          continue;
+        }
         repository.transaction(() => {
           const current = repository.requireWorkspace(workspaceId, true).state;
           current.bookings.find((item) => item.id === booking.id)!.payment = { orderId: payment.orderId, captureId: payment.captureId, simulated: false };
@@ -120,7 +139,7 @@ async function prepare(id: string, options: CreateWorkspaceOptions, repository: 
   try { return await withWorkspaceLock(repository, id, (owner) => seedPayments(id, options, repository, owner)); }
   catch (error) {
     const workspace = repository.requireWorkspace(id, true);
-    if (error instanceof StoreError && error.status === 409) throw error;
+    if (error instanceof StoreError && [409, 429, 503].includes(error.status)) throw error;
     repository.savePreparation(id, "failed", workspace.progress, workspace.preparationError ?? (error instanceof Error ? error.message : "Workspace preparation failed"));
     throw error;
   }
@@ -188,20 +207,31 @@ export async function waitForWorkspacePreparation(): Promise<void> {
 /** Recover preparations abandoned by a previous process, including unclaimed pool workspaces. */
 export async function resumeStalePreparations(repository: Repository = getRepository(), deferRecent = false): Promise<void> {
   for (const workspace of repository.stalePreparations(Date.now(), deferRecent ? 0 : 120_000)) {
+    let attempt = 0;
+    const schedule = (delay: number) => {
+      void track(new Promise<void>((resolve) => { const timer = setTimeout(resolve, delay); timer.unref(); }).then(recover));
+    };
     const recover = async () => {
       try {
         const current = repository.getWorkspace(workspace.id, true);
-        if (current?.status === "preparing" && Date.parse(current.updatedAt) <= Date.now() - 120_000) {
+        if (current?.status === "preparing") {
+          const recentDelay = Date.parse(current.updatedAt) + 120_001 - Date.now();
+          if (recentDelay > 0) { schedule(recentDelay); return; }
           const captured = new Set(repository.latestMoneyEvents(workspace.id).filter((event) => event.kind === "capture" && event.status === "COMPLETED").map((event) => event.bookingId));
           const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false);
           try { await prepare(workspace.id, {}, repository); } finally { release(); }
         }
-      } catch { console.error("Workspace preparation recovery failed", { workspaceId: workspace.id }); }
+      } catch (error) {
+        console.error("Workspace preparation recovery failed", { workspaceId: workspace.id });
+        if (error instanceof StoreError && [409, 429, 503].includes(error.status)) {
+          schedule([10_000, 30_000, 60_000][attempt++] ?? 120_000);
+        }
+      }
     };
     const delay = Date.parse(workspace.updatedAt) + 120_001 - Date.now();
     if (deferRecent && delay > 0) {
       // A quick restart must not strand preparations that have not yet aged past two minutes.
-      void track(new Promise<void>((resolve) => { const timer = setTimeout(resolve, delay); timer.unref(); }).then(recover));
+      schedule(delay);
     } else await recover();
   }
 }
@@ -210,18 +240,29 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
   const repository = options.repository ?? getRepository();
   repository.requireReadyWorkspace(workspaceId);
   const state = initialState(true);
-  const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
-  try { return await withWorkspaceLock(repository, workspaceId, async (owner) => {
+  return withWorkspaceLock(repository, workspaceId, async (owner) => {
     for (const event of repository.latestMoneyEvents(workspaceId)) {
       if (event.kind !== "refund" || !["REQUESTED", "PENDING"].includes(event.status)) continue;
       repository.renewLock(workspaceId, owner);
       await reconcileRefund(event, repository);
     }
-    repository.renewLock(workspaceId, owner);
-    repository.transaction(() => {
-      repository.saveState(workspaceId, state); repository.clearPlans(workspaceId);
-      repository.savePreparation(workspaceId, "preparing", { done: 0, total: state.bookings.length });
-    });
-    return seedPayments(workspaceId, options, repository, owner);
-  }); } finally { release(); }
+    if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing") ||
+      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status)) ||
+      repository.listPlans(workspaceId).some((plan) => ["executing", "partially_failed"].includes(plan.status))) {
+      throw new StoreError(409, "Finish or retry pending refunds first");
+    }
+    const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
+    try {
+      repository.renewLock(workspaceId, owner);
+      repository.transaction(() => {
+        repository.saveState(workspaceId, state); repository.clearPlans(workspaceId);
+        repository.savePreparation(workspaceId, "preparing", { done: 0, total: state.bookings.length });
+      });
+      return await seedPayments(workspaceId, options, repository, owner);
+    } finally { release(); }
+  }).catch((error) => {
+    // An active execution can hold the lease before reset can inspect its ledger.
+    if (error instanceof StoreError && error.status === 409) throw new StoreError(409, "Finish or retry pending refunds first");
+    throw error;
+  });
 }

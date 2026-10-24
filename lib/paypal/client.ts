@@ -225,6 +225,34 @@ export async function getOrder(orderId: string): Promise<PayPalOrder> {
   return orderResult(await sdkCall(() => new OrdersController(sdk()).getOrder({ id: orderId })));
 }
 
+/** Expired create-order keys are never replayed. Search is read-only and may lag or lack permission. */
+export async function lookupCardCapture(amount: string, refs: PaymentRefs, firstAttemptAt: string): Promise<{ orderId: string; captureId: string; status: string; debugId?: string } | undefined> {
+  try {
+    const start = Date.parse(firstAttemptAt);
+    const transactions = await listTransactions(new Date(start - 60_000).toISOString(), new Date(Math.min(Date.now(), start + 6 * 3_600_000)).toISOString());
+    const matches = (transactions.transactionDetails ?? []).flatMap((detail) => {
+      const info = detail.transactionInfo;
+      return info?.customField === `${refs.workspaceId}:${refs.bookingId}` && info.transactionStatus === "S" &&
+        info.transactionAmount?.currencyCode === "USD" && info.transactionAmount.value === amount && info.transactionId ? [info] : [];
+    });
+    if (matches.length !== 1) return;
+    const info = matches[0];
+    if (info.paypalReferenceIdType === "ODR" && info.paypalReferenceId) {
+      const order = await getOrder(info.paypalReferenceId);
+      const unit = order.purchase_units?.find((unit) => unit.custom_id === `${refs.workspaceId}:${refs.bookingId}` && unit.reference_id === refs.bookingId);
+      const capture = unit?.payments?.captures?.find((capture) => capture.id === info.transactionId);
+      if (capture?.status === "COMPLETED" && capture.amount?.currency_code === "USD" && capture.amount.value === amount) {
+        return { orderId: order.id, captureId: capture.id, status: capture.status };
+      }
+      return;
+    }
+    const capture = await getCapture(info.transactionId!);
+    if (capture.id === info.transactionId && capture.status === "COMPLETED" && capture.amount?.currency_code === "USD" && capture.amount.value === amount) {
+      return { orderId: "", captureId: capture.id, status: capture.status };
+    }
+  } catch { /* Unavailable or inconclusive evidence becomes a visible simulated fallback. */ }
+}
+
 export async function refundCapture(captureId: string, amount: string, note: string, requestId: string): Promise<PayPalPayment> {
   const response = await sdkCall(() => new PaymentsController(sdk()).refundCapturedPayment({
     captureId, paypalRequestId: requestId, prefer: "return=representation",

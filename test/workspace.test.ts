@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { beginWorkspace, createWorkspace, realCaptureBookingIds, resetWorkspace, resumeStalePreparations, startWarmPool, waitForWorkspacePreparation, WorkspaceCreationError } from "../lib/demo/createWorkspace";
-import { Repository } from "../lib/store";
+import { Repository, StoreError } from "../lib/store";
 import { demoDisruptionFor, floodDisruptionFor, seedStudio } from "../lib/seed/seed";
 import { localParts } from "../lib/domain/time";
 import { affectedSessions } from "../lib/solver/validate";
@@ -45,6 +46,116 @@ function mockedCaptures(failFirst = false) {
   return { fetch, maxActive: () => maxActive };
 }
 describe("workspace seeding", () => {
+  it.each(["admission", "lock", "unavailable"])("retries startup %s failures at 10s, 30s, 60s and every two minutes", async (failure) => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    const state = seedStudio();
+    for (const booking of state.bookings) booking.payment!.simulated = true;
+    const workspace = repository.createWorkspace(state, undefined, { preparing: true });
+    vi.setSystemTime(Date.now() + 120_001);
+    let attempts = 0;
+    if (failure === "admission") {
+      const original = limits.preparation.bind(limits);
+      vi.spyOn(limits, "preparation").mockImplementation((...args) => {
+        if (++attempts <= 5) throw new StoreError(429, "busy");
+        return original(...args);
+      });
+    } else {
+      const original = repository.acquireLock.bind(repository);
+      vi.spyOn(repository, "acquireLock").mockImplementation((...args) => {
+        if (++attempts <= 5) throw new StoreError(failure === "unavailable" ? 503 : 409, "locked");
+        return original(...args);
+      });
+    }
+    await resumeStalePreparations(repository);
+    for (const delay of [10_000, 30_000, 60_000, 120_000, 120_000]) {
+      const before = attempts;
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(attempts).toBe(before);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toBe(before + 1);
+    }
+    await waitForWorkspacePreparation();
+    expect(repository.requireWorkspace(workspace.id).status).toBe("ready");
+  });
+
+  it.each([false, true])("never replays an expired capture key; read-only lookup found=%s", async (found) => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "1");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const state = seedStudio();
+    const booking = state.bookings[0];
+    for (const item of state.bookings) item.payment!.simulated = item.id !== booking.id;
+    const workspace = repository.createWorkspace(state, undefined, { preparing: true });
+    const event = repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: booking.amount, paypalId: "", captureId: "", requestId: "original-key", status: "REQUESTED" });
+    for (const item of state.bookings.slice(1)) repository.appendLedger({ workspaceId: workspace.id, bookingId: item.id, kind: "capture", amount: item.amount, paypalId: item.payment!.captureId, captureId: item.payment!.captureId, requestId: `${workspace.id}${item.id}`, status: "SIMULATED" });
+    vi.setSystemTime(Date.now() + 3_600_000);
+    repository.appendLedger({ ...event, status: "PENDING" });
+    expect(repository.latestMoneyEvents(workspace.id)[0].firstAttemptAt).toBe(event.createdAt);
+    vi.setSystemTime(Date.parse(event.createdAt) + 6 * 3_600_000);
+    repository.close(); repository = new Repository(directory);
+    const send = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/token")) return Response.json({ access_token: "token", token_type: "Bearer", expires_in: 3600 });
+      expect(init.method).toBe("GET");
+      if (url.includes("/reporting/transactions")) return Response.json({ transaction_details: found ? [{ transaction_info: {
+        transaction_id: "existing-capture", transaction_status: "S", custom_field: `${workspace.id}:${booking.id}`,
+        transaction_amount: { currency_code: "USD", value: booking.amount }, paypal_reference_id: "existing-order", paypal_reference_id_type: "ODR",
+      } }] : [] });
+      return Response.json({ id: "existing-order", status: "COMPLETED", purchase_units: [{ reference_id: booking.id, custom_id: `${workspace.id}:${booking.id}`, payments: { captures: [{ id: "existing-capture", status: "COMPLETED", amount: { currency_code: "USD", value: booking.amount } }] } }] });
+    });
+    setSdkTransport(send);
+    await resumeStalePreparations(repository);
+    const ready = repository.requireWorkspace(workspace.id);
+    expect(ready.status).toBe("ready");
+    expect(ready.state.bookings[0].payment).toMatchObject(found ? { captureId: "existing-capture", simulated: false } : { simulated: true, unknown: true });
+    expect(repository.latestMoneyEvents(workspace.id).find((event) => event.requestId === "original-key")).toMatchObject({ status: found ? "COMPLETED" : "UNKNOWN", firstAttemptAt: event.createdAt });
+    expect(send.mock.calls.some(([url, init]) => url.endsWith("/orders") && init.method === "POST")).toBe(false);
+  });
+  it("keeps retrying recovery when progress recently renewed the workspace timestamp", async () => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    const workspace = repository.createWorkspace(seedStudio(), undefined, { preparing: true });
+    vi.setSystemTime(Date.now() + 120_001);
+    const acquire = repository.acquireLock.bind(repository);
+    const lock = vi.spyOn(repository, "acquireLock").mockImplementationOnce(() => {
+      repository.updatePreparation(workspace.id, "preparing", workspace.progress);
+      throw new StoreError(409, "locked");
+    }).mockImplementation(acquire);
+    await resumeStalePreparations(repository);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(lock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(110_001);
+    await waitForWorkspacePreparation();
+    expect(lock).toHaveBeenCalledTimes(2);
+    expect(repository.requireWorkspace(workspace.id).status).toBe("ready");
+  });
+
+  it("uses the earliest legacy ledger entry for the capture replay deadline", async () => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const state = seedStudio();
+    const booking = state.bookings[0];
+    const workspace = repository.createWorkspace(state, undefined, { preparing: true });
+    const event = repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: booking.amount, paypalId: "", captureId: "", requestId: "legacy-key", status: "REQUESTED" });
+    vi.setSystemTime(Date.now() + 5 * 3_600_000);
+    repository.appendLedger({ ...event, status: "PENDING" });
+    const db = new DatabaseSync(join(directory, "rebook.sqlite"));
+    db.exec("UPDATE ledger SET data = json_remove(data, '$.firstAttemptAt')");
+    db.close();
+    vi.setSystemTime(Date.parse(event.createdAt) + 6 * 3_600_000);
+    const send = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/token")) return Response.json({ access_token: "token", token_type: "Bearer", expires_in: 3600 });
+      expect(init.method).toBe("GET");
+      return Response.json({ transaction_details: [] });
+    });
+    setSdkTransport(send);
+    await resumeStalePreparations(repository);
+    expect(repository.latestMoneyEvents(workspace.id).find((item) => item.requestId === event.requestId))
+      .toMatchObject({ status: "UNKNOWN", firstAttemptAt: event.createdAt });
+    expect(repository.requireWorkspace(workspace.id).state.bookings[0].payment).toMatchObject({ unknown: true, simulated: true });
+    expect(send.mock.calls.some(([, init]) => init.method === "GET")).toBe(true);
+  });
   it("defers a recent interrupted preparation until the two-minute recovery threshold", async () => {
     vi.stubEnv("DEMO_REAL_CAPTURES", "0");
     vi.useFakeTimers();

@@ -48,7 +48,7 @@ export const BookingSchema = z.object({
   id: z.string().min(1), sessionId: z.string().min(1), customerId: z.string().min(1),
   status: z.enum(["confirmed", "moved", "refund_pending", "refunded", "cancelled"]),
   amount: MoneySchema,
-  payment: z.object({ orderId: z.string(), captureId: z.string(), simulated: z.boolean().optional() }).optional(),
+  payment: z.object({ orderId: z.string(), captureId: z.string(), simulated: z.boolean().optional(), unknown: z.boolean().optional() }).optional(),
 });
 const DisruptionBase = { from: IsoSchema, to: IsoSchema, reason: z.string().optional() };
 export const DisruptionSchema = z.discriminatedUnion("kind", [

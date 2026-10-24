@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { connection } from "next/server";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -14,7 +15,9 @@ export const metadata: Metadata = {
   description: "When your schedule breaks, rebook everyone in one click. Preview a recovery plan and handle refunds with PayPal sandbox.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Nonces are generated per request; the bootstrap must never be prerendered.
+  await connection();
   return (
     <html
       lang="en"

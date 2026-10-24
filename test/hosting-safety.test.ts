@@ -76,6 +76,19 @@ describe("public hosting guards", () => {
     expect(denied.status).toBe(429); expect(denied.headers.get("retry-after")).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
   });
+  it("counts pooled claims against client creation limits and leaves the pool untouched on denial", async () => {
+    vi.stubEnv("DEMO_WARM_POOL", "1");
+    for (let i = 0; i < 5; i++) {
+      await startWarmPool();
+      expect((await create(request())).status).toBe(202);
+      await waitForWorkspacePreparation();
+    }
+    const pooled = getRepository().readyPoolWorkspace()!;
+    expect(pooled).toBeDefined();
+    expect((await create(request())).status).toBe(429);
+    expect(getRepository().readyPoolWorkspace()?.id).toBe(pooled.id);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("blocks preparations before creating records when the real-capture budget is exhausted", () => {
     vi.stubEnv("DEMO_REAL_CAPTURES", "1"); vi.stubEnv("MAX_REAL_CAPTURES_PER_HOUR", "0");
     expect(() => beginWorkspace()).toThrow("busy");
@@ -202,6 +215,25 @@ describe("public hosting guards", () => {
     expect(repo.getWebhook("old")).toBe(""); expect(repo.recordWebhook("old", "duplicate")).toBe(false);
     repo.appendLedger({ ...event, status: "COMPLETED" }); repo.pruneOlderThan();
     expect(repo.getWorkspace(pending.id)).toBeUndefined();
+  });
+  it("preserves old preparing workspaces and unresolved captures, then prunes settled captures", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const repo = getRepository();
+    const preparing = repo.createWorkspace(seedStudio(), undefined, { preparing: true });
+    const captures = ["REQUESTED", "PENDING", "UNKNOWN"].map((status) => {
+      const workspace = repo.createWorkspace(seedStudio());
+      const event = repo.appendLedger({ workspaceId: workspace.id, bookingId: "b", kind: "capture", amount: "1.00", paypalId: "", captureId: "", requestId: "key", status });
+      return { workspace, event };
+    });
+    vi.setSystemTime(Date.now() + 2 * 86_400_000);
+    repo.pruneOlderThan();
+    expect(repo.getWorkspace(preparing.id)?.status).toBe("preparing");
+    for (const { workspace, event } of captures) {
+      expect(repo.getWorkspace(workspace.id)).toBeDefined();
+      repo.appendLedger({ ...event, status: "COMPLETED" });
+    }
+    repo.pruneOlderThan();
+    for (const { workspace } of captures) expect(repo.getWorkspace(workspace.id)).toBeUndefined();
   });
   it("recognizes shared repository and limiter errors across separate Next bundles", async () => {
     vi.resetModules();

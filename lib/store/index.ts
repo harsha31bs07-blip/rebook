@@ -20,7 +20,7 @@ export type Workspace = {
 export type LedgerEvent = {
   id: string; workspaceId: string; bookingId: string; kind: "capture" | "refund";
   amount: string; paypalId: string; status: string; createdAt: string; debugId?: string; error?: string;
-  requestId: string; captureId: string;
+  requestId: string; captureId: string; firstAttemptAt?: string;
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
@@ -221,7 +221,12 @@ export class Repository {
     const previous = this.latestMoneyEvents(input.workspaceId).find((event) => event.kind === input.kind && event.requestId === input.requestId);
     if (previous && previous.paypalId === input.paypalId && previous.status === input.status && previous.error === input.error) return previous;
     const id = randomUUID();
-    const event = { ...input, id, createdAt: new Date().toISOString() };
+    const createdAt = new Date().toISOString();
+    // Keep the original replay deadline across transitions and process restarts.
+    const event = { ...input, id, createdAt, ...(input.kind === "capture" ? {
+      firstAttemptAt: previous?.firstAttemptAt ?? this.listLedger(input.workspaceId)
+        .find((event) => event.kind === "capture" && event.requestId === input.requestId)?.createdAt ?? input.firstAttemptAt ?? createdAt,
+    } : {}) };
     this.db.prepare("INSERT OR IGNORE INTO ledger(id, workspace_id, paypal_id, capture_id, data) VALUES (?, ?, ?, ?, ?)")
       .run(id, input.workspaceId, input.paypalId, input.captureId, JSON.stringify(event));
     return JSON.parse((this.db.prepare("SELECT data FROM ledger WHERE id = ?").get(id) as JsonRow).data);
@@ -280,13 +285,14 @@ export class Repository {
   pruneOlderThan(hours = 24): void {
     this.transaction(() => {
       const candidates = this.db.prepare(`SELECT id FROM workspaces WHERE created_at < ?
+        AND COALESCE(json_extract(data, '$.status'), 'ready') != 'preparing'
         AND id NOT IN (SELECT workspace_id FROM workspace_locks WHERE expires_at >= ?)
         AND id NOT IN (SELECT workspace_id FROM plans WHERE json_extract(data, '$.status') = 'executing')`)
         .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
       for (const { id } of candidates) {
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
-        if (this.latestMoneyEvents(id).some((event) => event.kind === "refund" && ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
+        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       }
       // Keep event IDs for deduplication; only the retained raw payload expires.

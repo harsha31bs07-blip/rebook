@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api";
 import type { State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
-import { formatMoney } from "@/lib/domain/time";
+import { formatMoney, toCents } from "@/lib/domain/time";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" aria-label="Loading booking actions" /> });
 
@@ -28,6 +28,9 @@ export default function PlanPanel({ details, plan, state, busy, results, approva
   const money = (value: string) => formatMoney(value, state.studio.currency);
   const label = disruptionLabel(plan, state);
   const proposed = plan.status === "proposed";
+  const previous = plan.lastAdjustmentTotals;
+  const refunds = previous ? totals.refunded - previous.refunded : 0;
+  const revenue = previous ? toCents(totals.revenueKept) - toCents(previous.revenueKept) : 0;
   return <>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
     <h2>{plan.status === "executed" ? results.some((result) => ["PENDING", "REQUESTED"].includes(result.status)) ? "Recovery applied · refunds pending" : "Recovery complete" : details.explanation.headline}</h2>
@@ -44,10 +47,13 @@ export default function PlanPanel({ details, plan, state, busy, results, approva
       const placement = change.after;
       return <li key={change.sessionId}><strong>{session?.title ?? "Class"}</strong>{placement ? <>
         <span>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(placement.start))} · {state.instructors.find((item) => item.id === placement.instructorId)?.name}</span>
-        {onMove && <button className="move-session-link" disabled={busy} onClick={() => onMove(change.sessionId)} aria-label={`Move ${session?.title ?? "class"} to…`}>Move...</button>}
+        {onMove && <button className="move-session-link" data-move-session={change.sessionId} disabled={busy} onClick={() => onMove(change.sessionId)} aria-label={`Move ${session?.title ?? "class"} to…`}>Move...</button>}
       </> : <span>Cancelled · refunds planned</span>}</li>;
     })}</ul>
-      {onUndo && <button disabled={busy} onClick={onUndo}>Undo last adjustment</button>}
+      {(previous || onUndo) && <div className="adjustment-change">
+        {previous && <p role="status">Your change: {refunds === 0 ? "no change in refunds" : `${Math.abs(refunds)} ${refunds > 0 ? "more" : "fewer"} refund${Math.abs(refunds) === 1 ? "" : "s"}`}, {revenue < 0 ? "−" : revenue > 0 ? "+" : ""}{money((Math.abs(revenue) / 100).toFixed(2))} revenue kept (vs previous version).</p>}
+        {onUndo && <button disabled={busy} onClick={onUndo} aria-label="Undo last adjustment">Undo</button>}
+      </div>}
     </div>}
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}

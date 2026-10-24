@@ -29,6 +29,17 @@ export function weekBounds(state: State) {
   };
 }
 
+/** Focus selects a scroll target only; it must never change the workspace axis. */
+export function scheduleRange(state: State, zoom: "day" | "week", day: number, focusPlan?: Plan) {
+  const week = weekBounds(state);
+  const startKey = zoom === "day" ? addLocalDays(week.startKey, day) : week.startKey;
+  const endKey = addLocalDays(startKey, zoom === "day" ? 1 : 7);
+  return { startKey, endKey,
+    start: zonedTimeToUtc(startKey, zoom === "day" ? "07:00" : "00:00", state.studio.timezone),
+    end: zonedTimeToUtc(endKey, "00:00", state.studio.timezone),
+    focusKey: focusPlan ? recoveryBounds(state, focusPlan).startKey : startKey };
+}
+
 /** Bryntum interaction dates are wall dates; a week cell specifies a day, not a new clock time. */
 export function recoveryDropStart(original: string, target: Date, timezone: string, zoom: "day" | "week") {
   const dateKey = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;

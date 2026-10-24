@@ -12,6 +12,7 @@ export type ExecutionResult = { bookingId: string; status: string; paypalId?: st
 export type StoredPlan = Plan & {
   id: string; workspaceId: string; status: "proposed" | "executing" | "executed" | "partially_failed";
   createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
+  lastAdjustmentTotals?: Plan["totals"];
 };
 export type Workspace = {
   id: string; state: State; createdAt: string; updatedAt: string;

@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export default function AgentReadyPage() {
-  return <main className="agent-ready-page">
+  return <main id="main-content" tabIndex={-1} className="agent-ready-page">
     <header className="landing-header"><Link href="/" className="wordmark" aria-label="Rebook home">rebook<span className="wordmark-dot">.</span></Link><Link href="/">Back to Rebook</Link></header>
     <article>
       <p className="eyebrow">Agent-ready with WebMCP</p>

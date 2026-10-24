@@ -208,12 +208,13 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     const url = URL.createObjectURL(new Blob([calendarFile(receipt, catalog.studio.name)], { type: "text/calendar;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "rebook-class.ics"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  return <main className="customer-booking">
+  return <main id="main-content" tabIndex={-1} className="customer-booking">
+    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{receipt ? `Booking confirmed. ${classTitle(receipt.class)}. ${time(receipt.start)}.` : selected ? `${classTitle(selected.title)} selected. Continue to checkout below the class list.` : ""}</p>
     <header className="booking-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span></Link><AgentReadyChip /><span className="pill sandbox">{sandbox ? "PayPal sandbox" : "PayPal checkout"}</span></header>
     <p className="eyebrow">Make time for yourself</p><h1>{catalog?.studio.name ?? "Northstar Movement Studio"} · Book a class</h1>
     <p className="muted booking-intro">Find your next good hour. All class times are local to the studio ({timezone}).</p>
     {error && <p className="error" role="alert">{error}</p>}
-    {receipt ? <section className="booking-receipt" aria-live="polite"><span className="pill success-pill">Booking confirmed</span><h2>You’re on the list.</h2><h3>{classTitle(receipt.class)}</h3><p>{time(receipt.start)}</p><p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
+    {receipt ? <section className="booking-receipt"><span className="pill success-pill">Booking confirmed</span><h2>You’re on the list.</h2><h3>{classTitle(receipt.class)}</h3><p>{time(receipt.start)}</p><p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
       {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
       <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button><Link className="button-link" href={`/w/${id}`} target="_blank" rel="noopener noreferrer">See it on the owner’s schedule</Link></div></section>
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>

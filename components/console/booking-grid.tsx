@@ -38,6 +38,7 @@ export default function BookingGrid({ plan, state }: { plan: Plan; state: State 
     <label className="sr-only" htmlFor="booking-search">Filter booking actions</label>
     <input id="booking-search" type="search" placeholder="Search customers, classes, reasons…" value={filter} onChange={(event) => setFilter(event.target.value)} />
     <div className="booking-grid"><AgGridReact<ActionRow> theme={theme} rowData={rows} columnDefs={columns}
+      onGridReady={({ api }) => api.setGridAriaProperty("label", "Booking actions")}
       defaultColDef={defaultColDef} getRowId={rowId} quickFilterText={filter} tooltipShowDelay={250} /></div>
   </section>;
 }

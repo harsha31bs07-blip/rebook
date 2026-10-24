@@ -44,7 +44,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
     weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
   const receipt = data?.receipt;
   const completed = receipt && ["COMPLETED", "SIMULATED"].includes(receipt.status);
-  return <main className="customer-booking customer-choice">
+  return <main id="main-content" tabIndex={-1} className="customer-booking customer-choice">
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A little change. A choice for you.</span></header>
     <section className="choice-intro"><p className="eyebrow">{data?.studio.name ?? "Your studio"}</p><h1>{data?.kind === "receipt" ? "Your refund receipt." : "Your class. Your call."}</h1><p className="muted">{data?.kind === "receipt" ? "Your studio has arranged a refund to your original payment." : "Plans change. Let’s find what works for you."}</p></section>
     {error && <p className="error error-box" role="alert">{error}</p>}
@@ -57,7 +57,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
         <div><p className="eyebrow">{data.kind === "receipt" || data.reply?.action === "refund" ? "Your update" : "Your new class"}</p><h2>{data.reply?.action === "refund" || data.kind === "receipt" ? "Refund to your original payment" : data.after?.title}</h2>{data.after && data.reply?.action !== "refund" && <><p>{when(data.after.start)}</p><span className="muted">with {data.after.instructor}</span></>}</div>
       </section>
       <details className="choice-message" open><summary>A note from your studio</summary><p>{data.message.body}</p></details>
-      <div aria-live="polite" role="status" className="choice-status">
+      <div aria-live="polite" aria-atomic="true" role="status" className="choice-status">
         {busy ? <p>Saving your choice…</p> : receipt ? <><h2>{completed ? "Refund completed" : receipt.status === "FAILED" ? "Refund needs attention" : "Refund pending"}</h2><p>${receipt.amount} {data.reply?.action === "move" ? "price difference" : "to your original payment"}{receipt.status === "SIMULATED" ? " · simulated" : " · PayPal"}</p>{receipt.paypalId && <p className="choice-receipt-id">Refund ID: <strong>{receipt.paypalId}</strong></p>}<p className="muted">{completed ? "Your receipt is saved here." : "This page updates automatically as your refund is confirmed."}</p></>
           : data.reply && <><h2>You’re all set.</h2><p>{data.reply.action === "keep" ? "Your new time is confirmed. See you in class." : "Your place in your chosen class is confirmed."}</p></>}
       </div>

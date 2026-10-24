@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { BryntumScheduler, type BryntumSchedulerProps } from "@bryntum/scheduler-react";
-import { StringHelper, TimeZoneHelper, type ResourceModel } from "@bryntum/scheduler";
+import { StringHelper, TimeZoneHelper, type EventModel, type ResourceModel } from "@bryntum/scheduler";
 import { checkAdjustment, type OwnerAdjustment } from "@/lib/solver/adjust";
 import type { Plan, State } from "@/lib/domain/types";
-import { addLocalDays, zonedTimeToUtc } from "@/lib/domain/time";
-import { mapSchedule, recoveryBounds, recoveryDropStart, resourceUtilisation, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
+import { addLocalDays } from "@/lib/domain/time";
+import { mapSchedule, recoveryDropStart, resourceUtilisation, scheduleRange, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
 
 export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, highlightedSessionId, busy, onAdjust, onMove }: {
   state: State; mode: RowMode; zoom: "day" | "week"; day: number; plan?: Plan; updatedPlan?: Plan; highlightedSessionId?: string; busy?: boolean; onAdjust?: (input: OwnerAdjustment) => Promise<void>; onMove?: (sessionId: string) => void;
@@ -24,16 +24,15 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
   }, [state, mode, plan, updatedPlan, highlightedSessionId]);
   const bounds = weekBounds(state);
   // Initial axis bounds are instants: the project's timeZone converts them along with events.
-  const startKey = zoom === "day" ? addLocalDays(bounds.startKey, day) : bounds.startKey;
-  const endKey = addLocalDays(startKey, zoom === "day" ? 1 : 7);
+  const range = scheduleRange(state, zoom, day, plan ?? updatedPlan);
   const [config] = useState<BryntumSchedulerProps>(() => ({
     height: "100%", width: "100%", snap: true, multiEventSelect: false,
     rowHeight: 112, barMargin: 5, eventLayout: "stack", eventStyle: "filled",
     // Week cards fill day cells; their labels retain exact times. Day view uses true hourly widths.
     fillTicks: zoom === "week", weekStartDay: 1, workingTime: visibleWorkingTime,
     autoAdjustTimeAxis: false,
-    startDate: zonedTimeToUtc(startKey, zoom === "week" ? "00:00" : "07:00", state.studio.timezone),
-    endDate: zonedTimeToUtc(endKey, "00:00", state.studio.timezone),
+    startDate: range.start,
+    endDate: range.end,
     timeZone: state.studio.timezone,
     viewPreset: {
       id: `rebook-${zoom}`, tickWidth: zoom === "week" ? 240 : 150,
@@ -68,30 +67,28 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     columnLinesFeature: true, headerMenuFeature: false, timeAxisHeaderMenuFeature: false,
     zoomOnMouseWheel: false, zoomOnTimeAxisDoubleClick: false,
   }));
-  const focusPlan = plan ?? updatedPlan;
-  const focus = focusPlan && (plan ? { startKey: bounds.startKey, endKey: addLocalDays(bounds.startKey, 7) } : recoveryBounds(state, focusPlan));
-  const focusStart = focus?.startKey;
-  const focusEnd = focus?.endKey;
+  const focusStart = range.focusKey;
   useEffect(() => {
     const scheduler = schedulerRef.current?.instance;
-    if (!scheduler || zoom !== "week" || !focusStart || !focusEnd) return;
+    if (!scheduler || zoom !== "week") return;
     // Runtime timeline methods use wall dates after the project's initial timezone conversion.
-    const startDate = new Date(`${focusStart}T00:00:00`);
-    const endDate = new Date(`${focusEnd}T00:00:00`);
-    const days = Math.round((Date.parse(focusEnd) - Date.parse(focusStart)) / 86400000);
-    const fit = () => {
+    void scheduler.scrollToDate(new Date(`${focusStart}T07:00:00`), { block: "start", animate: false });
+  }, [focusStart, zoom]);
+  useEffect(() => {
+    const scheduler = schedulerRef.current?.instance;
+    if (!scheduler || !highlightedSessionId) return;
+    // Run after React's event-store update; scroll both the day and resource into view.
+    const frame = requestAnimationFrame(() => {
       if (scheduler.isDestroyed) return;
-      // Retain day cards while fitting every original/recovery day in the available viewport.
-      scheduler.zoomToLevel({
-        id: `rebook-recovery-${days}`, tickWidth: Math.floor(Number(scheduler.subGrids.normal.width) / days),
-        timeResolution: { unit: "minute", increment: 15 }, headers: [{ unit: "day", dateFormat: "ddd MMM D" }],
-      }, { startDate, endDate });
-      void scheduler.scrollToDate(startDate, { block: "start", animate: false });
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [focusStart, focusEnd, zoom]);
+      const event = (scheduler.eventStore.getById(`${highlightedSessionId}-new`) ?? scheduler.eventStore.getById(highlightedSessionId)) as EventModel | undefined;
+      const mapped = data.events.find((item) => item.id === event?.id);
+      // A booking on another day must not expand a Day view's axis.
+      if (event && mapped && Date.parse(String(mapped.startDate)) >= Date.parse(range.start) && Date.parse(String(mapped.endDate)) <= Date.parse(range.end)) {
+        void scheduler.scrollEventIntoView(event, { block: "nearest", inline: "nearest", animate: false });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightedSessionId, data.events, range.start, range.end]);
   const renderer = useMemo<NonNullable<BryntumSchedulerProps["eventRenderer"]>>(() => ({ eventRecord, renderData }) => {
     const info = data.details[String(eventRecord.id)];
     if (!info) return StringHelper.encodeHtml(eventRecord.name);
@@ -105,6 +102,7 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
       ...(plan?.sessionChanges.some((change) => change.after && `${change.sessionId}-new` === String(eventRecord.id)) && onMove ? [{
         tag: "button", type: "button", className: "recovery-move", text: "Move", disabled: Boolean(busy),
         "aria-label": `Move ${info.title} to…`, "aria-haspopup": "dialog",
+        "data-move-session": String(eventRecord.id).replace(/-new$/, ""),
       }] : []),
     ] }];
   }, [data.details, zoom, mode, plan, onMove, busy]);

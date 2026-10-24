@@ -34,7 +34,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         if ("undo" in input) next.sessionChanges = next.sessionChanges.map((item) => item.sessionId === previous!.sessionId ? previous! : item);
         const validation = validate(state, next);
         if (!validation.ok) throw new Error(validation.errors.join("; "));
-        const saved = { ...stored, ...next, version: (stored.version ?? 1) + 1, lastAdjustment: "undo" in input ? undefined : previous };
+        const saved = { ...stored, ...next, version: (stored.version ?? 1) + 1,
+          lastAdjustment: "undo" in input ? undefined : previous,
+          lastAdjustmentTotals: "undo" in input ? undefined : stored.totals };
         repository.savePlan(saved);
         const { basis: _basis, ...plan } = saved;
         void _basis;

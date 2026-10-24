@@ -1,6 +1,6 @@
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DomConfig, EventModel } from "@bryntum/scheduler";
 import type { BryntumSchedulerProps } from "@bryntum/scheduler-react";
 import type { PlanDetails, PublicPlan } from "../lib/client/api";
@@ -8,18 +8,21 @@ import Schedule from "../components/console/schedule";
 import PlanPanel from "../components/console/plan-panel";
 import { replan } from "../lib/solver/replan";
 import { localParts } from "../lib/domain/time";
-import { recoveryDropStart } from "../lib/client/scheduler-mapping";
+import { recoveryDropStart, scheduleRange } from "../lib/client/scheduler-mapping";
 import { adjustmentFixture, disruption } from "./adjust-fixture";
 
-const harness = vi.hoisted(() => ({ eventId: "s1-new", target: undefined as Date | undefined }));
+const harness = vi.hoisted(() => ({ eventId: "s1-new", target: undefined as Date | undefined,
+  effects: [] as (() => unknown)[], scrollToDate: vi.fn(), zoomToLevel: vi.fn(), scrollEventIntoView: vi.fn() }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
   useMemo: (factory: () => unknown) => factory(),
   useState: (initial: unknown) => [typeof initial === "function" ? initial() : initial, vi.fn()],
   useRef: (initial: unknown) => ({ current: initial ?? { instance: {
     resolveEventRecord: () => ({ id: harness.eventId }), getDateFromDomEvent: () => harness.target,
+    scrollToDate: harness.scrollToDate, zoomToLevel: harness.zoomToLevel,
+    scrollEventIntoView: harness.scrollEventIntoView, eventStore: { getById: (id: string) => ({ id }) },
   } } }),
-  useEffect: () => {},
+  useEffect: (effect: () => unknown) => { harness.effects.push(effect); },
 }));
 vi.mock("@bryntum/scheduler-react", () => ({ BryntumScheduler: () => null }));
 vi.mock("@bryntum/scheduler", () => ({ StringHelper: { encodeHtml: (text: string) => text },
@@ -35,7 +38,8 @@ vi.mock("@/lib/client/scheduler-mapping", () => import("../lib/client/scheduler-
 
 const state = adjustmentFixture();
 const plan = replan(state, disruption, { now: "2026-11-09T00:00:00Z" });
-beforeEach(() => { harness.eventId = "s1-new"; harness.target = new Date("2026-11-10T17:45:00"); });
+beforeEach(() => { harness.eventId = "s1-new"; harness.target = new Date("2026-11-10T17:45:00"); harness.effects = []; vi.clearAllMocks(); });
+afterEach(() => vi.unstubAllGlobals());
 
 function schedule(overrides: Partial<Parameters<typeof Schedule>[0]> = {}) {
   const root = Schedule({ state, plan, mode: "instructors", zoom: "week", day: 0, onAdjust: vi.fn().mockResolvedValue(undefined), onMove: vi.fn(), ...overrides });
@@ -131,6 +135,41 @@ it("bounds the configured week by studio-local Monday midnight through Sunday 24
   expect(recoveryDropStart("2026-10-26T14:15:00Z", new Date("2026-11-01T18:00:00"), zoned.studio.timezone, "week")).toBe("2026-11-01T15:15:00.000Z");
 });
 
+it("preview and applied-plan focus scroll inside the fixed workspace week, including a DST boundary", () => {
+  const zoned = structuredClone(state);
+  zoned.studio.timezone = "America/New_York";
+  zoned.studio.weekStart = "2026-10-26T04:00:00.000Z";
+  const focused = structuredClone(plan);
+  focused.disruption.from = "2026-10-28T04:00:00Z";
+  focused.disruption.to = "2026-10-29T04:00:00Z";
+  focused.sessionChanges = [];
+  expect(scheduleRange(zoned, "week", 0, focused)).toMatchObject({ startKey: "2026-10-26", endKey: "2026-11-02",
+    start: "2026-10-26T04:00:00.000Z", end: "2026-11-02T05:00:00.000Z", focusKey: "2026-10-28" });
+  for (const preview of [true, false]) {
+    harness.effects = [];
+    const { props } = schedule({ state: zoned, plan: preview ? focused : undefined, updatedPlan: preview ? undefined : focused });
+    harness.effects[1]();
+    expect(props.startDate).toBe("2026-10-26T04:00:00.000Z");
+    expect(props.endDate).toBe("2026-11-02T05:00:00.000Z");
+    expect(harness.scrollToDate).toHaveBeenLastCalledWith(new Date("2026-10-28T07:00:00"), { block: "start", animate: false });
+    expect(harness.zoomToLevel).not.toHaveBeenCalled();
+  }
+  focused.disruption.from = "2026-10-22T00:00:00Z";
+  expect(scheduleRange(zoned, "week", 0, focused).focusKey).toBe("2026-10-26");
+});
+
+it("scrolls an accepted placement into view and highlights it without expanding a Day view", () => {
+  vi.stubGlobal("requestAnimationFrame", (callback: () => void) => { callback(); return 1; });
+  const { props } = schedule({ highlightedSessionId: "s1" });
+  harness.effects[2]();
+  expect(props.events!.find((item) => item.id === "s1-new")?.cls).toContain("new-booking-highlight");
+  expect(harness.scrollEventIntoView).toHaveBeenCalledWith({ id: "s1-new" }, { block: "nearest", inline: "nearest", animate: false });
+  harness.scrollEventIntoView.mockClear(); harness.effects = [];
+  schedule({ highlightedSessionId: "s1", zoom: "day", day: 1 });
+  harness.effects[2]();
+  expect(harness.scrollEventIntoView).not.toHaveBeenCalled();
+});
+
 it("lists changed sessions with Move links in preview and says Recovery complete after approval", () => {
   const publicPlan: PublicPlan = { ...plan, id: "plan", workspaceId: "workspace", status: "proposed", createdAt: "2026-11-09T00:00:00Z", results: [] };
   const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Your recovery preview", bullets: [], source: "template" } };
@@ -141,4 +180,20 @@ it("lists changed sessions with Move links in preview and says Recovery complete
   const executed = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, status: "executed" } }));
   expect(executed).toContain("<h2>Recovery complete</h2>");
   expect(executed).not.toContain("move-session-link");
+});
+
+it("compares an owner's adjustment with the previous version's totals beside Undo", () => {
+  const publicPlan: PublicPlan = { ...plan, id: "plan", workspaceId: "workspace", status: "proposed", createdAt: plan.now, results: [],
+    totals: { ...plan.totals, refunded: 9, revenueKept: "18.00" },
+    lastAdjustmentTotals: { ...plan.totals, refunded: 1, revenueKept: "194.00" } };
+  const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Adjusted recovery", bullets: [], source: "template" } };
+  const props = { details, plan: publicPlan, state, busy: false, results: [], onUndo: vi.fn(), onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
+  const html = renderToStaticMarkup(createElement(PlanPanel, props));
+  expect(html).toContain('role="status"');
+  expect(html).toContain("Your change: 8 more refunds, −$176.00 revenue kept (vs previous version).");
+  expect(html).toContain("Undo last adjustment");
+  const noDifference = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, lastAdjustmentTotals: publicPlan.totals } }));
+  expect(noDifference).toContain("Your change: no change in refunds, $0.00 revenue kept");
+  const improvement = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, totals: publicPlan.lastAdjustmentTotals, lastAdjustmentTotals: publicPlan.totals } as PublicPlan }));
+  expect(improvement).toContain("8 fewer refunds, +$176.00 revenue kept");
 });

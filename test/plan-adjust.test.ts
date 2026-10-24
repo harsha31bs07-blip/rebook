@@ -34,6 +34,8 @@ it("recomputes preference actions and totals and leaves the live schedule untouc
   expect(plan.sessionChanges[0]).toMatchObject({ ownerAdjusted: true, after: { start: "2026-11-09T14:00:00.000Z", end: "2026-11-09T15:00:00.000Z" } });
   expect(plan.bookingActions.map((item: { action: string }) => item.action)).toEqual(["refund", "move", "refund"]);
   expect(plan.totals).toMatchObject({ kept: 0, moved: 1, refunded: 2, revenueKept: "18.00", refundAmount: "36.00" });
+  expect(plan.lastAdjustmentTotals).toEqual(original.totals);
+  expect(getRepository().getPlan(id, original.id)?.lastAdjustmentTotals).toEqual(original.totals);
   expect(validate(before, plan).ok).toBe(true);
   expect(getRepository().requireWorkspace(id).state).toEqual(before);
   expect(getRepository().listLedger(id)).toEqual([]);
@@ -43,6 +45,18 @@ it("returns a clear 422 reason for a collision without saving or bumping the ver
   const response = await adjust(request({ sessionId: "s1", start: "2026-11-09T12:15:00Z", version: 1 }), context());
   expect(response.status).toBe(422); expect((await response.json()).error).toContain("Alex already teaches at 12:15");
   expect(getRepository().getPlan(id, original.id)).toEqual(original);
+});
+
+it("compares consecutive adjustments with the immediately previous version and clears the comparison on undo", async () => {
+  const first = await (await adjust(request({ sessionId: "s1", start: "2026-11-09T14:00:00Z", version: 1 }), context())).json();
+  const response = await adjust(request({ sessionId: "s1", start: "2026-11-09T10:00:00Z", version: 2 }), context());
+  expect(response.status).toBe(200);
+  const second = await response.json();
+  expect(second.lastAdjustmentTotals).toEqual(first.totals);
+  expect(second.totals).toEqual(original.totals);
+  const undone = await (await adjust(request({ undo: true, version: 3 }), context())).json();
+  expect(undone.totals).toEqual(first.totals);
+  expect(undone.lastAdjustmentTotals).toBeUndefined();
 });
 
 it.each([
@@ -99,6 +113,7 @@ it("undo restores the last placement, actions, totals and badge state while adva
   expect(response.status).toBe(200);
   const plan = await response.json();
   expect(plan.version).toBe(3); expect(plan.lastAdjustment).toBeUndefined();
+  expect(plan.lastAdjustmentTotals).toBeUndefined();
   expect(plan.sessionChanges).toEqual(original.sessionChanges); expect(plan.bookingActions).toEqual(original.bookingActions);
   expect(plan.totals).toEqual(original.totals); expect(plan.warnings).toEqual(original.warnings);
   expect((await adjust(request({ undo: true, version: 3 }), context())).status).toBe(422);

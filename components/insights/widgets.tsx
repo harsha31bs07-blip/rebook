@@ -66,7 +66,7 @@ function WeekHeatmap(params: AgWidgetParams<HeatmapWidget>) {
         const cell = cells.find((item) => item.instructor === instructor && item.day === day);
         return <button key={day} disabled={!cell || !instructorField || !dayField} aria-pressed={Boolean(selected(instructor, day))}
           aria-label={`${instructor}, ${heatmapDayLabel(day)}: ${cell ? `${cell.booked} of ${cell.capacity} booked, ${Math.round(cell.utilisation * 100)}% utilised${cell.disrupted ? ", disrupted" : ""}` : "No classes"}`}
-          className={styles.cell} style={{ backgroundColor: cell ? `rgba(29, 78, 216, ${0.08 + Math.min(cell.utilisation, 1) * 0.72})` : "#f1f5f9", color: cell && cell.utilisation > 0.6 ? "white" : "#1e293b", backgroundImage: cell?.disrupted ? "repeating-linear-gradient(135deg, transparent, transparent 5px, rgba(180,83,9,.4) 5px, rgba(180,83,9,.4) 7px)" : undefined }}
+          className={styles.cell} style={{ backgroundColor: !cell ? "#f1f5f9" : cell.utilisation > 0.6 ? "#1d4ed8" : cell.utilisation > 0.3 ? "#bfdbfe" : "#eff6ff", color: cell && cell.utilisation > 0.6 ? "white" : "#1e293b", backgroundImage: cell?.disrupted ? "repeating-linear-gradient(135deg, transparent, transparent 5px, rgba(15,23,42,.08) 5px, rgba(15,23,42,.08) 7px)" : undefined }}
           onClick={() => { if (instructorField && dayField) params.widgetApi.toggleCrossFilter({ type: "multiValue", group: 0, reset: true, values: [{ field: instructorField, value: instructor }, { field: dayField, value: cell?.dayValue }] }); }}>
           {!cell ? "—" : params.format?.style?.showValues === false ? "\u00a0" : `${Math.round(cell.utilisation * 100)}%`}
         </button>;

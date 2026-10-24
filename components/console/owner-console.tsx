@@ -12,7 +12,7 @@ import PlanPanel from "./plan-panel";
 import { ScheduleBoundary, ScheduleFallback } from "./schedule-boundary";
 import MoveToPopover from "./move-to-popover";
 import { draftCustomerMessages } from "../../lib/ai/messages";
-import { formatMoney } from "../../lib/domain/time";
+import { formatMoney, localParts } from "../../lib/domain/time";
 import type { OwnerAdjustment } from "../../lib/solver/adjust";
 import MessagesDrawer from "./messages-drawer";
 import ConsoleHeader from "./console-header";
@@ -27,6 +27,7 @@ function ScheduleSkeleton() {
 
 export default function OwnerConsole({ id }: { id: string }) {
   const [moveSession, setMoveSession] = useState<string>();
+  const [movedSession, setMovedSession] = useState<{ id: string; version: number }>();
   const [busy, setBusy] = useState("");
   const { workspace, error: loadError, refresh, expired, bookingNotice } = useWorkspace(id, busy === "approve" || busy === "reset");
   const [text, setText] = useState("");
@@ -45,6 +46,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const [approvalRequested, setApprovalRequested] = useState("");
   const actionInFlight = useRef(false);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 8000); return () => clearTimeout(timer); }, [toast]);
+  useEffect(() => { if (!movedSession) return; const timer = setTimeout(() => setMovedSession(undefined), 7500); return () => clearTimeout(timer); }, [movedSession]);
 
   async function run<T,>(action: string, operation: () => Promise<T>, propagate = false): Promise<T | undefined> {
     if (actionInFlight.current) { if (propagate) throw new Error("Another action is in progress. Try again when it finishes."); return; }
@@ -68,7 +70,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const ready = workspace?.status === "ready";
   const percent = workspace && workspace.progress.total ? Math.round(workspace.progress.done / workspace.progress.total * 100) : 0;
 
-  function clearPlan() { setMoveSession(undefined); setApprovalRequested(""); setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
+  function clearPlan() { setMoveSession(undefined); setMovedSession(undefined); setApprovalRequested(""); setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
   async function interpretText(value: string, signal?: AbortSignal) {
     setText(value); setApprovalRequested("");
     const parsed = await api.interpret(id, value, signal);
@@ -82,6 +84,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     const next = await api.details(id, proposed.id, signal);
     signal?.throwIfAborted();
     setApprovalRequested(""); setBasis({ ...state, sessions: next.sessions }); setDetails(next); setUpdatedPlan(undefined); setZoom("week"); await refresh();
+    setToast("Recovery plan ready. Review the changes before approving.");
     return planSummary(next.plan, state.studio.currency);
   }
   async function createPlan() {
@@ -108,6 +111,14 @@ export default function OwnerConsole({ id }: { id: string }) {
       const adjusted = await api.adjust(id, plan.id, input, plan.version ?? 1);
       const totals = adjusted.totals;
       const currentState = basis ?? state!;
+      const sessionId = "undo" in input ? plan.lastAdjustment?.sessionId : input.sessionId;
+      const placement = adjusted.sessionChanges.find((item) => item.sessionId === sessionId)?.after;
+      if (sessionId && placement) {
+        setMovedSession({ id: sessionId, version: adjusted.version ?? 1 });
+        const dateKey = localParts(placement.start, currentState.studio.timezone).dateKey;
+        if (zoom === "day") setDay(Math.round((Date.parse(dateKey) - Date.parse(weekBounds(currentState).startKey)) / 86400000));
+      }
+      setToast("undo" in input ? "Last adjustment undone. Review the restored placement and totals." : "Class moved. Review the updated placement and totals.");
       setDetails((previous) => previous ? { ...previous, plan: adjusted,
         messages: draftCustomerMessages(adjusted, currentState),
         explanation: { headline: "Your adjusted recovery plan is ready", source: "template", bullets: [
@@ -141,9 +152,10 @@ export default function OwnerConsole({ id }: { id: string }) {
   useWebMcp(() => ready && state && !expired && !ended ? ownerTools({ state, plans: workspace.plans, currentPlan: plan, busy: Boolean(busy), report: reportDisruption, requestApproval }) : []);
 
   if (expired || ended) return <ExpiredDemo />;
-  return <main className="console-app">
+  return <main id="main-content" tabIndex={-1} className="console-app">
     {state?.bookings.some((booking) => booking.payment?.unknown) && <p className="error error-box" role="status">payment unknown (simulated fallback) — some bookings could not be verified with PayPal. No new capture will be attempted.</p>}
     <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/book`} target="_blank" rel="noopener noreferrer">Customer booking page</Link><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
+    <p className="small-screen-note">The owner console works best on a larger screen. Scroll the schedule to explore your week.</p>
     {confirmReset && <div className="reset-confirm" role="group" aria-label="Confirm reset"><span>Start a fresh demo week? Existing sandbox transactions stay in the ledger.</span><button className="danger-button" onClick={() => void reset()}>Reset this demo</button><button onClick={() => setConfirmReset(false)}>Keep this week</button></div>}
     <div className="console-body">
       <section className="timeline-panel" aria-label="Studio schedule">
@@ -151,7 +163,7 @@ export default function OwnerConsole({ id }: { id: string }) {
         <div className="schedule-toolbar"><div className="row-controls"><span className="muted">Rows:</span><div className="segmented" aria-label="Schedule rows"><button aria-pressed={mode === "instructors"} onClick={() => setMode("instructors")}>Instructors</button><button aria-pressed={mode === "rooms"} onClick={() => setMode("rooms")}>Rooms</button></div></div><div className="zoom-controls">{zoom === "day" && <><button aria-label="Previous day" disabled={day === 0} onClick={() => setDay(day - 1)}>‹</button><span>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]}</span><button aria-label="Next day" disabled={day === 6} onClick={() => setDay(day + 1)}>›</button></>}<div className="segmented" aria-label="Schedule zoom"><button aria-pressed={zoom === "day"} onClick={() => setZoom("day")}>Day</button><button aria-pressed={zoom === "week"} onClick={() => setZoom("week")}>Week</button></div></div></div>
         {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Drag a recovery block, use Move, or focus it and press Enter / Space</span></div>}
         <div className="schedule-canvas">
-          {timelineState && ready ? <ScheduleBoundary key={`${id}-${mode}-${zoom}-${day}`} fallback={<ScheduleFallback state={timelineState} plan={preview ? plan : undefined} onMove={preview && !busy ? setMoveSession : undefined} />}><Schedule state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={bookingNotice?.sessionId} busy={Boolean(busy)} onAdjust={preview ? adjust : undefined} onMove={setMoveSession} /></ScheduleBoundary> : <ScheduleSkeleton />}
+          {timelineState && ready ? <ScheduleBoundary key={`${id}-${mode}-${zoom}-${day}`} fallback={<ScheduleFallback state={timelineState} plan={preview ? plan : undefined} highlightedSessionId={movedSession?.id} onMove={preview && !busy ? setMoveSession : undefined} />}><Schedule state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={movedSession?.id ?? bookingNotice?.sessionId} busy={Boolean(busy)} onAdjust={preview ? adjust : undefined} onMove={setMoveSession} /></ScheduleBoundary> : <ScheduleSkeleton />}
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2>{workspace?.status === "failed" ? "We couldn’t prepare this demo" : "Preparing your studio"}</h2><p className="muted">{workspace?.status === "failed" ? workspace.preparationError || "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
           {preview && plan && timelineState && moveSession && <MoveToPopover key={moveSession} state={timelineState} plan={plan} sessionId={moveSession} busy={Boolean(busy)} onAdjust={adjust} onClose={() => setMoveSession(undefined)} />}
         </div>
@@ -167,8 +179,8 @@ export default function OwnerConsole({ id }: { id: string }) {
         </> : <><p className="eyebrow">Recovery assistant</p><h2>A better plan<br />is on its way.</h2><p className="muted">Your schedule and recovery tools will be ready as soon as setup finishes.</p><div className="panel-skeleton skeleton" /><div className="panel-skeleton skeleton" /></>}
       </aside>
     </div>
-    <div className="sr-only" role="status" aria-live="polite">{busy === "approve" ? `Processing refunds. ${results.length} results received.` : busy ? "Working on your request." : ""}</div>
-    {toast && <div className="toast" role="status">{toast}<button aria-label="Dismiss notification" onClick={() => setToast("")}>×</button></div>}
+    <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{busy === "approve" ? `Processing refunds. ${results.length} results received.` : busy ? "Working on your request." : toast || (plan ? plan.status === "proposed" ? "Recovery plan ready. Review the changes before approving." : `${results.filter((result) => result.status === "COMPLETED").length} refunds completed. ${results.filter((result) => ["PENDING", "REQUESTED"].includes(result.status)).length} refunds pending.` : "")}</div>
+    {toast && <div className="toast">{toast}<button aria-label="Dismiss notification" onClick={() => setToast("")}>×</button></div>}
     {bookingNotice && !toast && <div className="toast" role="status">{bookingNotice.message}</div>}
     {messagesOpen && details && <MessagesDrawer messages={details.messages} links={workspace?.customerChoices?.links.filter((link) => link.planId === details.plan.id)} onClose={() => setMessagesOpen(false)} />}
   </main>;

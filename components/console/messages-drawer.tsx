@@ -9,8 +9,9 @@ export default function MessagesDrawer({ messages, links = [], onClose }: { mess
   const [notice, setNotice] = useState("");
   useEffect(() => {
     const element = dialog.current;
+    const previous = document.activeElement as HTMLElement | null;
     element?.showModal();
-    return () => element?.close();
+    return () => { element?.close(); previous?.focus(); };
   }, []);
   return <dialog ref={dialog} className="messages-drawer" aria-labelledby="messages-title" onCancel={onClose}>
     <div className="drawer-header"><div><p className="eyebrow">Customer care</p><h2 id="messages-title">{links.length ? "Customer messages" : "Message drafts"}</h2></div><button autoFocus onClick={onClose} aria-label="Close customer messages">Close</button></div>

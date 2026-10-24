@@ -5,6 +5,7 @@ import { demoDisruptionFor, floodDisruptionFor, nextWeekStart, seedStudio } from
 import { affectedSessions } from "../solver/validate";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
 import { reconcileRefund } from "../executor/reconcileRefund";
+import { limits } from "../api/limits";
 
 export type SeedProgress = { completed: number; total: number; bookingId: string; status: "COMPLETED" | "SIMULATED" | "FAILED" };
 export type CreateWorkspaceOptions = { repository?: Repository; onProgress?: (progress: SeedProgress) => void };
@@ -107,8 +108,12 @@ function initialState(reset = false): State {
 
 export async function createWorkspace(options: CreateWorkspaceOptions = {}): Promise<Workspace> {
   const repository = options.repository ?? getRepository();
-  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true });
-  return prepare(workspace.id, options, repository);
+  const state = initialState();
+  const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
+  try {
+    const workspace = repository.createWorkspace(state, undefined, { preparing: true });
+    return await prepare(workspace.id, options, repository);
+  } finally { release(); }
 }
 
 async function prepare(id: string, options: CreateWorkspaceOptions, repository: Repository): Promise<Workspace> {
@@ -143,10 +148,16 @@ export function startWarmPool(repository: Repository = getRepository()): Promise
   const pending = poolFills.get(repository);
   if (pending) return pending;
   if (repository.stalePreparations(Date.now(), 0).some((workspace) => workspace.pooled)) return Promise.resolve();
-  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true, pooled: true });
+  const state = initialState();
+  let release: () => void;
+  try { release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length); }
+  catch (error) { if (error instanceof StoreError && error.status === 429) return Promise.resolve(); throw error; }
+  let workspace: Workspace;
+  try { workspace = repository.createWorkspace(state, undefined, { preparing: true, pooled: true }); }
+  catch (error) { release(); throw error; }
   const filling = track(backgroundPreparation(workspace.id, {}, repository).then(() => {}, () => {
     console.error("Warm workspace preparation failed");
-  }).finally(() => poolFills.delete(repository)));
+  }).finally(() => { release(); poolFills.delete(repository); }));
   poolFills.set(repository, filling);
   return filling;
 }
@@ -159,10 +170,14 @@ export function beginWorkspace(options: CreateWorkspaceOptions = {}): Workspace 
     void startWarmPool(repository);
     if (claimed) return claimed;
   }
-  const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true });
+  const state = initialState();
+  const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
+  let workspace: Workspace;
+  try { workspace = repository.createWorkspace(state, undefined, { preparing: true }); }
+  catch (error) { release(); throw error; }
   void backgroundPreparation(workspace.id, options, repository).catch(() => {
     console.error("Workspace preparation failed", { workspaceId: workspace.id });
-  });
+  }).finally(release);
   return workspace;
 }
 
@@ -176,7 +191,11 @@ export async function resumeStalePreparations(repository: Repository = getReposi
     const recover = async () => {
       try {
         const current = repository.getWorkspace(workspace.id, true);
-        if (current?.status === "preparing" && Date.parse(current.updatedAt) <= Date.now() - 120_000) await prepare(workspace.id, {}, repository);
+        if (current?.status === "preparing" && Date.parse(current.updatedAt) <= Date.now() - 120_000) {
+          const captured = new Set(repository.latestMoneyEvents(workspace.id).filter((event) => event.kind === "capture" && event.status === "COMPLETED").map((event) => event.bookingId));
+          const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false);
+          try { await prepare(workspace.id, {}, repository); } finally { release(); }
+        }
       } catch { console.error("Workspace preparation recovery failed", { workspaceId: workspace.id }); }
     };
     const delay = Date.parse(workspace.updatedAt) + 120_001 - Date.now();
@@ -190,7 +209,9 @@ export async function resumeStalePreparations(repository: Repository = getReposi
 export async function resetWorkspace(workspaceId: string, options: CreateWorkspaceOptions = {}): Promise<Workspace> {
   const repository = options.repository ?? getRepository();
   repository.requireReadyWorkspace(workspaceId);
-  return withWorkspaceLock(repository, workspaceId, async (owner) => {
+  const state = initialState(true);
+  const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
+  try { return await withWorkspaceLock(repository, workspaceId, async (owner) => {
     for (const event of repository.latestMoneyEvents(workspaceId)) {
       if (event.kind !== "refund" || !["REQUESTED", "PENDING"].includes(event.status)) continue;
       repository.renewLock(workspaceId, owner);
@@ -198,10 +219,9 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
     }
     repository.renewLock(workspaceId, owner);
     repository.transaction(() => {
-      const state = initialState(true);
       repository.saveState(workspaceId, state); repository.clearPlans(workspaceId);
       repository.savePreparation(workspaceId, "preparing", { done: 0, total: state.bookings.length });
     });
     return seedPayments(workspaceId, options, repository, owner);
-  });
+  }); } finally { release(); }
 }

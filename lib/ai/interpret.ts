@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DisruptionSchema } from "../domain/schemas";
 import type { Disruption, State } from "../domain/types";
 import { addLocalDays, localParts, overlaps, zonedTimeToUtc } from "../domain/time";
-import { AiUnavailable, generateJson } from "./gemini";
+import { AiUnavailable, generateJson, type AiIdentity } from "./gemini";
 
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 const DAY_WORDS = ["today", "tomorrow", ...DAYS] as const;
@@ -31,7 +31,7 @@ const responseSchema = {
 };
 
 export type Interpretation = {
-  disruption: Disruption; confidence: number; source: "gemini" | "rules"; model?: string; notes: string[];
+  disruption: Disruption; confidence: number; source: "gemini" | "rules"; model?: string; notes: string[]; aiBusy?: boolean;
 };
 export class InterpretationError extends Error {
   constructor(state: State) {
@@ -167,7 +167,7 @@ Studio week by local day: ${JSON.stringify(sessions)}
 Owner text: ${JSON.stringify(text)}`;
 }
 
-export async function interpretDisruption(text: string, state: State, nowIso: string, weekStart = state.studio.weekStart): Promise<Interpretation> {
+export async function interpretDisruption(text: string, state: State, nowIso: string, weekStart = state.studio.weekStart, identity?: AiIdentity): Promise<Interpretation> {
   if (!text.trim() || text.length > 500 || !Number.isFinite(Date.parse(nowIso)) || !Number.isFinite(Date.parse(weekStart))) throw new InterpretationError(state);
   const fallback = (): Interpretation => {
     const intent = rules(text, state);
@@ -176,10 +176,10 @@ export async function interpretDisruption(text: string, state: State, nowIso: st
   };
   let result: Awaited<ReturnType<typeof generateJson<Intent>>>;
   try {
-    result = await generateJson(promptFor(text, state, nowIso, weekStart), responseSchema, IntentSchema);
+    result = await generateJson(promptFor(text, state, nowIso, weekStart), responseSchema, IntentSchema, { identity });
   } catch (error) {
     if (!(error instanceof AiUnavailable)) throw error;
-    return fallback();
+    return { ...fallback(), ...(error.busy ? { aiBusy: true } : {}) };
   }
   if (result.data.confidence < 0.7) throw new InterpretationError(state);
   try {

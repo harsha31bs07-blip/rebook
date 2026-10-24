@@ -23,7 +23,7 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
       <p className="try-label">Or try an example</p><div className="examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
-      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill">{interpretationSource(interpretation.source, interpretation.model)}</span></div>
+      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill">{interpretation.aiBusy ? "Rules (AI busy)" : interpretationSource(interpretation.source, interpretation.model)}</span></div>
       <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone} · {Math.round(interpretation.confidence * 100)}% confidence</p>
       {interpretation.notes.length > 0 && <ul>{interpretation.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
       <div className="button-row"><button className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>

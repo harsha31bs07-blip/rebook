@@ -9,9 +9,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return api(async () => {
     const params = await context.params;
     const id = WorkspaceIdSchema.parse(params.id);
-    const planId = PlanIdSchema.parse(params.planId);
     const repository = getRepository();
     const workspace = repository.requireWorkspace(id);
+    const planId = PlanIdSchema.parse(params.planId);
     const stored = repository.getPlan(id, planId);
     if (!stored) throw new StoreError(404, "Plan not found");
     const state = stored.basis ?? workspace.state;

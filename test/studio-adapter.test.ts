@@ -12,13 +12,13 @@ const toolResponse: StudioCompletion = { id: "answer-1", created: 100, model: "g
 ] } }] };
 
 describe("Studio Gemini adapter", () => {
-  it("translates instructions, tools, tool choice, model and structured output", () => {
+  it("sends conversation and model only; policy and tools belong to the server", () => {
     const wire = toChatRequest({ ...request, responseFormat: { type: "json", name: "result", schema: { type: "object", properties: {} } } });
-    expect(wire.messages).toEqual([{ role: "system", content: "Cite tool data." }, { role: "user", content: "What did it cost?" }]);
-    expect(wire.tools?.[0]).toMatchObject({ type: "function", function: { name: "get_disruptions", parameters: { type: "object" } } });
-    expect(wire.tool_choice).toEqual({ type: "function", function: { name: "get_disruptions" } });
+    expect(wire.messages).toEqual([{ role: "user", content: "What did it cost?" }]);
+    expect(wire).not.toHaveProperty("tools");
+    expect(wire).not.toHaveProperty("tool_choice");
     expect(wire.model).toBe("gemini-3.5-flash");
-    expect(wire.response_format?.json_schema.name).toBe("result");
+    expect(wire).not.toHaveProperty("response_format");
   });
   it("round-trips parallel calls and Google's exact thought signature on the assistant message", () => {
     const remembered = new Map();
@@ -29,10 +29,10 @@ describe("Studio Gemini adapter", () => {
       { type: "function_call_output", callId: "call-1", output: '{"cost":113}', status: "completed" },
       { type: "function_call_output", callId: "call-2", output: "[]", status: "completed" },
     ] }, remembered);
-    expect(next.messages[2]).toEqual({ role: "assistant", content: "Checking the ledger.", tool_calls: toolResponse.choices[0].message.tool_calls });
-    expect(next.messages[3]).toEqual({ role: "tool", tool_call_id: "call-1", content: '{"cost":113}' });
+    expect(next.messages[1]).toEqual({ role: "assistant", content: "Checking the ledger.", tool_calls: toolResponse.choices[0].message.tool_calls });
+    expect(next.messages[2]).toEqual({ role: "tool", tool_call_id: "call-1", content: '{"cost":113}' });
     // The extension also survives serializing the output; the sidecar covers hosts which strip it.
-    expect(toChatRequest({ ...request, input: JSON.parse(JSON.stringify(response.output)) }).messages[1].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
+    expect(toChatRequest({ ...request, input: JSON.parse(JSON.stringify(response.output)) }).messages[0].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
   });
   it("emits protocol chunks, resolves completion, forwards cancellation and preserves signatures across turns", async () => {
     const transport = vi.fn().mockResolvedValueOnce(Response.json(toolResponse)).mockResolvedValueOnce(Response.json({ id: "answer-2", choices: [{ message: { role: "assistant", content: "$113 refunded." }, finish_reason: "stop" }] }));
@@ -50,7 +50,7 @@ describe("Studio Gemini adapter", () => {
     for await (const event of next.stream) expect(event.type).toBe("TEXT_MESSAGE_CHUNK");
     expect((await next.complete).status).toBe("completed");
     const body = JSON.parse(transport.mock.calls[1][1].body);
-    expect(body.messages[2].tool_calls[0].extra_content).toEqual({ google: { thought_signature: "opaque+signature/unchanged==" } });
+    expect(body.messages[1].tool_calls[0].extra_content).toEqual({ google: { thought_signature: "opaque+signature/unchanged==" } });
   });
   it("regroups Studio's interleaved call/result pairs while retaining separate tool-only turns", () => {
     const remembered = new Map();
@@ -58,9 +58,9 @@ describe("Studio Gemini adapter", () => {
     const second = fromChatCompletion({ id: "answer-2", choices: [{ message: { role: "assistant", tool_calls: [{ id: "call-3", type: "function", function: { name: "get_disruptions", arguments: "{}" } }] } }] }, remembered).response;
     const input = [...first.output, ...second.output].flatMap<AgAiConversationItem>((item) => item.type === "function_call" ? [item, { type: "function_call_output", callId: item.callId, output: "[]", status: "completed" }] : [item]);
     const wire = toChatRequest({ ...request, input }, remembered);
-    expect(wire.messages.slice(1).map((message) => message.role)).toEqual(["assistant", "tool", "tool", "assistant", "tool"]);
-    expect(wire.messages[1].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
-    expect(wire.messages[4].tool_calls?.[0].id).toBe("call-3");
+    expect(wire.messages.map((message) => message.role)).toEqual(["assistant", "tool", "tool", "assistant", "tool"]);
+    expect(wire.messages[0].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
+    expect(wire.messages[3].tool_calls?.[0].id).toBe("call-3");
   });
   it("surfaces friendly proxy errors and marks token truncation incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Please try again shortly." }, { status: 503 })));

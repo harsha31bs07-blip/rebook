@@ -1,18 +1,15 @@
-import { api, WorkspaceIdSchema } from "../../../../../lib/api/http";
-import { rateLimitStudio, StudioChatSchema, studioCompletion } from "../../../../../lib/ai/studio-gemini";
-import { getRepository, StoreError } from "../../../../../lib/store";
+import { api, jsonBody, WorkspaceIdSchema } from "../../../../../lib/api/http";
+import { StudioChatSchema, studioCompletion } from "../../../../../lib/ai/studio-gemini";
+import { getRepository } from "../../../../../lib/store";
+import { clientIp } from "../../../../../lib/api/client-ip";
 
 export const runtime = "nodejs";
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   return api(async () => {
     const id = WorkspaceIdSchema.parse((await context.params).id);
-    getRepository().requireReadyWorkspace(id);
-    rateLimitStudio(id);
+    const { state } = getRepository().requireReadyWorkspace(id);
     // Studio's tool schemas and query results are larger than the console's small JSON bodies.
-    const raw = await request.text();
-    if (raw.length > 1_048_576) throw new StoreError(413, "This conversation is too large. Please start a new conversation.");
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new StoreError(400, "Invalid JSON"); }
-    return studioCompletion(StudioChatSchema.parse(parsed), request.signal);
+    const body = await jsonBody(request, StudioChatSchema, 65_536);
+    return studioCompletion(body, request.signal, { client: clientIp(request), workspace: id }, state);
   });
 }

@@ -19,9 +19,8 @@ export function toChatRequest(request: AgLlmRequest, remembered: ReadonlyMap<str
     messages.push(...results);
     calls = []; results = []; turnId = undefined;
   };
-  if (request.instructions) messages.push({ role: "system", content: request.instructions });
   for (const item of request.input) {
-    if (item.type === "message") {
+    if (item.type === "message" && (item.role === "user" || item.role === "assistant")) {
       flush();
       const content = item.content.map((part) => part.type === "text" ? part.text : part.type === "refusal" ? part.refusal : "").join("\n");
       messages.push({ role: item.role, content });
@@ -43,11 +42,6 @@ export function toChatRequest(request: AgLlmRequest, remembered: ReadonlyMap<str
   flush();
   return {
     messages, model: request.model?.id,
-    ...(request.tools?.length ? { tools: request.tools.map((tool) => ({ type: "function" as const, function: {
-      name: tool.name, description: tool.description, parameters: tool.parameters as Record<string, unknown>,
-    } })) } : {}),
-    ...(request.toolChoice ? { tool_choice: typeof request.toolChoice === "string" ? request.toolChoice : { type: "function" as const, function: { name: request.toolChoice.name } } } : {}),
-    ...(request.responseFormat.type === "json" ? { response_format: { type: "json_schema" as const, json_schema: { name: request.responseFormat.name, schema: request.responseFormat.schema as Record<string, unknown> } } } : {}),
   };
 }
 

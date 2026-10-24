@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, type Interpretation, type PlanDetails } from "@/lib/client/api";
+import { api, ApiError, type Interpretation, type PlanDetails } from "@/lib/client/api";
 import { classColors, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
 import type { Plan, State } from "@/lib/domain/types";
 import { useWorkspace } from "./use-workspace";
@@ -11,6 +11,7 @@ import DisruptionPanel from "./disruption-panel";
 import PlanPanel from "./plan-panel";
 import MessagesDrawer from "./messages-drawer";
 import ConsoleHeader from "./console-header";
+import ExpiredDemo from "./expired-demo";
 
 const Schedule = dynamic(() => import("./schedule"), { ssr: false, loading: () => <ScheduleSkeleton /> });
 function ScheduleSkeleton() {
@@ -19,7 +20,7 @@ function ScheduleSkeleton() {
 
 export default function OwnerConsole({ id }: { id: string }) {
   const [busy, setBusy] = useState("");
-  const { workspace, error: loadError, refresh } = useWorkspace(id, busy === "approve" || busy === "reset");
+  const { workspace, error: loadError, refresh, expired } = useWorkspace(id, busy === "approve" || busy === "reset");
   const [text, setText] = useState("");
   const [interpretation, setInterpretation] = useState<Interpretation>();
   const [details, setDetails] = useState<PlanDetails>();
@@ -32,12 +33,16 @@ export default function OwnerConsole({ id }: { id: string }) {
   const [day, setDay] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
+  const [ended, setEnded] = useState(false);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 8000); return () => clearTimeout(timer); }, [toast]);
 
   async function run(action: string, operation: () => Promise<void>) {
     setBusy(action); setError("");
     try { await operation(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Something went wrong. Please try again."); }
+    catch (cause) {
+      if (cause instanceof ApiError && cause.code === "expired") setEnded(true);
+      setError(cause instanceof Error ? cause.message : "Something went wrong. Please try again.");
+    }
     finally { setBusy(""); }
   }
   const state = workspace?.state;
@@ -78,6 +83,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     await run("reset", async () => { clearPlan(); setUpdatedPlan(undefined); setText(""); await api.reset(id); await refresh(); setToast("Demo reset. Your new week is ready."); });
   }
 
+  if (expired || ended) return <ExpiredDemo />;
   return <main className="console-app">
     <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
     {confirmReset && <div className="reset-confirm" role="group" aria-label="Confirm reset"><span>Start a fresh demo week? Existing sandbox transactions stay in the ledger.</span><button className="danger-button" onClick={() => void reset()}>Reset this demo</button><button onClick={() => setConfirmReset(false)}>Keep this week</button></div>}

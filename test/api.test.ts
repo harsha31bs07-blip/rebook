@@ -19,9 +19,11 @@ import { seedStudio } from "../lib/seed/seed";
 import { startWarmPool, waitForWorkspacePreparation } from "../lib/demo/createWorkspace";
 import { register } from "../instrumentation";
 import { processWebhook } from "../lib/paypal/webhook";
+import { limits } from "../lib/api/limits";
 
 let directory: string;
 beforeEach(() => {
+  limits.reset();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-05T15:00:00Z"));
   directory = mkdtempSync(join(tmpdir(), "rebook-api-"));
@@ -73,7 +75,7 @@ describe("workspace API", () => {
     for (const booking of state.bookings) getRepository().appendLedger({ workspaceId: id, bookingId: booking.id,
       kind: "capture", amount: booking.amount, paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId,
       requestId: `capture-${booking.id}`, status: "SIMULATED" });
-    const plan = await (await propose(post({ disruption: { kind: "closure", from: "2026-11-05T15:00:00Z", to: "2026-11-30T05:00:00Z" } }), context(id))).json();
+    const plan = await (await propose(post({ disruption: { kind: "closure", from: "2026-11-09T05:00:00Z", to: "2026-11-16T05:00:00Z" } }), context(id))).json();
     expect(plan.sessionChanges.some((change: { remedy: string }) => change.remedy === "cancel")).toBe(true);
     const params = { params: Promise.resolve({ id, planId: plan.id }) };
     const beforeResponse = await planDetails(new Request("http://localhost"), params);
@@ -224,10 +226,10 @@ describe("workspace API", () => {
   it("validates inputs and returns sanitized errors", async () => {
     expect((await create(post({ unexpected: true }))).status).toBe(400);
     expect((await create(new Request("http://localhost", { method: "POST", body: "{" }))).status).toBe(400);
-    expect((await read(new Request("http://localhost"), context("bad"))).status).toBe(400);
+    expect((await read(new Request("http://localhost"), context("bad"))).status).toBe(404);
     const missing = await read(new Request("http://localhost"), context("missing123"));
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "Workspace not found" });
+    expect(await missing.json()).toMatchObject({ code: "expired" });
     const { id } = await (await create(post())).json();
     await waitForWorkspacePreparation();
     expect((await propose(post({ disruption: { kind: "closure" } }), context(id))).status).toBe(400);

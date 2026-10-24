@@ -1,23 +1,22 @@
 import { z } from "zod";
 import { StoreError } from "../store";
+import { limits } from "../api/limits";
+import type { AiIdentity } from "./gemini";
+import type { State } from "../domain/types";
+import { studioInstructions, studioToolNames, studioTools } from "./studio-policy";
 
 const ToolCallSchema = z.object({
   id: z.string(), type: z.literal("function"),
-  function: z.object({ name: z.string(), arguments: z.string() }),
+  function: z.object({ name: z.string().refine((name) => studioToolNames.has(name), "Unknown tool"), arguments: z.string() }),
   extra_content: z.record(z.string(), z.unknown()).optional(),
 });
-export const StudioChatSchema = z.object({
+export const StudioChatSchema = z.strictObject({
   messages: z.array(z.object({
-    role: z.enum(["system", "user", "assistant", "tool"]), content: z.string().nullable(),
+    role: z.enum(["user", "assistant", "tool"]), content: z.string().nullable(),
     tool_call_id: z.string().optional(), tool_calls: z.array(ToolCallSchema).optional(),
-  })).min(1).max(300),
-  tools: z.array(z.object({ type: z.literal("function"), function: z.object({
-    name: z.string(), description: z.string().optional(), parameters: z.record(z.string(), z.unknown()),
-  }) })).max(100).optional(),
-  tool_choice: z.union([z.enum(["auto", "none", "required"]), z.object({ type: z.literal("function"), function: z.object({ name: z.string() }) })]).optional(),
-  response_format: z.object({ type: z.literal("json_schema"), json_schema: z.object({ name: z.string(), schema: z.record(z.string(), z.unknown()) }) }).optional(),
+  })).min(1).max(60),
   model: z.string().optional(),
-});
+}).refine((body) => JSON.stringify(body).length <= 24_000, "This conversation is too large. Please start a new conversation.");
 export type StudioChatRequest = z.infer<typeof StudioChatSchema>;
 export const StudioCompletionSchema = z.object({
   id: z.string(), model: z.string().optional(), created: z.number().optional(),
@@ -28,17 +27,8 @@ export const StudioCompletionSchema = z.object({
 });
 export type StudioCompletion = z.infer<typeof StudioCompletionSchema>;
 
-const attempts = new Map<string, { count: number; expiresAt: number }>();
-export function rateLimitStudio(id: string) {
-  const now = Date.now();
-  for (const [key, bucket] of attempts) if (bucket.expiresAt <= now) attempts.delete(key);
-  const bucket = attempts.get(id) ?? { count: 0, expiresAt: now + 600_000 };
-  if (bucket.count >= 30) throw new StoreError(429, "The analyst has reached 30 turns. Please try again in a few minutes.");
-  bucket.count++;
-  attempts.set(id, bucket);
-}
-
-export async function studioCompletion(body: StudioChatRequest, signal?: AbortSignal): Promise<StudioCompletion> {
+export async function studioCompletion(body: StudioChatRequest, signal?: AbortSignal, identity?: AiIdentity, state?: State): Promise<StudioCompletion> {
+  body = StudioChatSchema.parse(body);
   const unavailable = () => new StoreError(503, "The recovery analyst is temporarily unavailable. Your insights are still available; please try again shortly.");
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) throw unavailable();
@@ -50,6 +40,7 @@ export async function studioCompletion(body: StudioChatRequest, signal?: AbortSi
     const remaining = 25_000 - (Date.now() - started);
     if (remaining <= 0) break;
     const controller = new AbortController();
+    const release = limits.aiCall(identity?.client ?? "unknown", identity?.workspace ?? "unknown");
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const deadline = new Promise<never>((_, reject) => {
@@ -60,7 +51,7 @@ export async function studioCompletion(body: StudioChatRequest, signal?: AbortSi
           const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
             method: "POST", cache: "no-store", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-            body: JSON.stringify({ ...body, model, stream: false, max_tokens: 4096 }),
+            body: JSON.stringify({ messages: [{ role: "system", content: studioInstructions(state) }, ...body.messages], tools: studioTools, model, stream: false, max_tokens: 4096 }),
           });
           if (!response.ok) return { permanent: response.status === 401 || response.status === 403 };
           const completion = StudioCompletionSchema.parse(await response.json());
@@ -73,7 +64,7 @@ export async function studioCompletion(body: StudioChatRequest, signal?: AbortSi
       if (result.permanent) break;
     } catch {
       // Never return/log upstream bodies, auth headers, or credentials.
-    } finally { if (timer !== undefined) clearTimeout(timer); }
+    } finally { release(); if (timer !== undefined) clearTimeout(timer); }
   }
   throw unavailable();
 }

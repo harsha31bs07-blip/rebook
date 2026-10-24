@@ -105,7 +105,7 @@ describe("workspace insights", () => {
   });
 
   it("rejects invalid, missing and preparing workspaces", async () => {
-    expect((await GET(new Request("http://localhost"), context("bad"))).status).toBe(400);
+    expect((await GET(new Request("http://localhost"), context("bad"))).status).toBe(404);
     expect((await GET(new Request("http://localhost"), context("missing123"))).status).toBe(404);
     const workspace = getRepository().createWorkspace(seedStudio(), undefined, { preparing: true });
     expect((await GET(new Request("http://localhost"), context(workspace.id))).status).toBe(409);

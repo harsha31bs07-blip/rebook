@@ -24,8 +24,15 @@ export type LedgerEvent = {
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
+const storeErrorBrand = Symbol.for("rebook.StoreError");
 export class StoreError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  readonly [storeErrorBrand] = true;
+  // A repository/limiter shared through globalThis may come from Next's instrumentation bundle.
+  static [Symbol.hasInstance](value: unknown): boolean {
+    if (this !== StoreError) return Function.prototype[Symbol.hasInstance].call(this, value);
+    return value instanceof Error && (value as StoreError)[storeErrorBrand] === true;
+  }
+  constructor(public status: number, message: string, public code?: string, public retryAfter?: number) { super(message); }
 }
 
 export class Repository {
@@ -91,7 +98,7 @@ export class Repository {
   }
   requireWorkspace(id: string, includePooled = false): Workspace {
     const workspace = this.getWorkspace(id, includePooled);
-    if (!workspace) throw new StoreError(404, "Workspace not found");
+    if (!workspace) throw new StoreError(404, "This demo has ended (demos reset when the server restarts). Start a fresh one.", "expired");
     return workspace;
   }
   requireReadyWorkspace(id: string): Workspace {
@@ -114,6 +121,11 @@ export class Repository {
   readyPoolWorkspace(): Workspace | undefined {
     const rows = this.db.prepare("SELECT data FROM workspaces WHERE json_extract(data, '$.pooled') = 1 AND json_extract(data, '$.status') = 'ready' LIMIT 1").all() as JsonRow[];
     return rows[0] ? JSON.parse(rows[0].data) as Workspace : undefined;
+  }
+  poolStatus(): { ready: number; preparing: number } {
+    const rows = this.db.prepare("SELECT json_extract(data, '$.status') AS status, COUNT(*) AS count FROM workspaces WHERE json_extract(data, '$.pooled') = 1 GROUP BY status")
+      .all() as { status: string; count: number }[];
+    return { ready: rows.find((row) => row.status === "ready")?.count ?? 0, preparing: rows.find((row) => row.status === "preparing")?.count ?? 0 };
   }
   claimPoolWorkspace(): Workspace | undefined {
     return this.transaction(() => {
@@ -139,14 +151,23 @@ export class Repository {
     this.requireWorkspace(workspaceId);
     const stored: StoredPlan = { ...PlanSchema.parse(plan), id: randomUUID(), workspaceId, status: "proposed", createdAt: new Date().toISOString(), results: [] };
     this.db.prepare("INSERT INTO plans VALUES (?, ?, ?)").run(stored.id, workspaceId, JSON.stringify(stored));
+    // Only disposable proposals are evicted. Execution and payment history remains intact.
+    this.db.prepare(`DELETE FROM plans WHERE id IN (
+      SELECT p.id FROM plans p WHERE workspace_id = ? AND json_extract(data, '$.status') = 'proposed'
+      AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.workspace_id = p.workspace_id AND json_extract(l.data, '$.requestId') LIKE p.id || ':%')
+      ORDER BY rowid DESC LIMIT -1 OFFSET 20
+    )`).run(workspaceId);
     return stored;
   }
   getPlan(workspaceId: string, id: string): StoredPlan | undefined {
     const row = this.db.prepare("SELECT data FROM plans WHERE id = ? AND workspace_id = ?").get(id, workspaceId) as JsonRow | undefined;
     return row ? this.planView(JSON.parse(row.data) as StoredPlan) : undefined;
   }
-  listPlans(workspaceId: string): StoredPlan[] {
-    return (this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => this.planView(JSON.parse(row.data)));
+  listPlans(workspaceId: string, limit?: number): StoredPlan[] {
+    const rows = limit === undefined
+      ? this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? ORDER BY rowid").all(workspaceId)
+      : this.db.prepare("SELECT data FROM (SELECT rowid AS position, data FROM plans WHERE workspace_id = ? ORDER BY rowid DESC LIMIT ?) ORDER BY position").all(workspaceId, limit);
+    return (rows as JsonRow[]).map((row) => this.planView(JSON.parse(row.data)));
   }
   private planView(plan: StoredPlan): StoredPlan {
     if (plan.status === "proposed") return plan;
@@ -179,8 +200,11 @@ export class Repository {
       .run(id, input.workspaceId, input.paypalId, input.captureId, JSON.stringify(event));
     return JSON.parse((this.db.prepare("SELECT data FROM ledger WHERE id = ?").get(id) as JsonRow).data);
   }
-  listLedger(workspaceId: string): LedgerEvent[] {
-    return (this.db.prepare("SELECT data FROM ledger WHERE workspace_id = ? ORDER BY seq").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  listLedger(workspaceId: string, limit?: number): LedgerEvent[] {
+    const rows = limit === undefined
+      ? this.db.prepare("SELECT data FROM ledger WHERE workspace_id = ? ORDER BY seq").all(workspaceId)
+      : this.db.prepare("SELECT data FROM (SELECT seq, data FROM ledger WHERE workspace_id = ? ORDER BY seq DESC LIMIT ?) ORDER BY seq").all(workspaceId, limit);
+    return (rows as JsonRow[]).map((row) => JSON.parse(row.data));
   }
   latestMoneyEvents(workspaceId: string): LedgerEvent[] {
     const latest = new Map<string, LedgerEvent>();
@@ -227,9 +251,20 @@ export class Repository {
   releaseLock(workspaceId: string, owner: string): void {
     this.db.prepare("DELETE FROM workspace_locks WHERE workspace_id = ? AND owner = ?").run(workspaceId, owner);
   }
-  pruneOlderThan(hours = 48): void {
-    this.db.prepare("DELETE FROM workspaces WHERE created_at < ? AND id NOT IN (SELECT workspace_id FROM workspace_locks WHERE expires_at >= ?)")
-      .run(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now());
+  pruneOlderThan(hours = 24): void {
+    this.transaction(() => {
+      const candidates = this.db.prepare(`SELECT id FROM workspaces WHERE created_at < ?
+        AND id NOT IN (SELECT workspace_id FROM workspace_locks WHERE expires_at >= ?)
+        AND id NOT IN (SELECT workspace_id FROM plans WHERE json_extract(data, '$.status') = 'executing')`)
+        .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
+      for (const { id } of candidates) {
+        if (this.latestMoneyEvents(id).some((event) => event.kind === "refund" && ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
+        this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+      }
+      // Keep event IDs for deduplication; only the retained raw payload expires.
+      this.db.prepare("UPDATE webhook_events SET raw_body = '' WHERE received_at < ? AND raw_body != ''")
+        .run(new Date(Date.now() - 7 * 86_400_000).toISOString());
+    });
   }
 }
 
@@ -249,6 +284,16 @@ export function getRepository(): Repository {
 export function closeRepository(): void {
   processStore.rebookStore?.repository.close();
   processStore.rebookStore = undefined;
+}
+
+const pruning = globalThis as typeof globalThis & { rebookPruneTimer?: ReturnType<typeof setInterval> };
+export function startPruning(): void {
+  if (pruning.rebookPruneTimer) return;
+  getRepository().pruneOlderThan();
+  pruning.rebookPruneTimer = setInterval(() => {
+    try { getRepository().pruneOlderThan(); } catch { console.error("Demo cache pruning failed"); }
+  }, 30 * 60_000);
+  pruning.rebookPruneTimer.unref();
 }
 
 export async function withWorkspaceLock<T>(repository: Repository, workspaceId: string, operation: (owner: string) => Promise<T> | T): Promise<T> {

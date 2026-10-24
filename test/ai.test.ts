@@ -13,6 +13,7 @@ import { localParts } from "../lib/domain/time";
 import type { Plan } from "../lib/domain/types";
 import { POST as interpret } from "../app/api/workspaces/[id]/interpret/route";
 import { closeRepository, getRepository } from "../lib/store";
+import { limits } from "../lib/api/limits";
 
 const now = "2026-11-08T15:00:00Z";
 const state = seedStudio();
@@ -26,6 +27,7 @@ const intent = (overrides: Record<string, unknown> = {}) => ({
 });
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
+  limits.reset();
   vi.stubEnv("GEMINI_API_KEY", "test-key-never-real");
   vi.stubEnv("GEMINI_MODELS", "first,second,third");
   fetchMock = vi.fn();
@@ -285,7 +287,7 @@ describe("interpretation route", () => {
     for (const body of [{ text: "" }, { text: "  " }, { text: "a".repeat(501) }, { text: "Maya is sick Monday", other: true }, { text: 42 }]) {
       expect((await interpret(request(body), { params: Promise.resolve({ id }) })).status).toBe(400);
     }
-    expect((await interpret(request({ text: "Maya is sick Monday" }), { params: Promise.resolve({ id: "bad" }) })).status).toBe(400);
+    expect((await interpret(request({ text: "Maya is sick Monday" }), { params: Promise.resolve({ id: "bad" }) })).status).toBe(404);
     expect((await interpret(request({ text: "Maya is sick Monday" }), { params: Promise.resolve({ id: "missing123" }) })).status).toBe(404);
     expect((await interpret(new Request("http://localhost", { method: "POST", body: "{" }), { params: Promise.resolve({ id }) })).status).toBe(400);
   });

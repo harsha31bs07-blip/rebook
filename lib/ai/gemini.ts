@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { limits } from "../api/limits";
+export type AiIdentity = { client: string; workspace: string };
 
 export class AiUnavailable extends Error {
-  constructor() {
+  constructor(public busy = false) {
     super("AI interpretation is unavailable; please use the local rules.");
     this.name = "AiUnavailable";
   }
@@ -12,6 +14,7 @@ export type GenerateOptions = {
   timeoutMs?: number;
   budgetMs?: number;
   systemInstruction?: string;
+  identity?: AiIdentity;
 };
 
 const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-3.5-flash,gemini-flash-latest";
@@ -32,6 +35,9 @@ export async function generateJson<T>(
     const remaining = budget - (Date.now() - started);
     if (remaining <= 0) break;
     const controller = new AbortController();
+    let release: () => void;
+    try { release = limits.aiCall(opts.identity?.client ?? "unknown", opts.identity?.workspace ?? "unknown"); }
+    catch { throw new AiUnavailable(true); }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => {
@@ -69,6 +75,7 @@ export async function generateJson<T>(
     } catch {
       // Do not expose request URLs, API keys, upstream bodies, or unvalidated model output.
     } finally {
+      release();
       if (timer !== undefined) clearTimeout(timer);
     }
   }

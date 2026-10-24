@@ -14,7 +14,7 @@ export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; mess
 export type { Interpretation, ExecutionResult };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
 async function request<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
@@ -25,7 +25,7 @@ async function request<T>(path: string, body?: object, signal?: AbortSignal): Pr
     cache: "no-store", signal,
   });
   const data = await response.json();
-  if (!response.ok) throw new ApiError(response.status, data.message ?? data.error ?? "Something went wrong. Please try again.");
+  if (!response.ok) throw new ApiError(response.status, data.message ?? data.error ?? "Something went wrong. Please try again.", data.code);
   return data as T;
 }
 

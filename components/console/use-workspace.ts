@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type WorkspaceResponse } from "@/lib/client/api";
+import { api, ApiError, type WorkspaceResponse } from "@/lib/client/api";
 
 function hasPendingRefunds(workspace?: WorkspaceResponse): boolean {
   const latest = new Map<string, string>();
@@ -12,12 +12,15 @@ function hasPendingRefunds(workspace?: WorkspaceResponse): boolean {
 export function useWorkspace(id: string, watchExecution: boolean) {
   const [workspace, setWorkspace] = useState<WorkspaceResponse>();
   const [error, setError] = useState("");
+  const [expired, setExpired] = useState(false);
   const revision = useRef(0);
   const pending = hasPendingRefunds(workspace);
   const executing = workspace?.plans.some((plan) => plan.status === "executing") ?? false;
   const refresh = useCallback(async () => {
     const current = ++revision.current;
-    const next = await api.workspace(id);
+    let next: WorkspaceResponse;
+    try { next = await api.workspace(id); }
+    catch (cause) { if (cause instanceof ApiError && cause.code === "expired") setExpired(true); throw cause; }
     if (current === revision.current) { setWorkspace(next); setError(""); }
     return next;
   }, [id]);
@@ -36,6 +39,7 @@ export function useWorkspace(id: string, watchExecution: boolean) {
         if (Date.now() < deadline && (next.status === "preparing" || watchExecution || unresolved)) timer = setTimeout(poll, 3000);
       } catch (cause) {
         if (controller.signal.aborted) return;
+        if (cause instanceof ApiError && cause.code === "expired") { setExpired(true); return; }
         setError(cause instanceof Error ? cause.message : "Unable to load this workspace.");
         if (Date.now() < deadline) timer = setTimeout(poll, 3000);
       }
@@ -43,5 +47,5 @@ export function useWorkspace(id: string, watchExecution: boolean) {
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [id, watchExecution, workspace?.status, executing, pending]);
-  return { workspace, error, refresh };
+  return { workspace, error, refresh, expired };
 }

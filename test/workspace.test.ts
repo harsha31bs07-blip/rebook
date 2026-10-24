@@ -9,10 +9,12 @@ import { Repository } from "../lib/store";
 import { demoDisruptionFor, floodDisruptionFor, seedStudio } from "../lib/seed/seed";
 import { localParts } from "../lib/domain/time";
 import { affectedSessions } from "../lib/solver/validate";
+import { limits } from "../lib/api/limits";
 
 let directory: string;
 let repository: Repository;
 beforeEach(() => {
+  limits.reset();
   directory = mkdtempSync(join(tmpdir(), "rebook-workspace-"));
   vi.stubEnv("DATA_DIR", directory);
   vi.stubEnv("PAYPAL_ENV", "sandbox");
@@ -168,7 +170,7 @@ describe("workspace seeding", () => {
     const pooledLedger = repository.listLedger(pooled.id);
     expect(pooled.status).toBe("ready");
     expect(repository.getWorkspace(pooled.id)).toBeUndefined();
-    expect(() => repository.requireWorkspace(pooled.id)).toThrow("not found");
+    expect(() => repository.requireWorkspace(pooled.id)).toThrow("demo has ended");
     expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"))).toHaveLength(36);
     const later = new Date(Date.parse(pooled.createdAt) + 1000);
     vi.useFakeTimers({ toFake: ["Date"] });

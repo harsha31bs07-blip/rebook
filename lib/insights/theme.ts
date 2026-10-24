@@ -8,7 +8,7 @@ export const rebookStudioTheme = studioTheme.withParams({
   studioCanvasBackgroundColor: "var(--background)", studioCanvasBorder: false, studioCanvasShadow: false,
   studioCanvasPadding: 12, studioCanvasRowHeight: 14,
   studioWidgetBackgroundColor: "#ffffff", studioWidgetBorder: { color: "var(--border)", width: 1 },
-  studioWidgetBorderRadius: 10, studioWidgetPadding: 12,
+  studioWidgetBorderRadius: 10, studioWidgetPadding: 8,
   studioWidgetTitleFontSize: 12, studioWidgetTitleFontWeight: 600, studioWidgetTitleTextColor: "var(--muted)",
   studioPanelContainerBorderRadius: 10, gridFontSize: 11, gridHeaderFontSize: 11,
   gridHeaderTextColor: "var(--muted)", gridHeaderBackgroundColor: "var(--background)", gridRowHeight: 32,

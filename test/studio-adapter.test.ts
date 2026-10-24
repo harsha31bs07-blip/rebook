@@ -12,6 +12,17 @@ const toolResponse: StudioCompletion = { id: "answer-1", created: 100, model: "g
 ] } }] };
 
 describe("Studio Gemini adapter", () => {
+  it("forwards live Studio delegation schemas and bound widget configuration to the harness proxy", async () => {
+    const transport = vi.fn().mockResolvedValue(Response.json({ id: "delegate", choices: [{ message: { role: "assistant", content: "Done." } }] }));
+    vi.stubGlobal("fetch", transport);
+    const tools = [{ name: "configure_widget", description: "Configure the current chart", kind: "client" as const, parameters: { type: "object", properties: { widgetId: { const: "refund-chart" } } } },
+      { name: "complete_task", description: "Finish the delegated task", parameters: { type: "object" } }];
+    const handler = geminiAdapter("/llm", "widget").executeTurn({ ...request, instructions: "Configure refund-chart on the money page.", tools, toolChoice: { name: "complete_task" } });
+    await handler.complete;
+    const options = transport.mock.calls[0][1];
+    expect(options.headers["X-Rebook-Studio"]).toBe("harness");
+    expect(JSON.parse(options.body).harness).toEqual({ agent: "widget", instructions: "Configure refund-chart on the money page.", tools, toolChoice: { name: "complete_task" }, responseFormat: { type: "text" } });
+  });
   it("sends conversation and model only; policy and tools belong to the server", () => {
     const wire = toChatRequest({ ...request, responseFormat: { type: "json", name: "result", schema: { type: "object", properties: {} } } });
     expect(wire.messages).toEqual([{ role: "user", content: "What did it cost?" }]);

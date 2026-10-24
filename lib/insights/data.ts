@@ -27,6 +27,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       // Issued money excludes pending/failed requests; simulations remain clearly labelled.
       issued_refund: event.kind === "refund" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
       payment_mode: event.status === "SIMULATED" ? "simulated" : "real",
+      local_day: localParts(event.createdAt, state.studio.timezone).dateKey,
+      captured: event.kind === "capture" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
+      net: ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) * (event.kind === "refund" ? -1 : 1) : 0,
     };
   });
   return {
@@ -43,6 +46,8 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         local_day: local.dateKey,
         local_start: `${String(Math.floor(local.minutesOfDay / 60)).padStart(2, "0")}:${String(Math.floor(local.minutesOfDay % 60)).padStart(2, "0")}`,
         start: session.start, capacity: session.capacity, price: dollars(session.price),
+        booked: state.bookings.filter((booking) => booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)).length,
+        disrupted: Boolean(change),
         status: !change ? "scheduled" : change.remedy === "cancel" ? "cancelled" : change.remedy === "substitute" ? "covered" : "moved",
       };
     }),

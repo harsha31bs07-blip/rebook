@@ -22,6 +22,38 @@ const context = (id: string) => ({ params: Promise.resolve({ id }) });
 const post = (value: unknown = body) => new Request("http://localhost/llm", { method: "POST", body: JSON.stringify(value) });
 
 describe("Studio LLM proxy", () => {
+  it("accepts live built-in agent tools and the completion tool injected into delegated runs", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ id: "configured", choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "done", type: "function", function: { name: "complete_task", arguments: '{"summary":"Applied Maya filter","artifacts":[]}' } }] } }] }));
+    vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const tools = ["view_schema", "view_page", "view_plan", "add_widget", "position_widget", "remove_widget", "add_page_filter", "remove_page_filter", "complete_task"].map((name) => ({ name, description: "Studio tool", kind: "client", parameters: { type: "object", properties: { field: { const: "sessions.instructor" } } } }));
+    const response = await POST(new Request("http://localhost/llm", { method: "POST", headers: { "X-Rebook-Studio": "harness" }, body: JSON.stringify({ ...body, model: "unapproved", harness: { agent: "page", instructions: "Apply the exact instructor filter with add_page_filter.", tools, toolChoice: { name: "complete_task" } } }) }), context(workspace.id));
+    expect(response.status).toBe(200);
+    const provider = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(provider.messages[0].role).toBe("system");
+    expect(provider.messages[0].content).toContain(workspace.state.studio.name);
+    expect(provider.messages[1]).toEqual({ role: "system", content: "Apply the exact instructor filter with add_page_filter." });
+    expect(provider.tools.map((entry: { function: unknown }) => entry.function)).toEqual(tools.map(({ name, description, parameters }) => ({ name, description, parameters })));
+    expect(provider.tool_choice).toEqual({ type: "function", function: { name: "complete_task" } });
+    expect(provider.model).toBe("gemini-flash-lite-latest");
+    expect(provider.max_tokens).toBe(4096);
+    expect((await response.json()).choices[0].message.tool_calls[0].function.name).toBe("complete_task");
+  });
+  it("rejects tools from another agent or external providers before making a harness request", async () => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const harness = { agent: "page", instructions: "Filter", tools: [{ name: "add_page_filter", description: "Filter", parameters: { type: "object" } }] };
+    for (const invalid of [
+      { ...harness, tools: [{ ...harness.tools[0], name: "configure_widget" }] },
+      { ...harness, tools: [{ ...harness.tools[0], name: "fetch_url" }] },
+      { ...harness, tools: [{ ...harness.tools[0], kind: "provided" }] },
+      { ...harness, toolChoice: { name: "remove_widget" } },
+    ]) {
+      const response = await POST(new Request("http://localhost/llm", { method: "POST", headers: { "X-Rebook-Studio": "harness" }, body: JSON.stringify({ ...body, harness: invalid }) }), context(workspace.id));
+      expect(response.status).toBe(400);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("falls back models on errors, caps output, keeps signatures and uses only Chat Completions", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(new Response("retired", { status: 404 })).mockResolvedValueOnce(Response.json(completion));
     vi.stubGlobal("fetch", fetch);

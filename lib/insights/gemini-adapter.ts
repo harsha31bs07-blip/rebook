@@ -1,5 +1,6 @@
 import type { AgAiEvent, AgAiToolCall, AgLlmAdapter, AgLlmRequest, AgLlmResponse } from "ag-studio";
 import type { StudioChatRequest, StudioCompletion } from "../ai/studio-gemini";
+import type { RecoveryAgentId } from "./agent-protocol";
 
 type WireCall = NonNullable<StudioChatRequest["messages"][number]["tool_calls"]>[number];
 type RememberedCall = { call: WireCall; turnId: string };
@@ -67,7 +68,7 @@ export function fromChatCompletion(completion: StudioCompletion, remembered: Map
   return { response, events };
 }
 
-export function geminiAdapter(endpoint: string): AgLlmAdapter {
+export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmAdapter {
   // Studio has no provider-metadata slot. Keep exact wire calls by callId as well as on output
   // items, so the opaque Google signature survives even if Studio clones its conversation items.
   const remembered = new Map<string, RememberedCall>();
@@ -75,7 +76,7 @@ export function geminiAdapter(endpoint: string): AgLlmAdapter {
     executeTurn(request, options) {
       const pending = (async () => {
         const response = await fetch(endpoint, { method: "POST", signal: options?.signal,
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify(toChatRequest(request, remembered)) });
+          headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools, toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
         if (!response.ok) {
           const error = await response.json().catch(() => ({}));
           throw new Error(error.error || "The recovery analyst is unavailable. Please try again shortly.");

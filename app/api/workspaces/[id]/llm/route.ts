@@ -1,5 +1,6 @@
 import { api, jsonBody, WorkspaceIdSchema } from "../../../../../lib/api/http";
-import { StudioChatSchema, studioCompletion } from "../../../../../lib/ai/studio-gemini";
+import { RecoveryHarnessSchema, recoveryCompletion } from "../../../../../lib/insights/llm";
+import { StudioChatSchema } from "../../../../../lib/ai/studio-gemini";
 import { getRepository } from "../../../../../lib/store";
 import { clientIp } from "../../../../../lib/api/client-ip";
 
@@ -9,7 +10,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const id = WorkspaceIdSchema.parse((await context.params).id);
     const { state } = getRepository().requireReadyWorkspace(id);
     // Studio's tool schemas and query results are larger than the console's small JSON bodies.
-    const body = await jsonBody(request, StudioChatSchema, 65_536);
-    return studioCompletion(body, request.signal, { client: clientIp(request), workspace: id }, state);
+    const harness = request.headers.get("X-Rebook-Studio") === "harness";
+    const body = harness ? await jsonBody(request, RecoveryHarnessSchema, 262_144) : await jsonBody(request, StudioChatSchema, 65_536);
+    return recoveryCompletion(body, request.signal, { client: clientIp(request), workspace: id }, state);
   });
 }

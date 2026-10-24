@@ -1,0 +1,16 @@
+.metric { height: 100%; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.metric strong { display: block; font-size: clamp(20px, 1.7vw, 24px); line-height: 1.1; letter-spacing: -.03em; }
+.metric span { font-size: 10px; line-height: 1.2; color: var(--muted); }
+.heatmap { height: 100%; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.heatmapGrid { display: grid; flex: 1; gap: 4px; min-height: 0; overflow: auto; align-items: stretch; }
+.heatmapRow { display: contents; }
+.heatmapRow strong, .day { font-size: 10px; align-self: center; }
+.day { text-align: center; white-space: nowrap; }
+.cell { min-height: 23px; padding: 3px; font-size: 10px; border: 1px solid transparent; border-radius: 4px; }
+.cell[aria-pressed="true"] { outline: 2px solid #b45309; outline-offset: -2px; }
+.cell:focus-visible { outline: 2px solid #111827; outline-offset: -2px; }
+.heatmapLegend { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); }
+.heatmapLegend button { min-height: 22px; padding: 2px 5px; font-size: 9px; white-space: nowrap; }
+.pageDescription { font-size: 11px; color: var(--muted); margin: 0; padding: 0 24px 6px; flex-shrink: 0; }
+.toolCard { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: white; display: grid; gap: 8px; }
+.toolCard p { margin: 0; font-size: 12px; }

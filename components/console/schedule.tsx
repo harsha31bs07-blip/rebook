@@ -7,11 +7,17 @@ import type { Plan, State } from "@/lib/domain/types";
 import { addLocalDays } from "@/lib/domain/time";
 import { mapSchedule, recoveryBounds, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
 
-export default function Schedule({ state, mode, zoom, day, plan, updatedPlan }: {
-  state: State; mode: RowMode; zoom: "day" | "week"; day: number; plan?: Plan; updatedPlan?: Plan;
+export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, highlightedSessionId }: {
+  state: State; mode: RowMode; zoom: "day" | "week"; day: number; plan?: Plan; updatedPlan?: Plan; highlightedSessionId?: string;
 }) {
   const schedulerRef = useRef<BryntumScheduler>(null);
-  const data = useMemo(() => mapSchedule(state, mode, plan, updatedPlan), [state, mode, plan, updatedPlan]);
+  const data = useMemo(() => {
+    const mapped = mapSchedule(state, mode, plan, updatedPlan);
+    if (highlightedSessionId) for (const event of mapped.events) {
+      if ([highlightedSessionId, `${highlightedSessionId}-new`].includes(String(event.id))) event.cls = `${event.cls} new-booking-highlight`;
+    }
+    return mapped;
+  }, [state, mode, plan, updatedPlan, highlightedSessionId]);
   const bounds = weekBounds(state);
   // Axis dates represent wall time in the studio; event ISO instants are converted by timeZone.
   const startKey = zoom === "day" ? addLocalDays(bounds.startKey, day) : bounds.startKey;

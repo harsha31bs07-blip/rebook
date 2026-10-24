@@ -20,7 +20,7 @@ function ScheduleSkeleton() {
 
 export default function OwnerConsole({ id }: { id: string }) {
   const [busy, setBusy] = useState("");
-  const { workspace, error: loadError, refresh, expired } = useWorkspace(id, busy === "approve" || busy === "reset");
+  const { workspace, error: loadError, refresh, expired, bookingNotice } = useWorkspace(id, busy === "approve" || busy === "reset");
   const [text, setText] = useState("");
   const [interpretation, setInterpretation] = useState<Interpretation>();
   const [details, setDetails] = useState<PlanDetails>();
@@ -85,7 +85,7 @@ export default function OwnerConsole({ id }: { id: string }) {
 
   if (expired || ended) return <ExpiredDemo />;
   return <main className="console-app">
-    <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
+    <ConsoleHeader name={state?.studio.name} week={state ? weekBounds(state).label : undefined}><Link href={`/w/${id}/book`} target="_blank" rel="noopener noreferrer">Customer booking page</Link><Link href={`/w/${id}/dashboard`}>Dashboard</Link><button disabled={Boolean(busy) || !ready} onClick={() => setConfirmReset(!confirmReset)}>Reset demo</button></ConsoleHeader>
     {confirmReset && <div className="reset-confirm" role="group" aria-label="Confirm reset"><span>Start a fresh demo week? Existing sandbox transactions stay in the ledger.</span><button className="danger-button" onClick={() => void reset()}>Reset this demo</button><button onClick={() => setConfirmReset(false)}>Keep this week</button></div>}
     <div className="console-body">
       <section className="timeline-panel" aria-label="Studio schedule">
@@ -93,7 +93,7 @@ export default function OwnerConsole({ id }: { id: string }) {
         <div className="schedule-toolbar"><div className="row-controls"><span className="muted">Rows:</span><div className="segmented" aria-label="Schedule rows"><button aria-pressed={mode === "instructors"} onClick={() => setMode("instructors")}>Instructors</button><button aria-pressed={mode === "rooms"} onClick={() => setMode("rooms")}>Rooms</button></div></div><div className="zoom-controls">{zoom === "day" && <><button aria-label="Previous day" disabled={day === 0} onClick={() => setDay(day - 1)}>‹</button><span>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]}</span><button aria-label="Next day" disabled={day === 6} onClick={() => setDay(day + 1)}>›</button></>}<div className="segmented" aria-label="Schedule zoom"><button aria-pressed={zoom === "day"} onClick={() => setZoom("day")}>Day</button><button aria-pressed={zoom === "week"} onClick={() => setZoom("week")}>Week</button></div></div></div>
         {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Arrows connect time moves</span></div>}
         <div className="schedule-canvas">
-          {timelineState && ready ? <Schedule key={`${id}-${mode}-${zoom}-${day}`} state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} /> : <ScheduleSkeleton />}
+          {timelineState && ready ? <Schedule key={`${id}-${mode}-${zoom}-${day}`} state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={bookingNotice?.sessionId} /> : <ScheduleSkeleton />}
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2>{workspace?.status === "failed" ? "We couldn’t prepare this demo" : "Preparing your studio"}</h2><p className="muted">{workspace?.status === "failed" ? workspace.preparationError || "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
         </div>
         <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · 7am–9pm · Scroll to explore</span></footer>
@@ -109,6 +109,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     </div>
     <div className="sr-only" role="status" aria-live="polite">{busy === "approve" ? `Processing refunds. ${results.length} results received.` : busy ? "Working on your request." : ""}</div>
     {toast && <div className="toast" role="status">{toast}<button aria-label="Dismiss notification" onClick={() => setToast("")}>×</button></div>}
+    {bookingNotice && !toast && <div className="toast" role="status">{bookingNotice.message}</div>}
     {messagesOpen && details && <MessagesDrawer messages={details.messages} onClose={() => setMessagesOpen(false)} />}
   </main>;
 }

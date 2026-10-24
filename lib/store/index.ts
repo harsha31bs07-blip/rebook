@@ -24,6 +24,12 @@ export type LedgerEvent = {
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
+export type CheckoutReservation = {
+  id: string; workspaceId: string; requestId: string; sessionId: string;
+  customer: { name: string; email: string }; amount: string; currency: "USD";
+  session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
+  status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;
+};
 const storeErrorBrand = Symbol.for("rebook.StoreError");
 export class StoreError extends Error {
   readonly [storeErrorBrand] = true;
@@ -56,9 +62,29 @@ export class Repository {
       CREATE INDEX IF NOT EXISTS ledger_capture ON ledger(capture_id);
       CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, raw_body TEXT NOT NULL, received_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_locks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS checkout_reservations (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
+      );
     `);
   }
   close(): void { this.db.close(); }
+  listCheckout(workspaceId: string): CheckoutReservation[] {
+    return (this.db.prepare("SELECT data FROM checkout_reservations WHERE workspace_id = ?").all(workspaceId) as JsonRow[])
+      .map((row) => JSON.parse(row.data));
+  }
+  checkoutByOrder(workspaceId: string, orderId: string): CheckoutReservation | undefined {
+    return this.listCheckout(workspaceId).find((row) => row.orderId === orderId);
+  }
+  findCheckoutOrder(orderId: string): CheckoutReservation | undefined {
+    const row = this.db.prepare("SELECT data FROM checkout_reservations WHERE order_id = ?").get(orderId) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  saveCheckout(row: CheckoutReservation): void {
+    this.db.prepare(`INSERT INTO checkout_reservations VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET order_id = excluded.order_id, data = excluded.data`)
+      .run(row.id, row.workspaceId, row.requestId, row.orderId ?? null, JSON.stringify(row));
+  }
   transaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try { const value = operation(); this.db.exec("COMMIT"); return value; }
@@ -258,6 +284,8 @@ export class Repository {
         AND id NOT IN (SELECT workspace_id FROM plans WHERE json_extract(data, '$.status') = 'executing')`)
         .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
       for (const { id } of candidates) {
+        // A timed-out capture can still have charged the buyer; keep its recovery reference.
+        if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
         if (this.latestMoneyEvents(id).some((event) => event.kind === "refund" && ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       }

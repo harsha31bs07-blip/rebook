@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MoneySchema } from "../domain/schemas";
 import { toCents } from "../domain/time";
 import { getRepository, type Repository } from "../store";
+import { confirmOrder } from "../checkout/service";
 
 export const WebhookSchema = z.object({
   id: z.string().min(1), event_type: z.string().min(1),
@@ -9,7 +10,8 @@ export const WebhookSchema = z.object({
     id: z.string().min(1), status: z.string().optional(),
     amount: z.object({ currency_code: z.literal("USD"), value: MoneySchema }).optional(),
     capture_id: z.string().optional(),
-    supplementary_data: z.object({ related_ids: z.object({ capture_id: z.string().optional() }).optional() }).optional(),
+    custom_id: z.string().optional(),
+    supplementary_data: z.object({ related_ids: z.object({ capture_id: z.string().optional(), order_id: z.string().optional() }).optional() }).optional(),
     links: z.array(z.object({ rel: z.string(), href: z.string() })).optional(),
   }).passthrough(),
 }).passthrough();
@@ -28,13 +30,32 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
     const captureLink = resource.links?.map((link) => link.href.match(/\/v2\/payments\/captures\/([^/?#]+)/)?.[1]).find(Boolean);
     const captureId = resource.capture_id ?? resource.supplementary_data?.related_ids?.capture_id ?? captureLink;
     const match = repository.findPayment(resource.id, captureId);
-    if (!match) return { duplicate: false, matched: false };
+    if (!match) {
+      // The webhook can beat the capture response (or recover a process crash after PayPal charged).
+      const orderId = resource.supplementary_data?.related_ids?.order_id;
+      const pending = orderId ? repository.findCheckoutOrder(orderId) : undefined;
+      if (event.event_type === "PAYMENT.CAPTURE.COMPLETED" && resource.status === "COMPLETED" && pending?.status === "capturing"
+        && resource.custom_id === `${pending.workspaceId}:${pending.id}` && resource.amount?.value === pending.amount) {
+        confirmOrder(pending, { id: orderId!, status: "COMPLETED", purchase_units: [{ reference_id: pending.id, custom_id: resource.custom_id,
+          amount: resource.amount, payments: { captures: [{ id: resource.id, status: "COMPLETED", amount: resource.amount }] } }] }, repository, true, true);
+        return { duplicate: false, matched: true };
+      }
+      return { duplicate: false, matched: false };
+    }
     // Private pool captures still receive PayPal events before a visitor claims them.
     const workspace = repository.requireWorkspace(match.workspaceId, true);
     const latest = repository.latestMoneyEvents(workspace.id);
     const capture = latest.find((item) => item.kind === "capture" && item.captureId === match.captureId);
     if (!capture || capture.status === "SIMULATED") return { duplicate: false, matched: false };
     const booking = workspace.state.bookings.find((item) => item.id === capture.bookingId && item.payment?.captureId === capture.captureId);
+    if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+      const checkout = booking?.payment ? repository.checkoutByOrder(workspace.id, booking.payment.orderId) : undefined;
+      if (checkout) {
+        if (resource.id !== checkout.captureId || resource.status !== "COMPLETED" || resource.amount?.value !== checkout.amount
+          || (resource.custom_id !== undefined && resource.custom_id !== `${workspace.id}:${checkout.id}`)) return { duplicate: false, matched: false };
+        repository.saveCheckout({ ...checkout, webhookConfirmed: true });
+      }
+    }
     if (event.event_type === "PAYMENT.CAPTURE.REFUNDED") {
       const previousRefund = latest.find((item) => item.kind === "refund" && item.paypalId === resource.id)
         ?? latest.find((item) => item.kind === "refund" && item.captureId === capture.captureId && ["REQUESTED", "PENDING"].includes(item.status));

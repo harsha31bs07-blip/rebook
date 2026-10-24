@@ -1,0 +1,218 @@
+"use client";
+
+import Script from "next/script";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { bookingCatalog, Receipt } from "@/lib/checkout/service";
+import { calendarFile, eligibleCheckoutMethods, payLaterButtonTag, type CardSession, type EligibleMethods, type PayPalV6 } from "@/lib/client/paypal-v6";
+
+type Catalog = ReturnType<typeof bookingCatalog>;
+type Class = Catalog["sessions"][number];
+class CheckoutError extends Error { constructor(message: string, public code: string | undefined, public status: number) { super(message); } }
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, { ...init, cache: "no-store" });
+  const body = await response.json();
+  if (!response.ok) throw new CheckoutError(body.error ?? "Checkout could not be completed", body.code, response.status);
+  return body;
+}
+function classTitle(title: string) { return title.replace(/\bhiit\b/gi, "HIIT"); }
+export function Payments({ id, session, customer, validate, clientId, sandbox, onSuccess, onLockChange }: {
+  id: string; session: Class; customer: { name: string; email: string }; validate(): boolean;
+  clientId: string; sandbox: boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const card = useRef<CardSession | undefined>(undefined);
+  const current = useRef({ customer, validate, onSuccess, onLockChange });
+  useEffect(() => { current.current = { customer, validate, onSuccess, onLockChange }; }, [customer, validate, onSuccess, onLockChange]);
+  useEffect(() => () => current.current.onLockChange(false), []);
+  const order = useRef<{ orderId: string } | undefined>(undefined);
+  const key = useRef("");
+  const inFlight = useRef(false);
+  const [loaded, setLoaded] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [retryCapture, setRetryCapture] = useState(false);
+  const [hasOrder, setHasOrder] = useState(false);
+  const [methods, setMethods] = useState({ paypal: false, paylater: false, cards: false });
+  // Payments is keyed by the selected class. Freeze SDK configuration for that
+  // mount so catalog refreshes and edits never replace the buyer's hosted fields.
+  const configuration = useRef({ clientId, price: session.price });
+  const initialization = useRef<Promise<{ sdk: PayPalV6; eligible: EligibleMethods }> | undefined>(undefined);
+  const base = `/api/workspaces/${id}/checkout/orders`;
+
+  const create = useCallback(async () => {
+    if (!current.current.validate()) throw new Error("Please enter your name and a valid email.");
+    current.current.onLockChange(true);
+    key.current ||= crypto.randomUUID();
+    try {
+      order.current ??= await request<{ orderId: string }>(base, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
+        body: JSON.stringify({ sessionId: session.id, customer: current.current.customer }) });
+      setHasOrder(true);
+      return order.current;
+    } catch (cause) {
+      if (cause instanceof CheckoutError && cause.status >= 400 && cause.status < 500) {
+        order.current = undefined; key.current = "";
+        current.current.onLockChange(false);
+      }
+      throw cause;
+    }
+  }, [base, session.id]);
+  const cancel = useCallback(async () => {
+    if (order.current) {
+      try {
+        const result = await request<{ receipt?: Receipt }>(`${base}/${order.current.orderId}`, { method: "DELETE" });
+        if (result.receipt) { current.current.onSuccess(result.receipt); return; }
+      } catch (cause) {
+        if (cause instanceof CheckoutError && cause.code === "CHECK_PAYMENT_STATUS") setRetryCapture(true);
+        throw cause;
+      }
+    }
+    order.current = undefined; key.current = ""; setHasOrder(false);
+    current.current.onLockChange(false);
+  }, [base]);
+  const capture = useCallback(async (orderId: string) => {
+    try {
+      const receipt = await request<Receipt>(`${base}/${orderId}/capture`, { method: "POST" });
+      setRetryCapture(false); current.current.onSuccess(receipt);
+    } catch (cause) {
+      const restart = cause instanceof CheckoutError && ["INSTRUMENT_DECLINED", "RESTART_CHECKOUT"].includes(cause.code ?? "");
+      if (restart) { order.current = undefined; key.current = ""; setHasOrder(false); current.current.onLockChange(false); }
+      setRetryCapture(!restart);
+      throw cause;
+    }
+  }, [base]);
+  const fail = useCallback((cause: unknown) => setError(cause instanceof Error ? cause.message : "Payment could not be completed. Please try again."), []);
+  const actions = useRef({ create, cancel, capture, fail });
+  useEffect(() => { actions.current = { create, cancel, capture, fail }; }, [create, cancel, capture, fail]);
+
+  useEffect(() => {
+    if (!loaded || !configuration.current.clientId || !root.current) return;
+    let disposed = false;
+    const container = root.current;
+    const cleanup: (() => void)[] = [];
+    async function setup() {
+      initialization.current ??= (async () => {
+        const sdk = await window.paypal!.createInstance({ clientId: configuration.current.clientId, components: ["paypal-payments", "card-fields"], pageType: "checkout" });
+        const eligible = await sdk.findEligibleMethods({ currencyCode: "USD", amount: configuration.current.price });
+        return { sdk, eligible };
+      })();
+      const { sdk, eligible } = await initialization.current;
+      if (disposed) return;
+      const mapping = eligibleCheckoutMethods(eligible);
+      setMethods(mapping);
+      const callbacks = { onApprove: async ({ orderId }: { orderId: string }) => { try { await actions.current.capture(orderId); } catch (cause) { actions.current.fail(cause); throw cause; } },
+        onCancel: () => { void actions.current.cancel().catch(actions.current.fail); }, onError: (cause: { message?: string }) => actions.current.fail(new Error(cause.message || "PayPal could not complete checkout.")) };
+      for (const kind of ["paypal", "paylater"] as const) {
+        if (!mapping[kind]) continue;
+        const button = document.createElement(kind === "paypal" ? "paypal-button" : payLaterButtonTag(window.customElements));
+        button.setAttribute("type", "pay");
+        button.setAttribute("class", "paypal-gold");
+        if (kind === "paylater") Object.assign(button, eligible.getDetails("paylater"));
+        button.setAttribute("aria-label", kind === "paypal" ? "Pay with PayPal" : "Pay Later");
+        const payment = kind === "paypal" ? sdk.createPayPalOneTimePaymentSession(callbacks) : sdk.createPayLaterOneTimePaymentSession(callbacks);
+        const click = async () => {
+          if (inFlight.current) { setError("Payment already in progress."); return; }
+          if (!current.current.validate()) { setError("Please enter your name and a valid email."); return; }
+          inFlight.current = true; setBusy(true); setError("");
+          try { await payment.start({ presentationMode: "auto" }, actions.current.create()); }
+          catch (cause) { actions.current.fail(cause); }
+          finally { inFlight.current = false; setBusy(false); }
+        };
+        button.addEventListener("click", click);
+        container.querySelector(".wallet-buttons")!.appendChild(button);
+        cleanup.push(() => { button.removeEventListener("click", click); button.remove(); });
+      }
+      if (mapping.cards) {
+        // Hosted fields measure their containers during mounting.
+        container.querySelector<HTMLElement>(".card-checkout")!.hidden = false;
+        card.current = sdk.createCardFieldsOneTimePaymentSession();
+        for (const type of ["number", "expiry", "cvv"] as const) {
+          const field = card.current.createCardFieldsComponent({ type, placeholder: type === "number" ? "Card number" : type === "expiry" ? "MM/YY" : "CVV", style: { input: { fontSize: "16px" } } });
+          container.querySelector(`[data-card="${type}"]`)!.appendChild(field);
+          cleanup.push(() => field.remove());
+        }
+      }
+      setReady(true);
+    }
+    void setup().catch((cause) => { if (!disposed) actions.current.fail(cause); });
+    return () => { disposed = true; cleanup.forEach((fn) => fn()); card.current = undefined; };
+  }, [loaded]);
+
+  async function payCard() {
+    if (inFlight.current) { setError("Payment already in progress."); return; }
+    if (!current.current.validate()) { setError("Please enter your name and a valid email."); return; }
+    if (!card.current) { setError("Card fields still loading. Please wait and try again."); return; }
+    if (retryCapture) { setError("Check payment status before trying again."); return; }
+    inFlight.current = true; setBusy(true); setError("");
+    try {
+      const pending = await create();
+      const result = await card.current.submit(pending.orderId);
+      if (result.state === "succeeded") await capture(result.data.orderId);
+      else { await cancel(); throw new Error(result.state === "canceled" ? "Card verification cancelled. You can try again." : result.data.message || "Card declined. Please try a different card."); }
+    } catch (cause) { fail(cause); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  return <div ref={root} className="payment-methods" aria-busy={busy}>
+    {clientId ? <Script async src={`https://www.${sandbox ? "sandbox." : ""}paypal.com/web-sdk/v6/core`} strategy="afterInteractive" onReady={() => setLoaded(true)} onError={() => setError("PayPal could not load. Refresh this page to try again.")} /> : <p className="error">PayPal checkout is not configured for this studio.</p>}
+    <h3>Pay with</h3>
+    <div className="wallet-buttons" inert={busy || retryCapture} />
+    {!ready && clientId && !error && <p role="status" className="muted">Checking available payment methods…</p>}
+    {ready && !Object.values(methods).some(Boolean) && <p>No payment methods are available for this account.</p>}
+    <div hidden={!methods.cards} className="card-checkout">
+      <h3>Debit or credit card</h3>
+      {sandbox && <p className="sandbox-card-hint"><strong>Sandbox test card</strong><br />4111 1111 1111 1111 · Any future expiry · Any CVV<br />No PayPal login needed. No real money is charged.</p>}
+      <label>Card number<div data-card="number" className="paypal-card-field" /></label>
+      <div className="card-row"><label>Expiry<div data-card="expiry" className="paypal-card-field" /></label><label>CVV<div data-card="cvv" className="paypal-card-field" /></label></div>
+      <button className="primary full-width" disabled={busy || !ready || retryCapture} onClick={() => void payCard()}>{busy ? "Processing payment…" : `Pay $${session.price}`}</button>
+    </div>
+    {error && <p className="error" role="alert">{error}</p>}
+    {retryCapture && <button disabled={busy} onClick={async () => { if (!order.current) { setError("No payment is available to check. Please start checkout again."); return; } setBusy(true); try { await capture(order.current.orderId); } catch (cause) { fail(cause); } finally { setBusy(false); } }}>Check payment status</button>}
+    {hasOrder && !retryCapture && <button disabled={busy} onClick={() => void cancel().catch(fail)}>Cancel checkout</button>}
+    <p className="muted">Your seat is held for ten minutes during checkout.</p>
+  </div>;
+}
+
+export default function BookingPage({ id, clientId, sandbox }: { id: string; clientId: string; sandbox: boolean }) {
+  const [catalog, setCatalog] = useState<Catalog>();
+  const [selected, setSelected] = useState<Class>();
+  const [customer, setCustomer] = useState({ name: "Jamie Rivera", email: "jamie@example.com" });
+  const [customerLocked, setCustomerLocked] = useState(false);
+  const [receipt, setReceipt] = useState<Receipt>();
+  const [error, setError] = useState("");
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = () => request<Catalog>(`/api/workspaces/${id}/checkout`, { signal: controller.signal }).then(setCatalog).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
+    void load(); const timer = setInterval(() => void load(), 15_000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [id]);
+  useEffect(() => {
+    if (!receipt?.webhookConfigured || receipt.webhookConfirmed) return;
+    const timer = setInterval(() => { void request<Receipt>(`/api/workspaces/${id}/checkout/orders/${receipt.orderId}`).then(setReceipt).catch(() => {}); }, 3000);
+    return () => clearInterval(timer);
+  }, [id, receipt?.orderId, receipt?.webhookConfigured, receipt?.webhookConfirmed]);
+  const timezone = catalog?.studio.timezone ?? "America/Los_Angeles";
+  const time = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(instant));
+  function downloadCalendar() {
+    if (!receipt || !catalog) return;
+    const url = URL.createObjectURL(new Blob([calendarFile(receipt, catalog.studio.name)], { type: "text/calendar;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "rebook-class.ics"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return <main className="customer-booking">
+    <header className="booking-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span></Link><span className="pill sandbox">{sandbox ? "PayPal sandbox" : "PayPal checkout"}</span></header>
+    <p className="eyebrow">Make time for yourself</p><h1>{catalog?.studio.name ?? "Northstar Movement Studio"} · Book a class</h1>
+    <p className="muted booking-intro">Find your next good hour. All class times are local to the studio ({timezone}).</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    {receipt ? <section className="booking-receipt" aria-live="polite"><span className="pill success-pill">Booking confirmed</span><h2>You’re on the list.</h2><h3>{classTitle(receipt.class)}</h3><p>{time(receipt.start)}</p><p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
+      {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
+      <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button><Link className="button-link" href={`/w/${id}`} target="_blank" rel="noopener noreferrer">See it on the owner’s schedule</Link></div></section>
+      : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
+        {!catalog && !error && <p role="status">Loading classes…</p>}
+        {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}
+        {catalog?.sessions.map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={!session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => setSelected(session)}><span><strong>{classTitle(session.title)}</strong><span>{time(session.start)}</span><span>{session.instructor} · {session.room}</span></span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}
+      </section><aside className="booking-checkout" aria-label="Class checkout">{selected ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selected.title)}</h2><p>{time(selected.start)}</p><p className="muted">{selected.room} · ${selected.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
+        <Payments key={`${id}:${selected.id}`} id={id} session={selected} customer={customer} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />
+      </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}
+  </main>;
+}

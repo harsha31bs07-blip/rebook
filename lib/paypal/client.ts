@@ -4,7 +4,7 @@ import type { ApiResponse, CapturedPayment, OAuthToken, Order, Refund, SearchRes
 import { MoneySchema } from "../domain/schemas";
 
 export class PayPalError extends Error {
-  constructor(public status: number, name: string, message: string, public debugId?: string) {
+  constructor(public status: number, name: string, message: string, public debugId?: string, public issues: string[] = []) {
     super(message);
     this.name = name;
   }
@@ -14,7 +14,7 @@ export type PayPalPayment = {
   id: string; status: string; amount?: { currency_code: string; value: string }; debugId?: string;
 };
 export type PayPalOrder = PayPalPayment & {
-  purchase_units?: { payments?: { captures?: PayPalPayment[] } }[];
+  purchase_units?: { reference_id?: string; custom_id?: string; amount?: PayPalPayment["amount"]; payments?: { captures?: PayPalPayment[] } }[];
   links?: { rel: string; href: string }[];
 };
 export type PaymentRefs = { workspaceId: string; bookingId: string; requestId?: string };
@@ -81,7 +81,8 @@ async function sdkCall<T>(operation: () => Promise<ApiResponse<T>>): Promise<Api
     try { body = error.result ?? JSON.parse(typeof error.body === "string" ? error.body : "{}"); } catch { /* Non-JSON upstream error. */ }
     const debugId = debugHeader(error.headers) ?? (typeof body?.debug_id === "string" ? body.debug_id : undefined);
     const mapped = new PayPalError(error.statusCode, typeof body?.name === "string" ? body.name : "PAYPAL_ERROR",
-      typeof body?.message === "string" ? body.message : "PayPal request failed", debugId);
+      typeof body?.message === "string" ? body.message : "PayPal request failed", debugId,
+      Array.isArray(body?.details) ? body.details.flatMap((detail) => typeof detail?.issue === "string" ? [detail.issue] : []) : []);
     console.error("PayPal request failed", { status: mapped.status, name: mapped.name, debugId });
     throw mapped;
   }
@@ -97,6 +98,8 @@ function orderResult(response: ApiResponse<Order>): PayPalOrder {
   const order = response.result;
   return { id: order.id!, status: order.status!, debugId: debugHeader(response.headers),
     ...(order.purchaseUnits ? { purchase_units: order.purchaseUnits.map((unit) => ({
+      reference_id: unit.referenceId, custom_id: unit.customId,
+      ...(unit.amount ? { amount: { currency_code: unit.amount.currencyCode, value: unit.amount.value } } : {}),
       ...(unit.payments ? { payments: { captures: unit.payments.captures?.map(paymentResult) } } : {}),
     })) } : {}),
     ...(order.links ? { links: order.links.map((link) => ({ rel: link.rel, href: link.href })) } : {}),
@@ -207,6 +210,19 @@ export async function captureOrder(orderId: string, requestId: string): Promise<
   return orderResult(await sdkCall(() => new OrdersController(sdk()).captureOrder({
     id: orderId, paypalRequestId: requestId, prefer: "return=representation", body: {},
   })));
+}
+
+/** No payment source: the v6 wallet or card session supplies the buyer's choice. */
+export async function createBookingOrder(amount: string, refs: PaymentRefs & { requestId: string }, description: string): Promise<PayPalOrder> {
+  return orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
+    paypalRequestId: refs.requestId, prefer: "return=representation",
+    body: { intent: CheckoutPaymentIntent.Capture,
+      purchaseUnits: purchaseUnits(amount, refs).map((unit) => ({ ...unit, description: description.slice(0, 127) })) },
+  })));
+}
+
+export async function getOrder(orderId: string): Promise<PayPalOrder> {
+  return orderResult(await sdkCall(() => new OrdersController(sdk()).getOrder({ id: orderId })));
 }
 
 export async function refundCapture(captureId: string, amount: string, note: string, requestId: string): Promise<PayPalPayment> {

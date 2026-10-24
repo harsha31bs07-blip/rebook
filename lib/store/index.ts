@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -21,6 +21,14 @@ export type LedgerEvent = {
   id: string; workspaceId: string; bookingId: string; kind: "capture" | "refund";
   amount: string; paypalId: string; status: string; createdAt: string; debugId?: string; error?: string;
   requestId: string; captureId: string; firstAttemptAt?: string;
+  partial?: boolean;
+};
+export type CustomerLink = {
+  id: string; tokenHash: string; workspaceId: string; planId: string; bookingId: string;
+  kind: "choice" | "receipt"; expiresAt: number; createdAt: string;
+  message: { subject: string; body: string };
+  before: State["sessions"][number]; after?: State["sessions"][number];
+  reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
@@ -66,9 +74,43 @@ export class Repository {
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
       );
+      CREATE TABLE IF NOT EXISTS choice_secrets (id INTEGER PRIMARY KEY CHECK(id = 1), secret TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS customer_links (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, booking_id TEXT NOT NULL, data TEXT NOT NULL,
+        UNIQUE(plan_id, booking_id)
+      );
     `);
+    this.db.prepare("INSERT OR IGNORE INTO choice_secrets VALUES (1, ?)").run(randomBytes(32).toString("hex"));
   }
   close(): void { this.db.close(); }
+  // Only the digest is indexed/stored. The server key lets the owner re-open the delivery link
+  // after a restart without storing bearer tokens in workspace JSON, plans, or the ledger.
+  customerToken(link: CustomerLink): string {
+    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
+    return createHmac("sha256", secret).update(link.id).digest("base64url");
+  }
+  createCustomerLink(input: Omit<CustomerLink, "id" | "tokenHash" | "createdAt">): CustomerLink {
+    const previous = this.listCustomerLinks(input.workspaceId).find((link) => link.planId === input.planId && link.bookingId === input.bookingId);
+    if (previous) return previous;
+    const link: CustomerLink = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", createdAt: new Date().toISOString() };
+    link.tokenHash = createHash("sha256").update(this.customerToken(link)).digest("hex");
+    this.db.prepare("INSERT INTO customer_links VALUES (?, ?, ?, ?, ?, ?)")
+      .run(link.id, link.tokenHash, link.workspaceId, link.planId, link.bookingId, JSON.stringify(link));
+    return link;
+  }
+  listCustomerLinks(workspaceId: string): CustomerLink[] {
+    return (this.db.prepare("SELECT data FROM customer_links WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  customerLinkByToken(token: string): CustomerLink | undefined {
+    const digest = createHash("sha256").update(token).digest("hex");
+    const row = this.db.prepare("SELECT data FROM customer_links WHERE token_hash = ?").get(digest) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  saveCustomerLink(link: CustomerLink): void {
+    this.db.prepare("UPDATE customer_links SET data = ? WHERE id = ?").run(JSON.stringify(link), link.id);
+  }
   listCheckout(workspaceId: string): CheckoutReservation[] {
     return (this.db.prepare("SELECT data FROM checkout_reservations WHERE workspace_id = ?").all(workspaceId) as JsonRow[])
       .map((row) => JSON.parse(row.data));
@@ -290,6 +332,8 @@ export class Repository {
         AND id NOT IN (SELECT workspace_id FROM plans WHERE json_extract(data, '$.status') = 'executing')`)
         .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
       for (const { id } of candidates) {
+        // A private recovery link must remain usable for its advertised lifetime.
+        if (this.listCustomerLinks(id).some((link) => link.expiresAt > Date.now())) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
         if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;

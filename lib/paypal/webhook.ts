@@ -65,8 +65,9 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
         .reduce((sum, item) => sum + toCents(item.amount), 0);
       if (otherRefunded + toCents(amount) > toCents(capture.amount)) return { duplicate: false, matched: false };
       repository.appendLedger({ workspaceId: workspace.id, bookingId: capture.bookingId, kind: "refund", amount,
-        paypalId: resource.id, captureId: capture.captureId, requestId: previousRefund?.requestId ?? `webhook:${resource.id}`, status });
-      if (booking) booking.status = otherRefunded + toCents(amount) >= toCents(capture.amount) ? "refunded" : "refund_pending";
+        paypalId: resource.id, captureId: capture.captureId, requestId: previousRefund?.requestId ?? `webhook:${resource.id}`, status,
+        ...(previousRefund?.partial ? { partial: true } : {}) });
+      if (booking && !previousRefund?.partial) booking.status = otherRefunded + toCents(amount) >= toCents(capture.amount) ? "refunded" : "refund_pending";
     } else {
       // A late completion event must not undo a reversal or a booking's refund state.
       if (capture.status !== "REVERSED" || status === "REVERSED") repository.appendLedger({ ...capture, status });

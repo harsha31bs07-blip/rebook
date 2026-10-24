@@ -44,7 +44,7 @@ export default function PlanPanel({ details, plan, state, busy, results, approva
     {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={onApprove}>{busy ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
     {plan.status === "executing" && <><p className="notice" role="status">Applying recovery and processing sandbox refunds…</p>{!busy && <button className="primary full-width" onClick={onApprove}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <><p className="warning">The schedule was updated, but some refunds need attention. Review the results below.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry refunds"}</button></>}
-    <button className="message-button" disabled={busy} onClick={onMessages}>Preview customer messages</button>
+    <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <RefundResults results={results} state={state} />
     <BookingGrid plan={plan} state={state} />
   </>;

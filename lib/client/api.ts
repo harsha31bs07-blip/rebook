@@ -3,12 +3,14 @@ import type { PlanExplanation } from "../ai/explain";
 import type { CustomerMessage } from "../ai/messages";
 import type { Disruption } from "../domain/types";
 import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../store";
+import type { OwnerCustomerChoices } from "../choices/service";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
 export type WorkspaceResponse = Workspace & {
   plans: PublicPlan[];
   ledger: LedgerEvent[];
   ledgerSummary: Record<string, unknown>;
+  customerChoices?: OwnerCustomerChoices;
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };

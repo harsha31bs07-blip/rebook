@@ -78,7 +78,7 @@ export async function reconcileRefund(event: LedgerEvent, repository: Repository
       error: status === "FAILED" ? "PayPal reports that this refund failed" : undefined });
     const workspace = repository.requireWorkspace(event.workspaceId, true);
     const booking = workspace.state.bookings.find((item) => item.id === event.bookingId && item.payment?.captureId === event.captureId);
-    if (booking) {
+    if (booking && !event.partial) {
       booking.status = status === "COMPLETED" ? "refunded" : "refund_pending";
       repository.saveState(workspace.id, workspace.state);
     }

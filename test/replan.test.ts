@@ -6,11 +6,20 @@ import { seedStudio, demoDisruption, floodDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { applyPlan, feasibilityErrors, validate } from "../lib/solver/validate";
 import { defaultWeights, scoreCandidate } from "../lib/solver/score";
+import { activateConstraint } from "../lib/solver/constraints";
 
 const now = "2026-11-09T00:00:00.000Z";
 const sick: Disruption = { kind: "instructor_unavailable", instructorId: "i1", from: now, to: "2026-11-10T00:00:00.000Z" };
 const roomDown: Disruption = { kind: "room_unavailable", roomId: "r1", from: now, to: sick.to };
 const closure: Disruption = { kind: "closure", from: now, to: sick.to };
+
+it("enforces active constraints on future placements without invalidating historical sessions", () => {
+  const state = activateConstraint(fixture(), sick);
+  const disruption: Disruption = { kind: "room_unavailable", roomId: "r1", from: "2026-11-09T11:00:00Z", to: "2026-11-09T12:00:00Z" };
+  const plan = replan(state, disruption, { now: "2026-11-09T11:00:00Z" });
+  expect(validate(state, plan).ok).toBe(true);
+  expect(validate(state, { ...plan, now: "2026-11-09T09:00:00Z" }).ok).toBe(false);
+});
 
 function fixture(): State {
   return {

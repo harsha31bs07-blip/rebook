@@ -30,20 +30,20 @@ export default function PlanPanel({ details, plan, state, busy, results, onAppro
   const proposed = plan.status === "proposed";
   return <>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
-    <h2>{plan.status === "executed" ? "Recovery complete" : details.explanation.headline}</h2>
+    <h2>{plan.status === "executed" ? results.some((result) => ["PENDING", "REQUESTED"].includes(result.status)) ? "Recovery applied · refunds pending" : "Recovery complete" : details.explanation.headline}</h2>
     {plan.status === "executed" && <p className="muted plan-context">{totals.kept + totals.moved} bookings saved · {money(totals.revenueKept)} kept · {totals.refunded} refund{totals.refunded === 1 ? "" : "s"}{results.some((result) => result.status === "PENDING") ? " (some pending)" : " processed"}.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
     <div className="stats">
       <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
       <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
-      <div><span>Refunded</span><strong className="danger-text">{totals.refunded}</strong><small>bookings</small></div>
+      <div><span>{proposed ? "Refunds planned" : "Refunds completed"}</span><strong className="danger-text">{proposed ? totals.refunded : results.filter((result) => result.status === "COMPLETED").length}</strong><small>{proposed ? "bookings" : `${results.filter((result) => ["PENDING", "REQUESTED"].includes(result.status)).length} pending · ${results.filter((result) => result.status === "SIMULATED").length} simulated`}</small></div>
       <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
     </div>
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
     {proposed && <div className="plan-actions"><button className="primary" disabled={busy} onClick={onApprove}>{busy ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted">Approval applies this schedule and starts sandbox refunds.</p></div>}
     {plan.status === "executing" && <><p className="notice" role="status">Applying recovery and processing sandbox refunds…</p>{!busy && <button className="primary full-width" onClick={onApprove}>Resume refund processing</button>}</>}
-    {plan.status === "partially_failed" && <p className="warning">The schedule was updated, but some refunds need attention. Review the results below.</p>}
+    {plan.status === "partially_failed" && <><p className="warning">The schedule was updated, but some refunds need attention. Review the results below.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry refunds"}</button></>}
     <button className="message-button" disabled={busy} onClick={onMessages}>Preview customer messages</button>
     <RefundResults results={results} state={state} />
     <BookingGrid plan={plan} state={state} />

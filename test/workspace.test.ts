@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { beginWorkspace, createWorkspace, realCaptureBookingIds, resetWorkspace, startWarmPool, waitForWorkspacePreparation, WorkspaceCreationError } from "../lib/demo/createWorkspace";
+import { beginWorkspace, createWorkspace, realCaptureBookingIds, resetWorkspace, resumeStalePreparations, startWarmPool, waitForWorkspacePreparation, WorkspaceCreationError } from "../lib/demo/createWorkspace";
 import { Repository } from "../lib/store";
 import { demoDisruptionFor, floodDisruptionFor, seedStudio } from "../lib/seed/seed";
 import { localParts } from "../lib/domain/time";
@@ -43,6 +43,40 @@ function mockedCaptures(failFirst = false) {
   return { fetch, maxActive: () => maxActive };
 }
 describe("workspace seeding", () => {
+  it("defers a recent interrupted preparation until the two-minute recovery threshold", async () => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "0");
+    vi.useFakeTimers();
+    const workspace = repository.createWorkspace(seedStudio(), undefined, { preparing: true });
+    await resumeStalePreparations(repository, true);
+    expect(repository.requireWorkspace(workspace.id).status).toBe("preparing");
+    await vi.advanceTimersByTimeAsync(120_001);
+    await waitForWorkspacePreparation();
+    expect(repository.requireWorkspace(workspace.id).status).toBe("ready");
+  });
+  it("resumes a stale preparation after restart with persisted keys and skips completed captures", async () => {
+    vi.stubEnv("DEMO_REAL_CAPTURES", "1");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const state = seedStudio();
+    const ids = realCaptureBookingIds(state);
+    for (const booking of state.bookings) booking.payment!.simulated = !ids.has(booking.id);
+    const first = state.bookings.find((booking) => ids.has(booking.id))!;
+    first.payment = { orderId: "existing-order", captureId: "existing-capture", simulated: false };
+    const workspace = repository.createWorkspace(state, undefined, { preparing: true });
+    const real = state.bookings.filter((booking) => ids.has(booking.id));
+    for (const [index, booking] of real.entries()) repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id,
+      kind: "capture", amount: booking.amount, requestId: `persisted-${booking.id}`,
+      captureId: index === 0 ? "existing-capture" : "", paypalId: index === 0 ? "existing-capture" : "", status: index === 0 ? "COMPLETED" : "REQUESTED" });
+    vi.setSystemTime(Date.now() + 120_001);
+    repository.close(); repository = new Repository(directory);
+    const { fetch } = mockedCaptures();
+    await resumeStalePreparations(repository);
+    const ready = repository.requireWorkspace(workspace.id);
+    expect(ready.status).toBe("ready");
+    expect(ready.state.bookings.find((booking) => booking.id === first.id)?.payment?.captureId).toBe("existing-capture");
+    const calls = fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"));
+    expect(calls).toHaveLength(real.length - 1);
+    for (const call of calls) expect(((call[1] as RequestInit).headers as Record<string, string>)["PayPal-Request-Id"]).toMatch(/^persisted-/);
+  });
   it("seeds and persists the following Monday when created on a Thursday", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-12-03T15:00:00Z"));

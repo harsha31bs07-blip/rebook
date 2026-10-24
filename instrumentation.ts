@@ -1,6 +1,8 @@
 export async function register() {
-  if (process.env.NEXT_RUNTIME === "nodejs" && process.env.DEMO_WARM_POOL === "1") {
-    const { startWarmPool } = await import("./lib/demo/createWorkspace");
-    void startWarmPool();
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { resumeStalePreparations, startWarmPool } = await import("./lib/demo/createWorkspace");
+    void resumeStalePreparations(undefined, true).then(() => startWarmPool()).catch(() => {
+      console.error("Workspace startup recovery failed");
+    });
   }
 }

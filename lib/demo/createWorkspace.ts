@@ -4,6 +4,7 @@ import { createCardCapture, PayPalError } from "../paypal/client";
 import { demoDisruptionFor, floodDisruptionFor, nextWeekStart, seedStudio } from "../seed/seed";
 import { affectedSessions } from "../solver/validate";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
+import { reconcileRefund } from "../executor/reconcileRefund";
 
 export type SeedProgress = { completed: number; total: number; bookingId: string; status: "COMPLETED" | "SIMULATED" | "FAILED" };
 export type CreateWorkspaceOptions = { repository?: Repository; onProgress?: (progress: SeedProgress) => void };
@@ -23,7 +24,17 @@ export function realCaptureBookingIds(state: State): Set<string> {
 
 async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions, repository: Repository, owner: string): Promise<Workspace> {
   const initial = repository.requireWorkspace(workspaceId, true).state;
-  const realIds = process.env.DEMO_REAL_CAPTURES === "0" ? new Set<string>() : realCaptureBookingIds(initial);
+  const persisted = repository.latestMoneyEvents(workspaceId).filter((event) => event.kind === "capture");
+  const scenarioIds = process.env.DEMO_REAL_CAPTURES === "0" ? new Set<string>() : realCaptureBookingIds(initial);
+  // A restart must preserve the original capture mode and idempotency key, even if env changed.
+  const realIds = new Set(initial.bookings.filter((booking) => {
+    const event = persisted.find((item) => item.bookingId === booking.id);
+    return event ? event.status !== "SIMULATED" : scenarioIds.has(booking.id);
+  }).map((booking) => booking.id));
+  const capturedIds = new Set(initial.bookings.filter((booking) => {
+    const event = persisted.find((item) => item.bookingId === booking.id && item.status === "COMPLETED");
+    return event?.captureId && booking.payment?.captureId === event.captureId;
+  }).map((booking) => booking.id));
   let completed = 0;
   let failed = false;
   let nextIndex = 0;
@@ -37,6 +48,7 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
   // Batch the initial ledger writes; no network work occurs inside the SQLite transaction.
   repository.transaction(() => {
     for (const booking of initial.bookings) {
+      if (persisted.some((item) => item.bookingId === booking.id)) continue;
       const real = realIds.has(booking.id);
       repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "capture", amount: booking.amount,
         paypalId: real ? "" : booking.payment!.captureId, captureId: real ? "" : booking.payment!.captureId,
@@ -44,14 +56,17 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
     }
   });
   repository.transaction(() => {
-    for (const booking of initial.bookings) if (!realIds.has(booking.id)) report(booking.id, "SIMULATED");
+    for (const booking of initial.bookings) {
+      if (!realIds.has(booking.id)) report(booking.id, "SIMULATED");
+      else if (capturedIds.has(booking.id)) report(booking.id, "COMPLETED");
+    }
   });
-  const realBookings = initial.bookings.filter((booking) => realIds.has(booking.id));
+  const realBookings = initial.bookings.filter((booking) => realIds.has(booking.id) && !capturedIds.has(booking.id));
   const worker = async () => {
     while (nextIndex < realBookings.length) {
       const booking = realBookings[nextIndex++];
       repository.renewLock(workspaceId, owner);
-      const requestId = `${workspaceId}${booking.id}`;
+      const requestId = persisted.find((item) => item.bookingId === booking.id)?.requestId ?? `${workspaceId}${booking.id}`;
       const input = { workspaceId, bookingId: booking.id, kind: "capture" as const, amount: booking.amount, requestId };
       try {
         const payment = await createCardCapture(booking.amount, { workspaceId, bookingId: booking.id, requestId });
@@ -71,7 +86,8 @@ async function seedPayments(workspaceId: string, options: CreateWorkspaceOptions
   };
   const workers = await Promise.allSettled(Array.from({ length: Math.min(8, realBookings.length) }, worker));
   if (workers.some((result) => result.status === "rejected")) failed = true;
-  const workspace = repository.savePreparation(workspaceId, failed ? "failed" : "ready", { done: completed, total: initial.bookings.length });
+  const workspace = repository.savePreparation(workspaceId, failed ? "failed" : "ready", { done: completed, total: initial.bookings.length },
+    failed ? "Some sandbox captures failed or have an unknown outcome. Successful payments were preserved; open a fresh demo to continue." : undefined);
   if (failed) throw new WorkspaceCreationError(workspaceId);
   return workspace;
 }
@@ -99,7 +115,8 @@ async function prepare(id: string, options: CreateWorkspaceOptions, repository: 
   try { return await withWorkspaceLock(repository, id, (owner) => seedPayments(id, options, repository, owner)); }
   catch (error) {
     const workspace = repository.requireWorkspace(id, true);
-    repository.savePreparation(id, "failed", workspace.progress);
+    if (error instanceof StoreError && error.status === 409) throw error;
+    repository.savePreparation(id, "failed", workspace.progress, workspace.preparationError ?? (error instanceof Error ? error.message : "Workspace preparation failed"));
     throw error;
   }
 }
@@ -125,6 +142,7 @@ export function startWarmPool(repository: Repository = getRepository()): Promise
   if (process.env.DEMO_WARM_POOL !== "1" || repository.readyPoolWorkspace()) return Promise.resolve();
   const pending = poolFills.get(repository);
   if (pending) return pending;
+  if (repository.stalePreparations(Date.now(), 0).some((workspace) => workspace.pooled)) return Promise.resolve();
   const workspace = repository.createWorkspace(initialState(), undefined, { preparing: true, pooled: true });
   const filling = track(backgroundPreparation(workspace.id, {}, repository).then(() => {}, () => {
     console.error("Warm workspace preparation failed");
@@ -152,12 +170,33 @@ export async function waitForWorkspacePreparation(): Promise<void> {
   await Promise.allSettled([...background]);
 }
 
+/** Recover preparations abandoned by a previous process, including unclaimed pool workspaces. */
+export async function resumeStalePreparations(repository: Repository = getRepository(), deferRecent = false): Promise<void> {
+  for (const workspace of repository.stalePreparations(Date.now(), deferRecent ? 0 : 120_000)) {
+    const recover = async () => {
+      try {
+        const current = repository.getWorkspace(workspace.id, true);
+        if (current?.status === "preparing" && Date.parse(current.updatedAt) <= Date.now() - 120_000) await prepare(workspace.id, {}, repository);
+      } catch { console.error("Workspace preparation recovery failed", { workspaceId: workspace.id }); }
+    };
+    const delay = Date.parse(workspace.updatedAt) + 120_001 - Date.now();
+    if (deferRecent && delay > 0) {
+      // A quick restart must not strand preparations that have not yet aged past two minutes.
+      void track(new Promise<void>((resolve) => { const timer = setTimeout(resolve, delay); timer.unref(); }).then(recover));
+    } else await recover();
+  }
+}
+
 export async function resetWorkspace(workspaceId: string, options: CreateWorkspaceOptions = {}): Promise<Workspace> {
   const repository = options.repository ?? getRepository();
   repository.requireReadyWorkspace(workspaceId);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
-    if (repository.listPlans(workspaceId).some((plan) => plan.status === "executing")) throw new StoreError(409, "An interrupted execution must finish before reset");
-    if (repository.latestMoneyEvents(workspaceId).some((event) => event.status === "REQUESTED")) throw new StoreError(409, "An unresolved payment must be reconciled before reset");
+    for (const event of repository.latestMoneyEvents(workspaceId)) {
+      if (event.kind !== "refund" || !["REQUESTED", "PENDING"].includes(event.status)) continue;
+      repository.renewLock(workspaceId, owner);
+      await reconcileRefund(event, repository);
+    }
+    repository.renewLock(workspaceId, owner);
     repository.transaction(() => {
       const state = initialState(true);
       repository.saveState(workspaceId, state); repository.clearPlans(workspaceId);

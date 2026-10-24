@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -6,6 +6,7 @@ import type { Plan, State } from "../domain/types";
 import { PlanSchema, StateSchema } from "../domain/schemas";
 import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "../domain/time";
 import { nextWeekStart } from "../seed/seed";
+import { activateConstraint, activeConstraints, preserveConstraints } from "../solver/constraints";
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
@@ -14,11 +15,11 @@ export type StoredPlan = Plan & {
 };
 export type Workspace = {
   id: string; state: State; createdAt: string; updatedAt: string;
-  status: "preparing" | "ready" | "failed"; progress: { done: number; total: number }; pooled?: true;
+  status: "preparing" | "ready" | "failed"; progress: { done: number; total: number }; pooled?: true; preparationError?: string;
 };
 export type LedgerEvent = {
   id: string; workspaceId: string; bookingId: string; kind: "capture" | "refund";
-  amount: string; paypalId: string; status: string; createdAt: string; debugId?: string;
+  amount: string; paypalId: string; status: string; createdAt: string; debugId?: string; error?: string;
   requestId: string; captureId: string;
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
@@ -58,7 +59,7 @@ export class Repository {
   }
   createWorkspace(state: State, id = randomBytes(8).toString("base64url").slice(0, 10), options: { preparing?: boolean; pooled?: true } = {}): Workspace {
     const now = new Date().toISOString();
-    const workspace: Workspace = { id, state: StateSchema.parse(state), createdAt: now, updatedAt: now,
+    const workspace: Workspace = { id, state: preserveConstraints(state, StateSchema.parse(state)), createdAt: now, updatedAt: now,
       status: options.preparing ? "preparing" : "ready", progress: { done: options.preparing ? 0 : state.bookings.length, total: state.bookings.length },
       ...(options.pooled ? { pooled: true } : {}),
     };
@@ -70,6 +71,11 @@ export class Repository {
     if (!row) return undefined;
     const workspace = JSON.parse(row.data) as Workspace;
     if (workspace.pooled && !includePooled) return undefined;
+    // Backfill workspaces executed before constraints were persisted in scheduling state.
+    if (!activeConstraints(workspace.state).length) {
+      const applied = this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? AND json_extract(data, '$.status') != 'proposed'").all(id) as JsonRow[];
+      for (const row of applied) workspace.state = activateConstraint(workspace.state, (JSON.parse(row.data) as StoredPlan).disruption);
+    }
     // Older persisted workspaces predate the explicit seed-week field.
     if (!workspace.state.studio.weekStart) {
       const { timezone } = workspace.state.studio;
@@ -93,13 +99,17 @@ export class Repository {
     if (workspace.status !== "ready") throw new StoreError(409, "Workspace is not ready");
     return workspace;
   }
-  savePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"]): Workspace {
-    this.updatePreparation(id, status, progress);
+  savePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"], error?: string): Workspace {
+    this.updatePreparation(id, status, progress, error);
     return this.requireWorkspace(id, true);
   }
-  updatePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"]): void {
-    this.db.prepare("UPDATE workspaces SET data = json_set(data, '$.status', ?, '$.progress', json(?), '$.updatedAt', ?) WHERE id = ?")
-      .run(status, JSON.stringify(progress), new Date().toISOString(), id);
+  updatePreparation(id: string, status: Workspace["status"], progress: Workspace["progress"], error?: string): void {
+    this.db.prepare("UPDATE workspaces SET data = json_set(data, '$.status', ?, '$.progress', json(?), '$.updatedAt', ?, '$.preparationError', ?) WHERE id = ?")
+      .run(status, JSON.stringify(progress), new Date().toISOString(), error ?? null, id);
+  }
+  stalePreparations(now = Date.now(), minimumAgeMs = 120_000): Workspace[] {
+    return (this.db.prepare("SELECT data FROM workspaces WHERE json_extract(data, '$.status') = 'preparing' AND json_extract(data, '$.updatedAt') <= ?")
+      .all(new Date(now - minimumAgeMs).toISOString()) as JsonRow[]).map((row) => JSON.parse(row.data));
   }
   readyPoolWorkspace(): Workspace | undefined {
     const rows = this.db.prepare("SELECT data FROM workspaces WHERE json_extract(data, '$.pooled') = 1 AND json_extract(data, '$.status') = 'ready' LIMIT 1").all() as JsonRow[];
@@ -121,7 +131,7 @@ export class Repository {
     });
   }
   saveState(id: string, state: State): Workspace {
-    const workspace = { ...this.requireWorkspace(id, true), state: StateSchema.parse(state), updatedAt: new Date().toISOString() };
+    const workspace = { ...this.requireWorkspace(id, true), state: preserveConstraints(state, StateSchema.parse(state)), updatedAt: new Date().toISOString() };
     this.db.prepare("UPDATE workspaces SET data = ? WHERE id = ?").run(JSON.stringify(workspace), id);
     return workspace;
   }
@@ -133,10 +143,24 @@ export class Repository {
   }
   getPlan(workspaceId: string, id: string): StoredPlan | undefined {
     const row = this.db.prepare("SELECT data FROM plans WHERE id = ? AND workspace_id = ?").get(id, workspaceId) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) as StoredPlan : undefined;
+    return row ? this.planView(JSON.parse(row.data) as StoredPlan) : undefined;
   }
   listPlans(workspaceId: string): StoredPlan[] {
-    return (this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+    return (this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => this.planView(JSON.parse(row.data)));
+  }
+  private planView(plan: StoredPlan): StoredPlan {
+    if (plan.status === "proposed") return plan;
+    const latest = this.latestMoneyEvents(plan.workspaceId);
+    const results = plan.bookingActions.filter((action) => action.action === "refund").map((action): ExecutionResult => {
+      const event = latest.find((item) => item.kind === "refund" && item.requestId === `${plan.id}:${action.bookingId}`);
+      return event ? { bookingId: action.bookingId, status: event.status, paypalId: event.paypalId || undefined,
+        debugId: event.debugId, error: event.error ?? (["FAILED", "REQUESTED"].includes(event.status)
+          ? plan.results.find((item) => item.bookingId === action.bookingId)?.error : undefined) }
+        : { bookingId: action.bookingId, status: "REQUESTED", error: "Refund has not been submitted yet" };
+    });
+    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING"].includes(item.status))
+      ? "partially_failed" : "executed";
+    return { ...plan, results, status };
   }
   savePlan(plan: StoredPlan): void {
     const result = this.db.prepare("UPDATE plans SET data = ? WHERE id = ? AND workspace_id = ?").run(JSON.stringify(plan), plan.id, plan.workspaceId);
@@ -147,7 +171,9 @@ export class Repository {
   }
   appendLedger(input: LedgerInput): LedgerEvent {
     // Repeated delivery or recovery records the same transition only once. Status changes append a new row.
-    const id = createHash("sha256").update(JSON.stringify([input.workspaceId, input.bookingId, input.kind, input.requestId, input.paypalId, input.status])).digest("hex");
+    const previous = this.latestMoneyEvents(input.workspaceId).find((event) => event.kind === input.kind && event.requestId === input.requestId);
+    if (previous && previous.paypalId === input.paypalId && previous.status === input.status && previous.error === input.error) return previous;
+    const id = randomUUID();
     const event = { ...input, id, createdAt: new Date().toISOString() };
     this.db.prepare("INSERT OR IGNORE INTO ledger(id, workspace_id, paypal_id, capture_id, data) VALUES (?, ?, ?, ?, ?)")
       .run(id, input.workspaceId, input.paypalId, input.captureId, JSON.stringify(event));
@@ -227,6 +253,12 @@ export function closeRepository(): void {
 
 export async function withWorkspaceLock<T>(repository: Repository, workspaceId: string, operation: (owner: string) => Promise<T> | T): Promise<T> {
   const owner = repository.acquireLock(workspaceId);
+  // Slow reconciliation/payment requests must not let another writer steal the lease.
+  const heartbeat = setInterval(() => {
+    try { repository.renewLock(workspaceId, owner); }
+    catch { /* The next explicit renewal fences a writer whose lease was lost. */ }
+  }, 30_000);
+  heartbeat.unref();
   try { return await operation(owner); }
-  finally { repository.releaseLock(workspaceId, owner); }
+  finally { clearInterval(heartbeat); repository.releaseLock(workspaceId, owner); }
 }

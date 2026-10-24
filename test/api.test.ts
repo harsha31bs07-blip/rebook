@@ -18,6 +18,7 @@ import { closeRepository, getRepository } from "../lib/store";
 import { seedStudio } from "../lib/seed/seed";
 import { startWarmPool, waitForWorkspacePreparation } from "../lib/demo/createWorkspace";
 import { register } from "../instrumentation";
+import { processWebhook } from "../lib/paypal/webhook";
 
 let directory: string;
 beforeEach(() => {
@@ -37,6 +38,32 @@ function post(body: unknown = {}, ip = randomUUID()) {
 }
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 describe("workspace API", () => {
+  it("projects webhook settlement into GET plan and workspace results", async () => {
+    const repository = getRepository();
+    const workspace = repository.createWorkspace(seedStudio());
+    const plan = repository.createPlan(workspace.id, replan(workspace.state, demoDisruption));
+    repository.savePlan({ ...plan, status: "executed", basis: workspace.state });
+    const refunds = plan.bookingActions.filter((action) => action.action === "refund");
+    for (const action of refunds) {
+      const booking = workspace.state.bookings.find((item) => item.id === action.bookingId)!;
+      const captureId = booking.payment!.captureId;
+      repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: booking.amount,
+        paypalId: captureId, captureId, requestId: `capture:${booking.id}`, status: "COMPLETED" });
+      repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", amount: booking.amount,
+        paypalId: `refund:${booking.id}`, captureId, requestId: `${plan.id}:${booking.id}`, status: "PENDING" });
+    }
+    const before = await (await planDetails(new Request("http://localhost"), { params: Promise.resolve({ id: workspace.id, planId: plan.id }) })).json();
+    expect(before.plan.results[0].status).toBe("PENDING");
+    const action = refunds[0];
+    processWebhook(JSON.stringify({ id: "settled", event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
+      id: `refund:${action.bookingId}`, amount: { currency_code: "USD", value: action.amount },
+    } }), repository);
+    const after = await (await planDetails(new Request("http://localhost"), { params: Promise.resolve({ id: workspace.id, planId: plan.id }) })).json();
+    expect(after.plan.results[0].status).toBe("COMPLETED");
+    const view = await (await read(new Request("http://localhost"), context(workspace.id))).json();
+    expect(view.plans[0].results[0].status).toBe("COMPLETED");
+    expect(view.plans[0].results.slice(1).every((item: { status: string }) => item.status === "PENDING")).toBe(true);
+  });
   it("returns explanations and customer drafts before and after cancelled sessions leave the schedule", async () => {
     const state = seedStudio();
     state.sessions = state.sessions.slice(0, 1);

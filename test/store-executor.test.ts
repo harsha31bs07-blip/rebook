@@ -8,6 +8,8 @@ import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { executePlan } from "../lib/executor/executePlan";
 import { Repository } from "../lib/store";
+import { activeConstraints } from "../lib/solver/constraints";
+import { applyPlan, validate } from "../lib/solver/validate";
 
 let directory: string;
 let repository: Repository;
@@ -40,8 +42,9 @@ function prepared(simulated = false) {
 
 function mockedRefunds(status: (index: number) => string = () => "COMPLETED") {
   let count = 0;
-  const fetch = vi.fn(async (url: string | URL | Request) => {
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     if (String(url).endsWith("/token")) return Response.json({ access_token: "token", token_type: "Bearer", expires_in: 3600 });
+    if (init?.method === "GET") return Response.json({ id: String(url).split("/").at(-1), status: "COMPLETED" });
     count += 1;
     const next = status(count);
     return Response.json(next === "FAILED" ? { name: "UNPROCESSABLE_ENTITY", message: "Declined" } : { id: `refund-${count}`, status: next }, { status: next === "FAILED" ? 422 : 201 });
@@ -82,6 +85,27 @@ describe("SQLite repository", () => {
 });
 
 describe("plan execution", () => {
+  it("restores active constraints for previously persisted applied plans", () => {
+    const { workspace, plan } = prepared(true);
+    repository.saveState(workspace.id, applyPlan(workspace.state, plan));
+    repository.savePlan({ ...plan, status: "executed", basis: workspace.state });
+    expect(activeConstraints(repository.requireWorkspace(workspace.id).state)).toEqual([plan.disruption]);
+  });
+  it("persists approved constraints so a later disruption cannot reuse Maya's absence", async () => {
+    const { workspace, plan } = prepared(true);
+    await executePlan(workspace.id, plan.id, repository);
+    repository.close(); repository = new Repository(directory);
+    const state = repository.requireWorkspace(workspace.id).state;
+    expect(activeConstraints(state)).toEqual([plan.disruption]);
+    const cover = plan.sessionChanges.find((change) => change.after?.instructorId !== change.before.instructorId && change.after)!;
+    const nextDisruption = { kind: "instructor_unavailable" as const, instructorId: cover.after!.instructorId,
+      from: cover.after!.start, to: cover.after!.end };
+    const next = replan(state, nextDisruption);
+    expect(validate(state, next).ok).toBe(true);
+    for (const change of next.sessionChanges) if (change.after) {
+      expect(change.after.instructorId === cover.before.instructorId && change.after.start === cover.before.start).toBe(false);
+    }
+  });
   it("refunds exactly the refund actions and makes zero new calls on re-run", async () => {
     const { workspace, plan } = prepared();
     const fetch = mockedRefunds();
@@ -109,7 +133,7 @@ describe("plan execution", () => {
     expect(repository.requireWorkspace(workspace.id).state.bookings.find((booking) => booking.id === result.results[0].bookingId)?.status).toBe("refund_pending");
     fetch.mockClear();
     await executePlan(workspace.id, plan.id, repository);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/refund"))).toHaveLength(1);
   });
   it("never calls PayPal for simulated payments", async () => {
     const { workspace, plan } = prepared(true);

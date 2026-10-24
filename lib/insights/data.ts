@@ -62,11 +62,18 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     disruptions: plans.map((plan) => {
       const label = disruptionLabel(plan, state);
       const active = plan.status !== "proposed";
+      const refunds = [...latest.values()].filter((event) => event.kind === "refund" && event.requestId === `${plan.id}:${event.bookingId}`);
+      const amountFor = (statuses: string[]) => refunds.filter((event) => statuses.includes(event.status)).reduce((sum, event) => sum + toCents(event.amount), 0) / 100;
       return {
         id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window,
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
         kept: plan.totals.kept, moved: plan.totals.moved, refunded: plan.totals.refunded,
         refund_amount: dollars(plan.totals.refundAmount), revenue_kept: dollars(plan.totals.revenueKept),
+        planned_refund_amount: dollars(plan.totals.refundAmount),
+        pending_refund_amount: amountFor(["REQUESTED", "PENDING"]),
+        completed_refund_amount: amountFor(["COMPLETED"]),
+        simulated_refund_amount: amountFor(["SIMULATED"]),
+        failed_refund_amount: amountFor(["FAILED", "CANCELLED"]),
         affected: plan.totals.kept + plan.totals.moved + plan.totals.refunded,
         applied_affected: active ? plan.totals.kept + plan.totals.moved + plan.totals.refunded : 0,
         applied_saved: active ? plan.totals.kept + plan.totals.moved : 0,

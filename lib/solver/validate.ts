@@ -2,6 +2,7 @@ import type { Disruption, Plan, Session, State } from "../domain/types";
 import { PlanSchema } from "../domain/schemas";
 import { byId, compare, insideOpenHours, localParts, overlaps } from "../domain/time";
 import { actionsFor, calculateTotals, isActiveBooking } from "./score";
+import { activeConstraints } from "./constraints";
 
 export function usesDisruptedResource(session: Session, disruption: Disruption): boolean {
   return disruption.kind === "closure" || (disruption.kind === "instructor_unavailable"
@@ -14,7 +15,7 @@ export function affectedSessions(state: State, disruption: Disruption, now: stri
     .sort(byId);
 }
 
-export function feasibilityErrors(state: State, session: Session, disruption?: Disruption): string[] {
+export function feasibilityErrors(state: State, session: Session, disruption?: Disruption, now?: string): string[] {
   const errors: string[] = [];
   const instructor = state.instructors.find((person) => person.id === session.instructorId);
   const room = state.rooms.find((space) => space.id === session.roomId);
@@ -39,8 +40,12 @@ export function feasibilityErrors(state: State, session: Session, disruption?: D
     if (other.instructorId === session.instructorId) errors.push(`Instructor double booking with ${other.id}`);
     if (other.roomId === session.roomId) errors.push(`Room double booking with ${other.id}`);
   }
-  if (disruption && usesDisruptedResource(session, disruption) &&
-    overlaps(session.start, session.end, disruption.from, disruption.to)) errors.push("Session overlaps disrupted resource");
+  const active = !now || Date.parse(session.start) >= Date.parse(now) ? activeConstraints(state) : [];
+  for (const constraint of [...active, ...(disruption ? [disruption] : [])]) {
+    if (usesDisruptedResource(session, constraint) && overlaps(session.start, session.end, constraint.from, constraint.to)) {
+      errors.push("Session overlaps disrupted resource");
+    }
+  }
   return errors;
 }
 
@@ -95,7 +100,7 @@ export function validate(state: State, plan: Plan): { ok: boolean; errors: strin
   for (const session of [...next.sessions].sort(byId)) {
     // Historical sessions are still checked for resource collisions but not a new disruption.
     const disruption = Date.parse(session.start) >= Date.parse(plan.now) ? plan.disruption : undefined;
-    for (const error of feasibilityErrors(next, session, disruption)) errors.push(`${session.id}: ${error}`);
+    for (const error of feasibilityErrors(next, session, disruption, plan.now)) errors.push(`${session.id}: ${error}`);
     const count = next.bookings.filter((booking) => booking.sessionId === session.id && isActiveBooking(booking)).length;
     if (count > session.capacity) errors.push(`${session.id}: Booking capacity exceeded`);
   }

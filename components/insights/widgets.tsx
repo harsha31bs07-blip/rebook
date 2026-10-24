@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createWidgets, type AgWidgetDefinition } from "ag-studio-react";
-import type { AgDefaultRegistry, AgStudioApi, AgWidgetDataFormat, AgWidgetFieldReference, AgWidgetParams, AgWidgetsConfig } from "ag-studio";
+import type { AgDefaultRegistry, AgRowsResult, AgStudioApi, AgWidgetDataFormat, AgWidgetFieldReference, AgWidgetParams, AgWidgetsConfig } from "ag-studio";
 import { receiptFields, recoveryFields } from "@/lib/insights/report";
 
 type CustomFormat = AgWidgetDataFormat<{ planId?: string }>;
@@ -35,6 +35,21 @@ function useWidgetRows(params: AgWidgetParams<RecoveryWidget | ReceiptsWidget>) 
 
 function RecoveryImpact(params: AgWidgetParams<RecoveryWidget>) {
   const { rows, error } = useWidgetRows(params);
+  const [receipts, setReceipts] = useState<Row[]>();
+  const [receiptError, setReceiptError] = useState(false);
+  useEffect(() => {
+    let current = true;
+    // Query existing ledger fields, independently of a saved report's recovery mapping.
+    void params.widgetApi.getData<AgRowsResult>({ projection: [
+      ["plan_id", "refundPlan"], ["kind", "refundKind"], ["status", "refundStatus"], ["amount", "refundAmount"],
+    ].map(([fieldId, as]) => ({ field: { key: `money_events.${fieldId}`, sourceId: "money_events", fieldId: `money_events.${fieldId}` }, as })) },
+    { queryId: "refund-totals", filter: false, crossFilter: "none" }).then(({ results }) => {
+      if (!current) return;
+      if (results.dataShape !== "rows") throw new Error("Refund totals unavailable");
+      setReceipts(results.rows); setReceiptError(false);
+    }).catch(() => { if (current) setReceiptError(true); });
+    return () => { current = false; };
+  }, [params]);
   const sorted = [...rows].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const selectedId = params.format?.style?.planId;
   const selected = sorted.find((row) => row.id === selectedId) ?? sorted[0];
@@ -51,13 +66,17 @@ function RecoveryImpact(params: AgWidgetParams<RecoveryWidget>) {
   if (!selected) return <div className="insight-empty"><strong>Your next recovery, in perspective</strong><p>Create a disruption from the schedule to see bookings saved and refunds here.</p></div>;
   const kept = Number(selected.kept) || 0, moved = Number(selected.moved) || 0, refunded = Number(selected.refunded) || 0;
   const affected = kept + moved + refunded;
+  const refunds = receipts?.filter((row) => row.refundKind === "refund" && row.refundPlan === selected.id);
+  const refundAmount = (statuses: string[]) => (refunds ?? []).filter((row) => statuses.includes(String(row.refundStatus)))
+    .reduce((sum, row) => sum + Math.round(Number(row.refundAmount) * 100), 0) / 100;
   return <div className="recovery-impact">
     <label>Disruption<select aria-label="Selected disruption" value={String(selected.id)} onChange={(event) => select(event.target.value)}>{sorted.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.subject)} · {String(row.window)}</option>)}</select></label>
-    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>vs {money(selected.refund_amount)} refunded</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved) / affected * 100) : 0}% saved</span></div>
-    <div className="impact-bar" role="img" aria-label={`${kept} kept, ${moved} moved, ${refunded} refunded`}>
+    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>{receiptError ? "Refund totals unavailable" : receipts ? `${money(refundAmount(["COMPLETED"]))} refunded · ${money(refundAmount(["REQUESTED", "PENDING"]))} pending · ${money(refundAmount(["SIMULATED"]))} simulated` : "Loading refund totals…"}</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved) / affected * 100) : 0}% saved</span></div>
+    <p className="muted">{money(selected.refund_amount)} in planned refunds</p>
+    <div className="impact-bar" role="img" aria-label={`${kept} kept, ${moved} moved, ${refunded} refund actions`}>
       {[kept, moved, refunded].map((count, index) => count > 0 && <span className={`impact-segment impact-${index}`} key={index} style={{ flex: count }} />)}
     </div>
-    <div className="impact-legend"><span><i className="impact-0" />{kept} Kept</span><span><i className="impact-1" />{moved} Moved</span><span><i className="impact-2" />{refunded} Refunded</span></div>
+    <div className="impact-legend"><span><i className="impact-0" />{kept} Kept</span><span><i className="impact-1" />{moved} Moved</span><span><i className="impact-2" />{refunded} Refund actions</span></div>
     <p className="muted">{String(selected.status) === "proposed" ? "Proposed recovery · forecast" : "Applied recovery"} · {String(selected.sessions_affected)} classes affected</p>
   </div>;
 }

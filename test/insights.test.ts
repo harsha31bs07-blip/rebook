@@ -10,7 +10,7 @@ import { applyPlan } from "../lib/solver/validate";
 import { buildStudioData, insightRelationships } from "../lib/insights/studio-data";
 import { initialReport, REPORT_STATE_VERSION, restoreReportState } from "../lib/insights/report";
 import { recoveryDisruptions, recoveryReceipts } from "../lib/insights/ai";
-import type { Insights } from "../lib/insights/data";
+import { buildInsights, type Insights } from "../lib/insights/data";
 
 let directory: string;
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "rebook-insights-")); vi.stubEnv("DATA_DIR", directory); });
@@ -18,6 +18,26 @@ afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force:
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("workspace insights", () => {
+  it("separates planned, pending, completed, simulated and failed refund amounts using latest events", () => {
+    const repository = getRepository();
+    const workspace = repository.createWorkspace(seedStudio());
+    const plan = repository.createPlan(workspace.id, replan(workspace.state, demoDisruption));
+    plan.status = "partially_failed";
+    const actions = plan.bookingActions.filter((action) => action.action === "refund");
+    expect(actions.length).toBeGreaterThanOrEqual(5);
+    const statuses = ["COMPLETED", "PENDING", "REQUESTED", "SIMULATED", "FAILED"];
+    for (const [index, action] of actions.slice(0, 5).entries()) {
+      const base = { workspaceId: workspace.id, bookingId: action.bookingId, kind: "refund" as const, amount: action.amount,
+        paypalId: `refund-${index}`, captureId: `capture-${index}`, requestId: `${plan.id}:${action.bookingId}` };
+      repository.appendLedger({ ...base, status: "REQUESTED" });
+      repository.appendLedger({ ...base, status: statuses[index] });
+    }
+    const insights = buildInsights(workspace.state, [plan], repository.listLedger(workspace.id));
+    expect(insights.disruptions[0]).toMatchObject({ planned_refund_amount: Number(plan.totals.refundAmount),
+      completed_refund_amount: Number(actions[0].amount), pending_refund_amount: Number(actions[1].amount) + Number(actions[2].amount),
+      simulated_refund_amount: Number(actions[3].amount), failed_refund_amount: Number(actions[4].amount) });
+    expect(insights.money_events.filter((event) => event.status === "REQUESTED")).toHaveLength(1);
+  });
   it("returns scoped flat tables with joinable cancelled sessions and latest refund status", async () => {
     const repository = getRepository();
     const state = seedStudio();
@@ -37,7 +57,7 @@ describe("workspace insights", () => {
     expect(response.status).toBe(200);
     const data: Insights = await response.json();
     expect(data.disruptions).toHaveLength(1);
-    expect(data.disruptions[0]).toMatchObject({ id: plan.id, status: "executed" });
+    expect(data.disruptions[0]).toMatchObject({ id: plan.id, status: "partially_failed", completed_refund_amount: Number(action.amount), pending_refund_amount: 0 });
     expect(data.money_events).toHaveLength(1);
     expect(data.money_events[0].booking_action_id).toBe(`${plan.id}:${action.bookingId}`);
     const receipt = recoveryReceipts(data)[0];

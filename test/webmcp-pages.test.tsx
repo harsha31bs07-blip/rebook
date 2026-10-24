@@ -7,7 +7,7 @@ import { replan } from "../lib/solver/replan";
 
 // Follow the checkout suite's lightweight hook harness: no DOM/test-renderer dependency.
 const harness = vi.hoisted(() => ({ cursor: 0, slots: [] as unknown[], tools: [] as WebMcpTool[], workspace: undefined as WorkspaceResponse | undefined,
-  api: { interpret: vi.fn(), plan: vi.fn(), details: vi.fn(), approve: vi.fn() }, refresh: vi.fn() }));
+  api: { interpret: vi.fn(), plan: vi.fn(), details: vi.fn(), approve: vi.fn(), adjust: vi.fn() }, refresh: vi.fn() }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
   useRef: (initial: unknown) => harness.slots[harness.cursor++] ??= { current: initial },
@@ -102,7 +102,32 @@ describe("WebMCP page handlers and human payment boundary", () => {
     expect(harness.api.approve).not.toHaveBeenCalled();
     (find(tree, (element) => element.type === "plan-panel").props.onApprove as () => void)();
     for (let index = 0; index < 8; index++) await Promise.resolve();
-    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1");
+    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 1);
+  });
+
+  it("keeps the adjusted version through an older workspace poll and approves that version", async () => {
+    renderOwner(); await call("request_approval", { planId: "plan-1" });
+    const input = { sessionId: details.plan.sessionChanges[0].sessionId, start: "2026-11-10T14:00:00Z" };
+    const adjusted = { ...details.plan, version: 2, totals: { ...details.plan.totals, moved: 7 } };
+    harness.api.adjust.mockResolvedValue(adjusted);
+    const timeline = find(renderOwner(), (element) => element.type === "dynamic-view" && Boolean(element.props.plan));
+    await (timeline.props.onAdjust as (input: object) => Promise<void>)(input);
+    expect(harness.api.adjust).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", input, 1);
+    const tree = renderOwner();
+    expect(find(tree, (element) => element.type === "plan-panel").props.plan).toEqual(adjusted);
+    harness.api.approve.mockResolvedValue({ plan: { ...adjusted, status: "executed" }, results: [] });
+    (find(tree, (element) => element.type === "plan-panel").props.onApprove as () => void)();
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 2);
+  });
+
+  it("accepts a saved adjustment when its subsequent workspace refresh fails", async () => {
+    renderOwner(); await call("request_approval", { planId: "plan-1" });
+    harness.api.adjust.mockResolvedValue({ ...details.plan, version: 2 });
+    harness.refresh.mockRejectedValueOnce(new Error("Offline"));
+    const timeline = find(renderOwner(), (element) => element.type === "dynamic-view" && Boolean(element.props.plan));
+    await expect((timeline.props.onAdjust as (input: object) => Promise<void>)({ sessionId: "session-001", start: "2026-11-10T14:00:00Z" })).resolves.toBeUndefined();
+    expect(find(renderOwner(), (element) => element.props.role === "alert").props.children).toContain("Adjustment saved");
   });
 
   it("withholds mutating tools while busy and rejects overlapping preparation calls", async () => {

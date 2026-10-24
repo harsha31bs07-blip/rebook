@@ -63,7 +63,7 @@ export const StateSchema = z.object({
 export const RemedySchema = z.enum(["substitute", "move_room", "move_time", "cancel"]);
 export const SessionChangeSchema = z.object({
   sessionId: z.string(), remedy: RemedySchema, before: PlacementSchema,
-  after: PlacementSchema.optional(), reason: z.string(),
+  after: PlacementSchema.optional(), reason: z.string(), ownerAdjusted: z.boolean().optional(),
 }).refine((change) => (change.remedy === "cancel") === (change.after === undefined),
   "Only cancellation omits the replacement placement");
 export const BookingActionSchema = z.object({

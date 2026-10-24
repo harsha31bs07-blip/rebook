@@ -5,11 +5,12 @@ import { createCustomerLinks } from "../choices/service";
 import { getRepository, StoreError, withWorkspaceLock, type ExecutionResult, type Repository, type StoredPlan } from "../store";
 
 /** A durable REQUESTED event precedes every refund. Crash recovery uses the same PayPal request ID. */
-export async function executePlan(workspaceId: string, planId: string, repository: Repository = getRepository()): Promise<{ plan: StoredPlan; results: ExecutionResult[] }> {
+export async function executePlan(workspaceId: string, planId: string, repository: Repository = getRepository(), expectedVersion?: number): Promise<{ plan: StoredPlan; results: ExecutionResult[] }> {
   repository.requireReadyWorkspace(workspaceId);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let plan = repository.getPlan(workspaceId, planId);
     if (!plan) throw new StoreError(404, "Plan not found");
+    if (expectedVersion !== undefined && expectedVersion !== (plan.version ?? 1)) throw new StoreError(409, "This plan changed. Reload the preview before approving.", "stale_plan");
     if (plan.status === "executed") return { plan, results: plan.results };
     const workspace = repository.requireReadyWorkspace(workspaceId);
     if (plan.status !== "proposed" && (!["executing", "partially_failed"].includes(plan.status) || !plan.basis)) throw new StoreError(409, "Plan cannot be executed");

@@ -1,6 +1,8 @@
 import type { DependencyModelConfig, EventModelConfig, ResourceModelConfig, ResourceTimeRangeModelConfig, TimeSpanConfig } from "@bryntum/scheduler";
+import { activeConstraints } from "../solver/constraints";
+import { applyPlan } from "../solver/validate";
 import type { Plan, Session, State } from "../domain/types";
-import { addLocalDays, localParts, overlaps, zonedTimeToUtc } from "../domain/time";
+import { addLocalDays, localParts, zonedTimeToUtc } from "../domain/time";
 
 export type RowMode = "instructors" | "rooms";
 export const visibleWorkingTime = { fromHour: 7, toHour: 21 };
@@ -70,6 +72,23 @@ export function disruptionLabel(plan: Pick<Plan, "disruption">, state: State) {
   return { subject, window: formatDisruptionWindow(disruption.from, disruption.to, state.studio.timezone) };
 }
 
+/** Daily load includes proposed placements and excludes ghosts and cancellations. */
+export function resourceUtilisation(state: State, mode: RowMode, resourceId: string, plan?: Plan) {
+  const sessions = (plan ? applyPlan(state, plan) : state).sessions;
+  const startKey = weekBounds(state).startKey;
+  return Array.from({ length: 7 }, (_, day) => {
+    const dateKey = addLocalDays(startKey, day);
+    const booked = sessions.filter((item) => (mode === "instructors" ? item.instructorId : item.roomId) === resourceId &&
+      localParts(item.start, state.studio.timezone).dateKey === dateKey);
+    const weekday = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
+    const capacity = mode === "instructors" ? state.instructors.find((item) => item.id === resourceId)?.maxSessionsPerDay ?? 0
+      : (state.studio.openHours[weekday] ?? []).reduce((total, hours) => total +
+        (Date.parse(zonedTimeToUtc(dateKey, hours.close, state.studio.timezone)) - Date.parse(zonedTimeToUtc(dateKey, hours.open, state.studio.timezone))) / 3600000, 0);
+    const load = mode === "instructors" ? booked.length : booked.reduce((total, item) => total + (Date.parse(item.end) - Date.parse(item.start)) / 3600000, 0);
+    return { dateKey, label: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day], booked: load, capacity, unit: mode === "instructors" ? "classes" : "hours" };
+  });
+}
+
 export function mapSchedule(state: State, mode: RowMode, plan?: Plan, updatedPlan?: Plan) {
   const resources: ResourceModelConfig[] = (mode === "instructors" ? state.instructors : state.rooms).map(({ id, name }) => ({ id, name }));
   const events: EventModelConfig[] = [];
@@ -88,10 +107,10 @@ export function mapSchedule(state: State, mode: RowMode, plan?: Plan, updatedPla
       location: location ?? "", room: state.rooms.find((item) => item.id === session.roomId)?.name ?? "",
       occupancy: `${bookings.length}/${session.capacity} booked`,
       status: variant === "ghost" ? "Original" : variant === "replacement" ? "Recovery" : variant === "cancelled" ? "Cancelled" : "Scheduled",
-      badge: variant === "replacement" ? change?.remedy === "substitute" ? `Covered by ${instructor}` : "Moved" : variant === "updated" ? "Updated" : "",
+      badge: variant === "replacement" && change?.ownerAdjusted ? "Adjusted by you" : variant === "replacement" ? change?.remedy === "substitute" ? `Covered by ${instructor}` : "Moved" : variant === "updated" ? "Updated" : "",
     };
     events.push({ id, name: session.title, resourceId: mode === "instructors" ? session.instructorId : session.roomId,
-      startDate: session.start, endDate: session.end, cls: `class-${session.classType} ${variant}`, draggable: false, resizable: false,
+      startDate: session.start, endDate: session.end, cls: `class-${session.classType} ${variant}`, draggable: variant === "replacement", resizable: false,
     });
   }
   for (const session of state.sessions) {
@@ -100,22 +119,28 @@ export function mapSchedule(state: State, mode: RowMode, plan?: Plan, updatedPla
     else {
       addEvent({ ...session, ...change.before }, `${session.id}-original`, change.after ? "ghost" : "cancelled");
       if (change.after) {
-        addEvent({ ...session, ...change.after }, `${session.id}-new`, "replacement");
+        addEvent({ ...session, ...change.after, capacity: Math.min(session.capacity, state.rooms.find((room) => room.id === change.after!.roomId)?.capacity ?? session.capacity) }, `${session.id}-new`, "replacement");
         if (change.remedy === "move_time") dependencies.push({ id: `${session.id}-recovery`, from: `${session.id}-original`, to: `${session.id}-new`, type: 2 });
       }
     }
   }
-  if (plan) {
-    const disruption = plan.disruption;
-    const band = { id: "disruption", startDate: disruption.from, endDate: disruption.to, name: disruptionLabel(plan, state).subject, cls: "disruption-range" };
+  const constraints = [...activeConstraints(state), ...(plan ? [plan.disruption] : []),
+    ...state.instructors.flatMap((instructor) => (instructor.unavailability ?? []).map((window) => ({ ...window, kind: "instructor_unavailable" as const, instructorId: instructor.id })))];
+  const seen = new Set<string>();
+  for (const [index, disruption] of constraints.entries()) {
+    const key = [disruption.kind, disruption.kind === "instructor_unavailable" ? disruption.instructorId : disruption.kind === "room_unavailable" ? disruption.roomId : "studio", Date.parse(disruption.from), Date.parse(disruption.to)].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rangeId = index === 0 ? "disruption" : `constraint-${index}`;
+    const band = { id: rangeId, startDate: disruption.from, endDate: disruption.to, name: disruptionLabel({ disruption }, state).subject, cls: "disruption-range" };
     if (disruption.kind === "closure") timeRanges.push(band);
     else {
       const sameMode = disruption.kind === "instructor_unavailable" ? mode === "instructors" : mode === "rooms";
       const affectedIds = sameMode ? [disruption.kind === "instructor_unavailable" ? disruption.instructorId : disruption.roomId]
-        : [...new Set(state.sessions.filter((session) => overlaps(session.start, session.end, disruption.from, disruption.to) &&
-          (disruption.kind === "instructor_unavailable" ? session.instructorId === disruption.instructorId : session.roomId === disruption.roomId))
+        : [...new Set(state.sessions.filter((session) => (disruption.kind === "instructor_unavailable" ? session.instructorId === disruption.instructorId : session.roomId === disruption.roomId))
           .map((session) => mode === "instructors" ? session.instructorId : session.roomId))];
-      affectedIds.forEach((resourceId) => resourceTimeRanges.push({ ...band, id: `disruption-${resourceId}`, resourceId }));
+      if (!affectedIds.length && !sameMode) affectedIds.push(...resources.map((item) => String(item.id)));
+      affectedIds.forEach((resourceId) => resourceTimeRanges.push({ ...band, id: `${rangeId}-${resourceId}`, resourceId }));
     }
   }
   return { resources, events, dependencies, resourceTimeRanges, timeRanges, details };

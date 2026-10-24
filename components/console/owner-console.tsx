@@ -9,6 +9,11 @@ import type { Plan, State } from "@/lib/domain/types";
 import { useWorkspace } from "./use-workspace";
 import DisruptionPanel from "./disruption-panel";
 import PlanPanel from "./plan-panel";
+import { ScheduleBoundary, ScheduleFallback } from "./schedule-boundary";
+import MoveToPopover from "./move-to-popover";
+import { draftCustomerMessages } from "../../lib/ai/messages";
+import { formatMoney } from "../../lib/domain/time";
+import type { OwnerAdjustment } from "../../lib/solver/adjust";
 import MessagesDrawer from "./messages-drawer";
 import ConsoleHeader from "./console-header";
 import ExpiredDemo from "./expired-demo";
@@ -21,6 +26,7 @@ function ScheduleSkeleton() {
 }
 
 export default function OwnerConsole({ id }: { id: string }) {
+  const [moveSession, setMoveSession] = useState<string>();
   const [busy, setBusy] = useState("");
   const { workspace, error: loadError, refresh, expired, bookingNotice } = useWorkspace(id, busy === "approve" || busy === "reset");
   const [text, setText] = useState("");
@@ -54,7 +60,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   }
   const state = workspace?.state;
   const livePlan = workspace?.plans.find((item) => item.id === details?.plan.id);
-  const plan = details && (livePlan ?? details.plan);
+  const plan = details && (livePlan && (livePlan.version ?? 1) >= (details.plan.version ?? 1) ? livePlan : details.plan);
   const preview = details && plan?.status === "proposed";
   const timelineState = preview && basis ? basis : state;
   const results = plan?.results ?? [];
@@ -62,7 +68,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const ready = workspace?.status === "ready";
   const percent = workspace && workspace.progress.total ? Math.round(workspace.progress.done / workspace.progress.total * 100) : 0;
 
-  function clearPlan() { setApprovalRequested(""); setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
+  function clearPlan() { setMoveSession(undefined); setApprovalRequested(""); setDetails(undefined); setBasis(undefined); setInterpretation(undefined); setError(""); }
   async function interpretText(value: string, signal?: AbortSignal) {
     setText(value); setApprovalRequested("");
     const parsed = await api.interpret(id, value, signal);
@@ -96,10 +102,27 @@ export default function OwnerConsole({ id }: { id: string }) {
       return { ...planSummary(next.plan, state.studio.currency), approval: "awaiting_owner_click", message: "An assistant prepared this plan. Review and approve." };
     }, true);
   }
+  async function adjust(input: OwnerAdjustment | { undo: true }) {
+    if (!plan || !preview) throw new Error("Only a recovery preview can be adjusted.");
+    await run("adjust", async () => {
+      const adjusted = await api.adjust(id, plan.id, input, plan.version ?? 1);
+      const totals = adjusted.totals;
+      const currentState = basis ?? state!;
+      setDetails((previous) => previous ? { ...previous, plan: adjusted,
+        messages: draftCustomerMessages(adjusted, currentState),
+        explanation: { headline: "Your adjusted recovery plan is ready", source: "template", bullets: [
+          `${totals.kept} bookings stay at their original time; ${totals.moved} move to a new time.`,
+          `${totals.refunded} refunds total ${formatMoney(totals.refundAmount, currentState.studio.currency)}; ${formatMoney(totals.revenueKept, currentState.studio.currency)} in revenue stays with your studio.`,
+        ] },
+      } : previous);
+      // The adjustment is already saved. A polling failure must not reject an accepted drop.
+      await refresh().catch(() => setError("Adjustment saved. The workspace refresh failed; updates will retry shortly."));
+    }, true);
+  }
   async function approve() {
     if (!plan) return;
     await run("approve", async () => {
-      const outcome = await api.approve(id, plan.id);
+      const outcome = await api.approve(id, plan.id, plan.version ?? 1);
       setUpdatedPlan(outcome.plan);
       setDetails((previous) => previous ? { ...previous, plan: outcome.plan } : previous); await refresh();
       const completed = outcome.results.filter((item) => item.status === "COMPLETED").length;
@@ -126,17 +149,18 @@ export default function OwnerConsole({ id }: { id: string }) {
       <section className="timeline-panel" aria-label="Studio schedule">
         <div className="timeline-heading"><div><p className="eyebrow">Your studio, in sync</p><h1>The week ahead</h1></div><span className={`schedule-state ${preview ? "preview-state" : ""}`}>{preview ? "Preview · awaiting approval" : ready ? "Schedule up to date" : "Getting ready"}</span></div>
         <div className="schedule-toolbar"><div className="row-controls"><span className="muted">Rows:</span><div className="segmented" aria-label="Schedule rows"><button aria-pressed={mode === "instructors"} onClick={() => setMode("instructors")}>Instructors</button><button aria-pressed={mode === "rooms"} onClick={() => setMode("rooms")}>Rooms</button></div></div><div className="zoom-controls">{zoom === "day" && <><button aria-label="Previous day" disabled={day === 0} onClick={() => setDay(day - 1)}>‹</button><span>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]}</span><button aria-label="Next day" disabled={day === 6} onClick={() => setDay(day + 1)}>›</button></>}<div className="segmented" aria-label="Schedule zoom"><button aria-pressed={zoom === "day"} onClick={() => setZoom("day")}>Day</button><button aria-pressed={zoom === "week"} onClick={() => setZoom("week")}>Week</button></div></div></div>
-        {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Arrows connect time moves</span></div>}
+        {preview && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>Drag a recovery block, or select it and press Enter to move</span></div>}
         <div className="schedule-canvas">
-          {timelineState && ready ? <Schedule key={`${id}-${mode}-${zoom}-${day}`} state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={bookingNotice?.sessionId} /> : <ScheduleSkeleton />}
+          {timelineState && ready ? <ScheduleBoundary key={`${id}-${mode}-${zoom}-${day}`} fallback={<ScheduleFallback state={timelineState} plan={preview ? plan : undefined} onMove={preview && !busy ? setMoveSession : undefined} />}><Schedule state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={bookingNotice?.sessionId} busy={Boolean(busy)} onAdjust={preview ? adjust : undefined} onMove={setMoveSession} /></ScheduleBoundary> : <ScheduleSkeleton />}
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2>{workspace?.status === "failed" ? "We couldn’t prepare this demo" : "Preparing your studio"}</h2><p className="muted">{workspace?.status === "failed" ? workspace.preparationError || "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
+          {preview && plan && timelineState && moveSession && <MoveToPopover key={moveSession} state={timelineState} plan={plan} sessionId={moveSession} busy={Boolean(busy)} onAdjust={adjust} onClose={() => setMoveSession(undefined)} />}
         </div>
         <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · 7am–9pm · Scroll to explore</span></footer>
       </section>
       <aside className="disruption-panel" aria-label="Recovery assistant" aria-busy={Boolean(busy)}>
         {ready && state ? <>
           {(error || loadError) && <p className="error error-box" role="alert">{error || loadError}</p>}
-          {details && plan ? <><PlanPanel details={details} plan={plan} state={basis ?? state} busy={Boolean(busy)} results={results} approvalRequested={approvalRequested === plan.id} onApprove={() => void approve()} onDiscard={clearPlan} onMessages={() => setMessagesOpen(true)} />{plan.status !== "proposed" && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
+          {details && plan ? <><PlanPanel details={details} plan={plan} state={basis ?? state} busy={Boolean(busy)} results={results} approvalRequested={approvalRequested === plan.id} onUndo={plan.lastAdjustment ? () => void adjust({ undo: true }).catch(() => {}) : undefined} onMove={setMoveSession} onApprove={() => void approve()} onDiscard={clearPlan} onMessages={() => setMessagesOpen(true)} />{plan.status !== "proposed" && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
             : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={(value) => run("interpret", () => interpretText(value))} onReport={reportDisruption} onEdit={() => setInterpretation(undefined)} onPlan={createPlan} />}
           {history.length > 0 && <section className="history"><h3>History <span>{history.length}</span></h3>{history.map((item) => <button key={item.id} disabled={Boolean(busy)} onClick={() => void run("history", async () => { const next = await api.details(id, item.id); setDetails(next); setBasis({ ...state, sessions: next.sessions }); })}><strong>{item.totals.sessionsAffected} sessions · {item.totals.refunded} refunds</strong><span>{item.status.replaceAll("_", " ")} · {new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</span></button>)}</section>}
           {(workspace.customerChoices?.links.length ?? 0) > 0 && <section className="customer-replies" aria-labelledby="replies-title"><div className="replies-heading"><h3 id="replies-title">Replies</h3><span className="muted">Updates live</span></div><ul aria-live="polite">{workspace.customerChoices?.replies.length ? workspace.customerChoices.replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><time dateTime={reply.at}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(reply.at))}</time></li>) : <li className="muted">Waiting for customers. Open a private link from Customer messages to try a reply.</li>}</ul></section>}

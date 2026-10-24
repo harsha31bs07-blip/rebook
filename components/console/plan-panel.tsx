@@ -20,9 +20,9 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, results, approvalRequested, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, results, approvalRequested, onUndo, onMove, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
-  approvalRequested?: boolean; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
+  approvalRequested?: boolean; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
   const money = (value: string) => formatMoney(value, state.studio.currency);
@@ -33,12 +33,15 @@ export default function PlanPanel({ details, plan, state, busy, results, approva
     <h2>{plan.status === "executed" ? results.some((result) => ["PENDING", "REQUESTED"].includes(result.status)) ? "Recovery applied · refunds pending" : "Recovery complete" : details.explanation.headline}</h2>
     {plan.status === "executed" && <p className="muted plan-context">{totals.kept + totals.moved} bookings saved · {money(totals.revenueKept)} kept · {totals.refunded} refund{totals.refunded === 1 ? "" : "s"}{results.some((result) => result.status === "PENDING") ? " (some pending)" : " processed"}.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
-    <div className="stats">
+    <div className="stats totals-updated" key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
       <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
       <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
       <div><span>{proposed ? "Refunds planned" : "Refunds completed"}</span><strong className="danger-text">{proposed ? totals.refunded : results.filter((result) => result.status === "COMPLETED").length}</strong><small>{proposed ? "bookings" : `${results.filter((result) => ["PENDING", "REQUESTED"].includes(result.status)).length} pending · ${results.filter((result) => result.status === "SIMULATED").length} simulated`}</small></div>
       <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
     </div>
+    {proposed && <div className="recovery-adjustments"><p className="muted">Adjust a recovery before approving:</p>{plan.sessionChanges.filter((change) => change.after).map((change) => <button key={change.sessionId} disabled={busy} onClick={() => onMove?.(change.sessionId)}>Move {state.sessions.find((item) => item.id === change.sessionId)?.title ?? "class"} to...</button>)}
+      {onUndo && <button disabled={busy} onClick={onUndo}>Undo last adjustment</button>}
+    </div>}
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
     {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={onApprove}>{busy ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}

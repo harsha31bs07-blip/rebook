@@ -11,7 +11,7 @@ import { activateConstraint, activeConstraints, preserveConstraints } from "../s
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
   id: string; workspaceId: string; status: "proposed" | "executing" | "executed" | "partially_failed";
-  createdAt: string; results: ExecutionResult[]; basis?: State;
+  createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
 };
 export type Workspace = {
   id: string; state: State; createdAt: string; updatedAt: string;
@@ -217,7 +217,7 @@ export class Repository {
   }
   createPlan(workspaceId: string, plan: Plan): StoredPlan {
     this.requireWorkspace(workspaceId);
-    const stored: StoredPlan = { ...PlanSchema.parse(plan), id: randomUUID(), workspaceId, status: "proposed", createdAt: new Date().toISOString(), results: [] };
+    const stored: StoredPlan = { ...PlanSchema.parse(plan), id: randomUUID(), workspaceId, status: "proposed", version: 1, createdAt: new Date().toISOString(), results: [] };
     this.db.prepare("INSERT INTO plans VALUES (?, ?, ?)").run(stored.id, workspaceId, JSON.stringify(stored));
     // Only disposable proposals are evicted. Execution and payment history remains intact.
     this.db.prepare(`DELETE FROM plans WHERE id IN (

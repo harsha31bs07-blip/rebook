@@ -35,8 +35,8 @@ refunds the rest through PayPal.
 - **PayPal**: Orders v2 (server-side capture for seeded bookings), Payments v2 refunds, Webhooks
   (signature verification), Transaction Search, through the APIMatic-generated
   [PayPal Server SDK](https://www.npmjs.com/package/@paypal/paypal-server-sdk).
-- **Bryntum Scheduler** (React): read-only week timeline, instructor/room views, resource time ranges,
-  dependencies for moves, custom event rendering, recovery preview.
+- **Bryntum Scheduler** (React): owner-adjustable recovery previews, instructor/room views, constraint ranges,
+  daily utilisation, keyboard moves and a trial fallback. See [Bryntum features used](docs/bryntum.md#bryntum-features-used).
 - **AG Studio** (React): data model with relationships, custom widgets with forms, theming, saved report state,
   Agent Framework with a custom agent and custom tools.
 - **Gemini** (free tier) for language understanding and the analyst, with model fallback and a rules fallback.

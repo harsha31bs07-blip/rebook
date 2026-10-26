@@ -107,9 +107,14 @@ describe("workspace API", () => {
     const today = await (await interpret(post({ text: "Maya has the flu today" }), context(id))).json();
     expect(today.disruption.from).toBe("2026-12-03T05:00:00.000Z");
     expect(today.notes).toContain("No classes are scheduled then");
+    const timer = vi.spyOn(performance, "now").mockReturnValueOnce(100).mockReturnValueOnce(2900);
     const response = await propose(post({ disruption }), context(id));
+    timer.mockRestore();
     expect(response.status).toBe(200);
     const plan = await response.json();
+    expect(plan.planningDurationMs).toBe(2800);
+    const persisted = await (await planDetails(new Request("http://localhost"), { params: Promise.resolve({ id, planId: plan.id }) })).json();
+    expect(persisted.plan.planningDurationMs).toBe(2800);
     const horizonEnd = zonedTimeToUtc(addLocalDays(localParts(weekStart, timezone).dateKey, 7), "00:00", timezone);
     const expected = replan(workspace.state, disruption, { now, horizonEnd });
     expect(plan).toMatchObject(expected);

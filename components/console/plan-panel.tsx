@@ -36,6 +36,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     <h2>{plan.status === "executed" ? results.some((result) => ["PENDING", "REQUESTED"].includes(result.status)) ? "Recovery applied · refunds pending" : "Recovery complete" : details.explanation.headline}</h2>
     {plan.status === "executed" && <p className="muted plan-context">{totals.kept + totals.moved} bookings saved · {money(totals.revenueKept)} kept · {totals.refunded} refund{totals.refunded === 1 ? "" : "s"}{results.some((result) => result.status === "PENDING") ? " (some pending)" : " processed"}.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
+    <p className="muted plan-context"><strong>Owner time saved</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages and {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
     <div className="stats totals-updated" key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
       <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
       <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>

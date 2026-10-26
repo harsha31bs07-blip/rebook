@@ -24,9 +24,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (Date.parse(disruption.from) < Date.parse(weekStart) || Date.parse(disruption.to) > Date.parse(horizonEnd)) {
         throw new StoreError(400, "Choose a disruption within this studio week.");
       }
+      const started = performance.now();
       const plan = replan(state, disruption, { now, horizonEnd });
       const validation = validate(state, plan);
       if (!validation.ok) throw new StoreError(409, "A valid recovery plan could not be generated");
+      plan.planningDurationMs = performance.now() - started;
       return repository.createPlan(id, plan);
     });
   });

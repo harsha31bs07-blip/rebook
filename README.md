@@ -13,12 +13,15 @@ refunds the rest through PayPal.
 ## Try it in 60 seconds
 
 1. Open the live demo (link coming soon) and click **Open the live demo**. You get your own studio with next
-   week's classes, already paid for through the PayPal sandbox.
+   week's 42 classes and 120 members. The timetable covers weekday mornings, lunch and evenings, plus weekend
+   mornings; members attend mostly 1-3 times a week, with a few regulars at 4-5 and classes 50-85% full.
 2. In **What happened?**, pick *"Maya has the flu and can't teach Monday"* and click **Understand disruption**.
 3. Click **Plan recovery**. The schedule shows the plan: Monday's yoga is covered by Alex, dance and barre move to
-   Tuesday at the same time. Preferences and existing bookings determine who can move: 10 bookings stay, 6 move,
-   and 16 need refunds, leaving $370 in revenue kept and $364 in refunds.
-4. Click **Approve and refund**. Sixteen refunds go out through PayPal; each receipt shows its PayPal refund id.
+   Tuesday at the same time. Preferences and existing bookings determine who can move: 9 bookings stay, 16 move,
+   and 6 need refunds, leaving $577 in revenue kept and $135 in refunds (81% of bookings saved).
+   Refunds reflect refund-only members, loyalty to Maya, an existing class clash, and limited availability.
+   **Owner time saved** shows measured planning time and the 31 contacts and 6 manual refunds replaced.
+4. Click **Approve and refund**. Six refunds go out through PayPal; each receipt shows its PayPal refund id.
 5. Open **Dashboard** and ask the Recovery analyst *"What did Monday's disruption cost us?"*.
 
 ## What happens under the hood
@@ -63,7 +66,8 @@ Set `DEMO_REAL_CAPTURES=0` to run without calling PayPal (all payments are simul
   restart at any time; demos then end and you can start a fresh one in one click. PayPal keeps every sandbox
   transaction regardless.
 - Only bookings in the demo's disruption scenarios are paid with real sandbox captures; the rest of the week is
-  simulated so a new demo is ready in seconds. Simulated payments are labelled everywhere.
+  simulated so a new demo is ready in seconds. The default seed needs 38 real captures (31 Monday bookings and
+  7 Wednesday flood bookings), despite its full timetable. Simulated payments are labelled everywhere.
 - Bryntum and AG Studio run in trial mode, so their trial notices or watermarks may appear.
 
 ## Licence

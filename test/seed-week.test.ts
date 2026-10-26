@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { demoDisruption, demoDisruptionFor, floodDisruption, floodDisruptionFor, nextWeekStart, seedStudio } from "../lib/seed/seed";
-import { addLocalDays, localParts, zonedTimeToUtc } from "../lib/domain/time";
+import { addLocalDays, localParts, overlaps, toCents, zonedTimeToUtc } from "../lib/domain/time";
+import type { State } from "../lib/domain/types";
 import { replan } from "../lib/solver/replan";
-import { validate } from "../lib/solver/validate";
+import { applyPlan, validate } from "../lib/solver/validate";
+import { realCaptureBookingIds } from "../lib/demo/createWorkspace";
 
 const tz = "America/New_York";
+const heroTotals = { sessionsAffected: 3, kept: 9, moved: 16, refunded: 6, revenueKept: "577.00", refundAmount: "135.00" };
+function expectNoCustomerOverlaps(state: State) {
+  for (const customer of state.customers) {
+    const sessions = state.bookings.filter((booking) => booking.customerId === customer.id && ["confirmed", "moved"].includes(booking.status))
+      .map((booking) => state.sessions.find((session) => session.id === booking.sessionId)!);
+    sessions.forEach((session, index) => sessions.slice(index + 1).forEach((other) => {
+      expect(overlaps(session.start, session.end, other.start, other.end), `${customer.id}: ${session.id}/${other.id}`).toBe(false);
+    }));
+  }
+}
 describe("seeded demo weeks", () => {
   it.each([
     ["2026-10-19", "2026-10-26"], ["2026-10-20", "2026-10-26"],
@@ -24,22 +36,19 @@ describe("seeded demo weeks", () => {
     const week = "2026-11-09T05:00:00Z";
     expect(demoDisruptionFor(week, tz)).toEqual(demoDisruption);
     expect(floodDisruptionFor(week, tz)).toEqual(floodDisruption);
-    expect(replan(seedStudio(), demoDisruption).totals).toEqual({ sessionsAffected: 3, kept: 10, moved: 6, refunded: 16, revenueKept: "370.00", refundAmount: "364.00" });
+    expect(replan(seedStudio(), demoDisruption).totals).toEqual(heroTotals);
   });
-  it.each(["2026-12-07T05:00:00Z", "2026-12-14T05:00:00Z"])("keeps the December hero scenario viable for %s", (week) => {
-    const state = seedStudio(42, week);
-    const horizonEnd = zonedTimeToUtc(addLocalDays(localParts(week, tz).dateKey, 7), "00:00", tz);
-    const plan = replan(state, demoDisruptionFor(week, tz), { now: "2026-12-01T15:00:00Z", horizonEnd });
-    expect(plan.totals.sessionsAffected).toBe(3);
-    expect(new Set(plan.bookingActions.map(({ action }) => action))).toEqual(new Set(["keep", "move", "refund"]));
-    expect(plan.totals.refunded).toBe(16);
-    expect(validate(state, plan).ok).toBe(true);
-  });
-  it.each(["2026-10-26T04:00:00Z", "2026-11-09T05:00:00Z"])("recovers the hero on the next local day inside %s", (week) => {
+  it.each([
+    nextWeekStart("2026-10-26T15:00:00Z", tz),
+    nextWeekStart(new Date().toISOString(), tz),
+    "2026-10-26T04:00:00Z", "2026-11-09T05:00:00Z",
+    "2026-12-07T05:00:00Z", "2026-12-14T05:00:00Z",
+  ])("recovers a strong, honest hero within %s", (week) => {
     const state = seedStudio(42, week);
     const startKey = localParts(week, tz).dateKey;
     const horizonEnd = zonedTimeToUtc(addLocalDays(startKey, 7), "00:00", tz);
-    const plan = replan(state, demoDisruptionFor(week, tz), { now: "2026-10-23T15:00:00Z", horizonEnd });
+    const options = { now: zonedTimeToUtc(addLocalDays(startKey, -1), "12:00", tz), horizonEnd };
+    const plan = replan(state, demoDisruptionFor(week, tz), options);
     for (const change of plan.sessionChanges) {
       expect(Date.parse(change.after!.start)).toBeGreaterThanOrEqual(Date.parse(week));
       expect(Date.parse(change.after!.end)).toBeLessThanOrEqual(Date.parse(horizonEnd));
@@ -50,10 +59,58 @@ describe("seeded demo weeks", () => {
       }
     }
     expect(plan.sessionChanges[0]).toMatchObject({ remedy: "substitute", after: { instructorId: "instructor-02", start: state.sessions[0].start } });
-    expect(plan.totals).toEqual({ sessionsAffected: 3, kept: 10, moved: 6, refunded: 16, revenueKept: "370.00", refundAmount: "364.00" });
+    expect(plan.totals).toEqual(heroTotals);
+    expect(new Set(plan.sessionChanges.map(({ remedy }) => remedy))).toEqual(new Set(["substitute", "move_time"]));
     expect(new Set(plan.bookingActions.map(({ action }) => action))).toEqual(new Set(["keep", "move", "refund"]));
-    expect(plan.totals.refunded).toBe(16);
-    console.info(`hero ${startKey}`, JSON.stringify(plan.totals));
-    expect(validate(state, plan).ok).toBe(true);
+    expect((plan.totals.kept + plan.totals.moved) / plan.bookingActions.length).toBeGreaterThanOrEqual(0.75);
+    expect(toCents(plan.totals.revenueKept)).toBeGreaterThanOrEqual(3 * toCents(plan.totals.refundAmount));
+    const refunds = plan.bookingActions.filter(({ action }) => action === "refund");
+    expect(new Set(refunds.map(({ reason }) => reason))).toEqual(new Set([
+      "Customer requests a refund after a disruption.",
+      "Replacement instructor is outside the customer's preferences.",
+      "Recovery would overlap the customer's other class; refund the booking.",
+      "New time does not fit the customer's availability.",
+    ]));
+    for (const refund of refunds) {
+      const customer = state.customers.find(({ id }) => id === refund.customerId)!;
+      if (refund.reason.includes("requests a refund")) expect(customer.prefs.refundOnly).toBe(true);
+      if (refund.reason.includes("instructor")) {
+        expect(customer.prefs.acceptsSubstitute).toBe(false);
+        expect(customer.prefs.preferredInstructorIds).toEqual(["instructor-01"]);
+      }
+    }
+    const captures = realCaptureBookingIds(state).size;
+    console.info(`hero ${startKey}`, JSON.stringify({ ...plan.totals,
+      classes: state.sessions.length, members: state.customers.length, captures }));
+    expect(state.sessions).toHaveLength(42);
+    expect(state.customers).toHaveLength(120);
+    expect(captures).toBe(38);
+    expect(captures).toBeLessThanOrEqual(45);
+    expect(validate(state, plan)).toEqual({ ok: true, errors: [] });
+    expectNoCustomerOverlaps(state);
+    expectNoCustomerOverlaps(applyPlan(state, plan));
+    const attendance = state.customers.map(({ id }) => state.bookings.filter((booking) => booking.customerId === id).length);
+    expect(attendance.every((count) => count >= 1 && count <= 5)).toBe(true);
+    expect(attendance.filter((count) => count <= 3).length).toBeGreaterThanOrEqual(state.customers.length * 0.9);
+    expect(attendance.filter((count) => count >= 4).length).toBeGreaterThan(0);
+    console.info("weekly attendance", attendance.reduce<Record<number, number>>((counts, visits) => ({ ...counts, [visits]: (counts[visits] ?? 0) + 1 }), {}));
+    for (const session of state.sessions) {
+      const occupancy = state.bookings.filter((booking) => booking.sessionId === session.id).length / session.capacity;
+      expect(occupancy, session.id).toBeGreaterThanOrEqual(0.5);
+      expect(occupancy).toBeLessThanOrEqual(0.85);
+    }
+    const flood = replan(state, floodDisruptionFor(week, tz), options);
+    expect(flood.totals.sessionsAffected).toBeGreaterThanOrEqual(1);
+    expect(flood.sessionChanges.some(({ remedy }) => remedy === "move_room")).toBe(true);
+    const saturday = addLocalDays(startKey, 5);
+    const closure = replan(state, { kind: "closure", from: zonedTimeToUtc(saturday, "00:00", tz), to: zonedTimeToUtc(addLocalDays(saturday, 1), "00:00", tz) }, options);
+    expect(closure.totals.sessionsAffected).toBe(4);
+    expect(closure.sessionChanges.some(({ remedy }) => remedy === "move_time")).toBe(true);
+    expect(closure.totals.moved).toBeGreaterThan(0);
+    console.info("flood / closure", JSON.stringify({ flood: flood.totals, closure: closure.totals }));
+    for (const other of [flood, closure]) {
+      expect(validate(state, other)).toEqual({ ok: true, errors: [] });
+      expectNoCustomerOverlaps(applyPlan(state, other));
+    }
   });
 });

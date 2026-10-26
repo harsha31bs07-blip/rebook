@@ -10,6 +10,7 @@ import { replan } from "../lib/solver/replan";
 import { localParts } from "../lib/domain/time";
 import { recoveryDropStart, scheduleRange } from "../lib/client/scheduler-mapping";
 import { adjustmentFixture, disruption } from "./adjust-fixture";
+import { demoDisruption, seedStudio } from "../lib/seed/seed";
 
 const harness = vi.hoisted(() => ({ eventId: "s1-new", target: undefined as Date | undefined,
   effects: [] as (() => unknown)[], scrollToDate: vi.fn(), zoomToLevel: vi.fn(), scrollEventIntoView: vi.fn(),
@@ -214,4 +215,18 @@ it("compares an owner's adjustment with the previous version's totals beside Und
   expect(noDifference).toContain("Your change: no change in refunds, $0.00 revenue kept");
   const improvement = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, totals: publicPlan.lastAdjustmentTotals, lastAdjustmentTotals: publicPlan.totals } as PublicPlan }));
   expect(improvement).toContain("8 fewer refunds, +$176.00 revenue kept");
+});
+
+it("derives owner work estimates from the current plan and displays API planning time only when measured", () => {
+  const state = seedStudio();
+  const publicPlan: PublicPlan = { ...replan(state, demoDisruption), id: "plan", workspaceId: "workspace", status: "proposed", createdAt: plan.now, results: [], planningDurationMs: 2800 };
+  const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Recovery preview", bullets: [], source: "template" } };
+  const props = { details, plan: publicPlan, state, busy: false, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
+  const html = renderToStaticMarkup(createElement(PlanPanel, props));
+  expect(html).toContain("Owner time saved");
+  expect(html).toContain("Prepared in 2.8 s · replaces about 31 calls or messages and 6 manual refunds");
+  const changed = { ...publicPlan, planningDurationMs: undefined, bookingActions: publicPlan.bookingActions.slice(0, 2), totals: { ...publicPlan.totals, refunded: 1 } };
+  const adjusted = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: changed }));
+  expect(adjusted).not.toContain("Prepared in");
+  expect(adjusted).toContain("replaces about 2 calls or messages and 1 manual refund.");
 });

@@ -81,6 +81,8 @@ export const PlanSchema = z.object({
   now: IsoSchema,
   sessionChanges: z.array(SessionChangeSchema), bookingActions: z.array(BookingActionSchema),
   totals: TotalsSchema, warnings: z.array(z.string()),
+  // API-measured solver and validation time; absent on older or direct solver plans.
+  planningDurationMs: z.number().finite().nonnegative().optional(),
 });
 export const WeightsSchema = z.object({
   substitute: z.number().finite().nonnegative(), moveRoom: z.number().finite().nonnegative(),

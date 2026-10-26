@@ -239,16 +239,18 @@ describe("seed and determinism", () => {
   it("seeds a realistic local week with valid sessions, preferences and payments", () => {
     const state = seedStudio();
     expect(StateSchema.safeParse(state).success).toBe(true);
-    expect([state.sessions.length, state.customers.length, state.instructors.length, state.rooms.length]).toEqual([48, 40, 6, 4]);
+    expect([state.sessions.length, state.customers.length, state.instructors.length, state.rooms.length]).toEqual([42, 120, 6, 4]);
     expect(state.customers.filter((customer) => !customer.prefs.acceptsSubstitute)).toHaveLength(6);
     expect(state.customers.filter((customer) => customer.prefs.refundOnly)).toHaveLength(3);
     expect(state.customers.every((customer) => customer.prefs.windows.length >= 2 && customer.prefs.windows.length <= 4)).toBe(true);
     const tz = state.studio.timezone;
     expect(localParts(state.sessions[0].start, tz)).toEqual({ weekday: 1, minutesOfDay: 420, dateKey: "2026-11-09" });
+    expect([1, 2, 3, 4, 5, 6, 0].map((weekday) =>
+      state.sessions.filter((session) => localParts(session.start, tz).weekday === weekday).length)).toEqual([7, 7, 7, 7, 7, 4, 3]);
     for (const session of state.sessions) {
       const bookings = state.bookings.filter((booking) => booking.sessionId === session.id);
-      expect(bookings.length).toBeGreaterThanOrEqual(4);
-      expect(bookings.length).toBeLessThanOrEqual(Math.min(12, session.capacity));
+      expect(bookings.length / session.capacity).toBeGreaterThanOrEqual(0.5);
+      expect(bookings.length / session.capacity).toBeLessThanOrEqual(0.85);
       expect(["18.00", "22.00", "25.00"]).toContain(session.price);
       const local = localParts(session.start, tz);
       if (local.weekday === 0 || local.weekday === 6) expect(local.minutesOfDay).toBeLessThan(12 * 60);
@@ -272,7 +274,7 @@ describe("seed and determinism", () => {
     expect(new Set(plan.sessionChanges.map((change) => change.remedy))).toEqual(new Set(["substitute", "move_time"]));
     expect(new Set(plan.bookingActions.map((action) => action.action))).toEqual(new Set(["keep", "move", "refund"]));
     expect(plan.totals.sessionsAffected).toBe(3);
-    expect(plan.totals).toEqual({ sessionsAffected: 3, kept: 10, moved: 6, refunded: 16, refundAmount: "364.00", revenueKept: "370.00" });
+    expect(plan.totals).toEqual({ sessionsAffected: 3, kept: 9, moved: 16, refunded: 6, refundAmount: "135.00", revenueKept: "577.00" });
     const refunds = plan.bookingActions.filter((action) => action.action === "refund");
     expect(refunds.length).toBeGreaterThan(0);
     expect(refunds.every((action) => /requests a refund|instructor is outside|New time does not fit|overlap/.test(action.reason))).toBe(true);

@@ -110,7 +110,7 @@ describe("scheduler presentation mapping", () => {
   it.each(["2026-10-26T04:00:00Z", "2026-11-09T05:00:00Z"])("includes every class in visible working time for %s, including 7am", (week) => {
     const state = seedStudio(42, week);
     const mapped = mapSchedule(state, "instructors");
-    expect(state.sessions.filter((session) => localParts(session.start, state.studio.timezone).minutesOfDay === 420)).toHaveLength(7);
+    expect(state.sessions.filter((session) => localParts(session.start, state.studio.timezone).minutesOfDay === 420)).toHaveLength(6);
     for (const event of mapped.events) {
       const start = localParts(String(event.startDate), state.studio.timezone);
       const end = localParts(String(event.endDate), state.studio.timezone);

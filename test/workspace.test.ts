@@ -225,7 +225,7 @@ describe("workspace seeding", () => {
     const realSessions = [demoDisruption, floodDisruption].flatMap((disruption) => affectedSessions(state, disruption, now));
     const realIds = new Set(realSessions.map((session) => session.id));
     const realBookings = workspace.state.bookings.filter((booking) => realIds.has(booking.sessionId));
-    expect(realBookings.length).toBe(36);
+    expect(realBookings.length).toBe(38);
     expect(realCaptureBookingIds(state)).toEqual(new Set(realBookings.map((booking) => booking.id)));
     expect(affectedSessions(state, floodDisruption, now).every((session) => realIds.has(session.id))).toBe(true);
     expect(realBookings.every((booking) => booking.payment?.simulated === false && booking.payment.captureId.startsWith("capture-"))).toBe(true);
@@ -282,7 +282,7 @@ describe("workspace seeding", () => {
     expect(pooled.status).toBe("ready");
     expect(repository.getWorkspace(pooled.id)).toBeUndefined();
     expect(() => repository.requireWorkspace(pooled.id)).toThrow("demo has ended");
-    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"))).toHaveLength(36);
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"))).toHaveLength(38);
     const later = new Date(Date.parse(pooled.createdAt) + 1000);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(later);
@@ -301,7 +301,7 @@ describe("workspace seeding", () => {
     expect(refill.id).not.toBe(pooled.id);
     expect(refill.id).not.toBe(claimed.id);
     expect(repository.getWorkspace(refill.id)).toBeUndefined();
-    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"))).toHaveLength(72);
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/orders"))).toHaveLength(76);
     vi.useRealTimers();
   });
   it("resets with fresh capture keys and booking IDs while retaining the money ledger", async () => {

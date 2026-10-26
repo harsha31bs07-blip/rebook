@@ -2,7 +2,7 @@ import { z } from "zod";
 import { api, jsonBody, PlanIdSchema, WorkspaceIdSchema } from "../../../../../../../lib/api/http";
 import { IsoSchema } from "../../../../../../../lib/domain/schemas";
 import { adjustPlan } from "../../../../../../../lib/solver/adjust";
-import { validate } from "../../../../../../../lib/solver/validate";
+import { planTimeErrors, validate } from "../../../../../../../lib/solver/validate";
 import { getRepository, StoreError, withWorkspaceLock } from "../../../../../../../lib/store";
 
 export const runtime = "nodejs";
@@ -32,6 +32,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const next = adjustPlan(state, stored, "undo" in input
           ? { sessionId: previous!.sessionId, ...previous!.after! } : input);
         if ("undo" in input) next.sessionChanges = next.sessionChanges.map((item) => item.sessionId === previous!.sessionId ? previous! : item);
+        if (planTimeErrors(next, Date.now()).length) throw new Error("This recovery preview has expired. Plan a fresh recovery before adjusting.");
         const validation = validate(state, next);
         if (!validation.ok) throw new Error(validation.errors.join("; "));
         const saved = { ...stored, ...next, version: (stored.version ?? 1) + 1,

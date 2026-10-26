@@ -136,13 +136,14 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         const target = alternatives(link, repository).find((item) => item.id === input.sessionId);
         if (!target) throw new StoreError(409, "This class is full or no longer eligible. Please choose another class.");
         amount = target.difference;
-        if (toCents(amount) > 0) requestId = `choice:${booking.id}:difference:${link.id}`;
+        if (toCents(amount) > 0) requestId = `choice:${link.id}`;
         booking.sessionId = target.id; booking.amount = target.price; booking.status = "moved";
         link = { ...link, expiresAt: Math.min(link.expiresAt, Date.parse(target.start)) };
       } else if (input.action === "refund") {
         amount = fromCents(remainingCaptured(link, repository));
         if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available to refund.");
-        requestId = `choice:${booking.id}`;
+        // Seed booking IDs repeat across workspaces; the durable link identifies this operation.
+        requestId = `choice:${link.id}`;
         booking.status = "refund_pending";
       }
       link = { ...link, reply: { action: input.action, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
@@ -158,7 +159,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
   const { state } = repository.requireWorkspace(workspaceId);
   const links = repository.listCustomerLinks(workspaceId);
   return { links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
-    path: `/w/${workspaceId}/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
+    path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
     replies: links.filter((link) => link.reply).map((link) => {
       const reply = link.reply!;
       const booking = state.bookings.find((item) => item.id === link.bookingId);

@@ -16,8 +16,9 @@ refunds the rest through PayPal.
    week's classes, already paid for through the PayPal sandbox.
 2. In **What happened?**, pick *"Maya has the flu and can't teach Monday"* and click **Understand disruption**.
 3. Click **Plan recovery**. The schedule shows the plan: Monday's yoga is covered by Alex, dance and barre move to
-   Tuesday at the same time, and each customer is kept, moved or refunded based on their own preferences.
-4. Click **Approve and refund**. Five refunds go out through PayPal; each receipt shows its PayPal refund id.
+   Tuesday at the same time. Preferences and existing bookings determine who can move: 10 bookings stay, 6 move,
+   and 16 need refunds, leaving $370 in revenue kept and $364 in refunds.
+4. Click **Approve and refund**. Sixteen refunds go out through PayPal; each receipt shows its PayPal refund id.
 5. Open **Dashboard** and ask the Recovery analyst *"What did Monday's disruption cost us?"*.
 
 ## What happens under the hood
@@ -25,7 +26,7 @@ refunds the rest through PayPal.
 | Step | What Rebook does |
 | --- | --- |
 | Understand | Gemini turns the owner's sentence into a structured disruption (who or what, which day, which hours). Names and times are resolved by our code against the studio's real data, never trusted from the model. If the model is busy, a rules parser takes over and the UI says so. |
-| Plan | A deterministic solver tries, for every affected class: a qualified substitute, another room, another time inside the same week, and only then cancellation. Each booking is then kept, moved (only if the new time fits that customer's availability) or refunded. A validator proves the plan has no double-booked instructor or room, no class over capacity and no class inside the disruption. |
+| Plan | A deterministic solver tries, for every affected class: a qualified substitute, another room, another time inside the same week, and only then cancellation. Each booking is then kept, moved (only if the new time fits that customer's availability and other classes) or refunded. A validator checks resource conflicts, new customer overlaps, capacity and disruption constraints. |
 | Review | The plan is drawn on a Bryntum Scheduler: the disrupted window is hatched, original classes stay as dashed ghosts, new placements are highlighted with arrows. Totals show revenue kept against refunds. |
 | Execute | Refunds go to the original PayPal captures through the PayPal Server SDK. Every refund is written to a ledger before the API call and carries a stable `PayPal-Request-Id`, so a retry after a timeout can never refund twice. Unknown outcomes are reconciled against PayPal before retrying. |
 | Explain | An AG Studio dashboard reads the workspace's real bookings, captures and refunds. Custom widgets show recovery impact and refund receipts; a Recovery analyst agent (AG Studio Agent Framework on Gemini) answers questions about cost and coverage. |

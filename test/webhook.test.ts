@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../app/api/paypal/webhook/route";
 import { closeRepository, getRepository, type Repository } from "../lib/store";
 import { seedStudio } from "../lib/seed/seed";
+import { processWebhook } from "../lib/paypal/webhook";
 
 let directory: string;
 let repository: Repository;
@@ -77,13 +78,40 @@ describe("PayPal webhook", () => {
   });
   it("finds a refund by its capture link when the webhook beats the refund HTTP response", async () => {
     const { workspace, booking } = prepared();
+    const pending = repository.latestMoneyEvents(workspace.id).find((item) => item.kind === "refund")!;
+    repository.appendLedger({ ...pending, paypalId: "", status: "REQUESTED" });
     verification(true);
     const event = { id: "early-event", event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
-      id: "early-refund", amount: { currency_code: "USD", value: booking.amount }, links: [{ rel: "up", href: "https://api.sandbox.paypal.com/v2/payments/captures/capture" }],
+      id: "early-refund", invoice_id: pending.requestId, amount: { currency_code: "USD", value: booking.amount }, links: [{ rel: "up", href: "https://api.sandbox.paypal.com/v2/payments/captures/capture" }],
     } };
     expect((await POST(eventRequest(event))).status).toBe(200);
     expect(repository.latestMoneyEvents(workspace.id).find((item) => item.kind === "refund")).toMatchObject({ requestId: "plan:booking", paypalId: "early-refund", status: "COMPLETED" });
     expect(repository.requireWorkspace(workspace.id).state.bookings[0].status).toBe("refunded");
+  });
+  it.each(["REQUESTED", "PENDING"])("keeps a %s full refund unresolved when a different partial refund completes", (status) => {
+    const { workspace, booking } = prepared();
+    const original = repository.latestMoneyEvents(workspace.id).find((item) => item.kind === "refund")!;
+    repository.appendLedger({ ...original, status, paypalId: status === "REQUESTED" ? "" : "refund" });
+    const event = { id: `external-${status}`, event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
+      id: "external-partial", invoice_id: "merchant-operation", amount: { currency_code: "USD", value: "4.00" }, capture_id: "capture",
+    } };
+    expect(processWebhook(JSON.stringify(event), repository).matched).toBe(true);
+    const latest = repository.latestMoneyEvents(workspace.id).filter((item) => item.kind === "refund");
+    expect(latest.find((item) => item.requestId === original.requestId)).toMatchObject({ status, amount: booking.amount, paypalId: status === "REQUESTED" ? "" : "refund" });
+    expect(latest.find((item) => item.paypalId === "external-partial")).toMatchObject({ requestId: "webhook:external-partial", amount: "4.00", status: "COMPLETED" });
+    expect(repository.requireWorkspace(workspace.id).state.bookings[0].status).toBe("refund_pending");
+    expect(processWebhook(JSON.stringify({ ...event, id: "redelivery" }), repository).matched).toBe(true);
+    expect(repository.ledgerSummary(workspace.id).refunded).toBe("4.00");
+  });
+  it.each(["missing invoice", "different known ID", "wrong amount"])("does not infer refund identity from a capture alone: %s", (variant) => {
+    const { workspace, booking } = prepared();
+    const original = repository.latestMoneyEvents(workspace.id).find((item) => item.kind === "refund")!;
+    if (variant !== "different known ID") repository.appendLedger({ ...original, paypalId: "", status: "REQUESTED" });
+    processWebhook(JSON.stringify({ id: variant, event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
+      id: "another-refund", invoice_id: variant === "missing invoice" ? undefined : original.requestId,
+      amount: { currency_code: "USD", value: variant === "wrong amount" ? "4.00" : booking.amount }, capture_id: "capture",
+    } }), repository);
+    expect(repository.latestMoneyEvents(workspace.id).find((item) => item.requestId === original.requestId)?.status).toBe(variant === "different known ID" ? "PENDING" : "REQUESTED");
   });
   it("records capture reversals and does not undo them on late completion", async () => {
     const { workspace } = prepared();

@@ -52,15 +52,16 @@ export async function executeRefund(workspaceId: string, input: { bookingId: str
       // A webhook may have completed the refund while the HTTP request was in flight.
       const delivered = repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "refund" && event.requestId === requestId && event.status === "COMPLETED");
       const status = delivered?.status ?? refund.status;
-      repository.transaction(() => {
-        repository.appendLedger({ ...ledgerInput, paypalId: delivered?.paypalId ?? refund.id, status, debugId: refund.debugId,
+      const settled = repository.transaction(() => {
+        const event = repository.appendLedger({ ...ledgerInput, paypalId: delivered?.paypalId ?? refund.id, status, debugId: refund.debugId,
           error: status === "FAILED" ? "PayPal reports that this refund failed" : undefined });
         const current = repository.requireWorkspace(workspaceId).state;
         const updated = current.bookings.find((item) => item.id === booking.id)!;
-        if (!input.partial) updated.status = ["COMPLETED", "SIMULATED"].includes(status) ? "refunded" : "refund_pending";
+        if (!input.partial) updated.status = ["COMPLETED", "SIMULATED"].includes(event.status) ? "refunded" : "refund_pending";
         repository.saveState(workspaceId, current);
+        return event;
       });
-      result = { bookingId: booking.id, status, paypalId: refund.id, debugId: refund.debugId };
+      result = { bookingId: booking.id, status: settled.status, paypalId: settled.paypalId, debugId: refund.debugId };
     } catch (error) {
       const debugId = error instanceof PayPalError ? error.debugId : undefined;
       const delivered = repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "refund" && event.requestId === requestId && event.status === "COMPLETED");

@@ -15,6 +15,7 @@ let directory: string, id: string, original: StoredPlan;
 const request = (body: unknown) => new Request("http://localhost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const context = () => ({ params: Promise.resolve({ id, planId: original.id }) });
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-09T00:00:00Z"));
   directory = mkdtempSync(join(tmpdir(), "rebook-adjust-"));
   vi.stubEnv("DATA_DIR", directory); vi.stubEnv("DEMO_REAL_CAPTURES", "0"); limits.reset();
   const repository = getRepository();
@@ -22,7 +23,27 @@ beforeEach(() => {
   id = repository.createWorkspace(state).id;
   original = repository.createPlan(id, replan(state, disruption, { now: "2026-11-09T00:00:00Z" }));
 });
-afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force: true }); vi.unstubAllEnvs(); vi.useRealTimers(); });
+
+it("rejects past replacements and expired previews against the current server clock without starting money", async () => {
+  vi.setSystemTime(new Date("2026-11-09T09:00:00Z"));
+  expect((await adjust(request({ sessionId: "s1", start: "2026-11-09T07:00:00Z", version: 1 }), context())).status).toBe(422);
+  expect(getRepository().getPlan(id, original.id)?.version).toBe(1);
+  vi.setSystemTime(new Date("2026-11-09T10:01:00Z"));
+  const response = await approve(request({ version: 1 }), context());
+  expect(response.status).toBe(409); expect((await response.json()).code).toBe("PLAN_EXPIRED");
+  expect((await adjust(request({ sessionId: "s1", start: "2026-11-09T14:00:00Z", version: 1 }), context())).status).toBe(422);
+  expect(getRepository().getPlan(id, original.id)?.status).toBe("proposed");
+  expect(getRepository().listLedger(id)).toEqual([]);
+});
+
+it("allows an already-applied recovery to resume money processing after the class starts", async () => {
+  getRepository().savePlan({ ...original, status: "executing", basis: getRepository().requireWorkspace(id).state });
+  vi.setSystemTime(new Date("2026-11-10T00:00:00Z"));
+  const response = await approve(request({ version: 1 }), context());
+  expect(response.status).toBe(200);
+  expect((await response.json()).plan.status).toBe("partially_failed");
+});
 
 it("recomputes preference actions and totals and leaves the live schedule untouched", async () => {
   const before = getRepository().requireWorkspace(id).state;

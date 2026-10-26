@@ -93,6 +93,6 @@ it("removes stale choice controls when polling discovers an expired link", async
 it("includes demo customer links and copy controls in approved messages", () => {
   hooks.cursor = 0; hooks.slots = []; hooks.pending = [];
   const html = renderToStaticMarkup(MessagesDrawer({ messages: [{ bookingId: "booking", customerId: "customer", subject: "Your class", body: "Use your link below." }],
-    links: [{ bookingId: "booking", planId: "plan", kind: "choice", path: "/w/workspace/c/private-token", expiresAt: Date.now() + 60_000 }], onClose: () => {} }));
-  expect(html).toContain("Open as customer"); expect(html).toContain("Copy link"); expect(html).toContain("/w/workspace/c/private-token");
+    links: [{ bookingId: "booking", planId: "plan", kind: "choice", path: "/c/private-token", expiresAt: Date.now() + 60_000 }], onClose: () => {} }));
+  expect(html).toContain("Open as customer"); expect(html).toContain("Copy link"); expect(html).toContain("/c/private-token");
 });

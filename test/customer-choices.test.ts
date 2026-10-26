@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.stubEnv("DATA_DIR", directory); vi.stubEnv("PAYPAL_CLIENT_ID", randomUUID());
   vi.stubEnv("PAYPAL_CLIENT_SECRET", "test-secret"); vi.stubEnv("PAYPAL_ENV", "sandbox");
   repository = getRepository(); limits.reset(); refundStatus = "COMPLETED"; refundCalls = []; loseResponse = false;
+  const requests = new Map<string, { fingerprint: string; id: string }>();
   setSdkTransport(async (url, init) => {
     if (url.endsWith("/token")) return Response.json({ access_token: "token", token_type: "Bearer", expires_in: 3600 });
     if (init.method === "GET") {
@@ -33,8 +34,16 @@ beforeEach(() => {
       throw new Error("Read unavailable");
     }
     refundCalls.push({ url, init });
+    const requestId = new Headers(init.headers).get("PayPal-Request-Id")!;
+    const fingerprint = JSON.stringify([init.method, url, JSON.parse(init.body as string)]);
+    const previous = requests.get(requestId);
+    if (previous && previous.fingerprint !== fingerprint) return Response.json({
+      name: "DUPLICATE_REQUEST_ID", message: "Request ID already used for a different request",
+    }, { status: 400 });
+    const id = previous?.id ?? `7GD-${requests.size + 1}`;
+    requests.set(requestId, { fingerprint, id });
     if (loseResponse) throw new Error("Response lost after submission");
-    return Response.json({ id: `7GD-${refundCalls.length}`, status: refundStatus }, { status: 201 });
+    return Response.json({ id, status: refundStatus }, { status: 201 });
   });
 });
 let lastWorkspace = "";
@@ -49,7 +58,7 @@ function fixture(simulated = false) {
     { ...original, id: "higher", start: "2026-11-12T17:00:00Z", end: "2026-11-12T18:00:00Z", price: "23.00" },
     { ...original, id: "other-type", classType: "pilates", start: "2026-11-10T15:00:00Z", end: "2026-11-10T16:00:00Z" },
     { ...original, id: "next-week", start: "2026-11-16T15:00:00Z", end: "2026-11-16T16:00:00Z" }];
-  state.bookings = state.bookings.slice(0, 3).map((booking) => ({ ...booking, sessionId: original.id, amount: "22.00", payment: { ...booking.payment!, simulated } }));
+  state.bookings = state.bookings.slice(0, 3).map((booking) => ({ ...booking, sessionId: original.id, amount: "22.00", payment: { ...booking.payment!, captureId: randomUUID(), simulated } }));
   const workspace = repository.createWorkspace(state); lastWorkspace = workspace.id;
   for (const booking of state.bookings) repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: "22.00",
     paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId, requestId: `capture:${booking.id}`, status: simulated ? "SIMULATED" : "COMPLETED" });
@@ -79,6 +88,10 @@ describe("private customer links", () => {
     closeRepository(); repository = getRepository();
     expect(repository.customerToken(repository.customerLinkByToken(token)!)).toBe(token);
     expect((await customerChoice(token, repository)).message.body).toContain("Choose below");
+    const customerLinks = ownerCustomerChoices(workspaceId, repository).links;
+    expect(customerLinks.every((item) => /^\/c\/[A-Za-z0-9_-]{43}$/.test(item.path))).toBe(true);
+    expect(JSON.stringify(customerLinks)).not.toContain(workspaceId);
+    expect(JSON.stringify(await customerChoice(token, repository))).not.toContain(workspaceId);
     await expect(customerChoice("x".repeat(43), repository)).rejects.toMatchObject({ status: 404 });
   });
   it("expires choices at the earlier of class start and seven days", async () => {
@@ -131,6 +144,40 @@ describe("private customer links", () => {
 });
 
 describe("one tap choices and money", () => {
+  it.each([false, true])("keeps choice refund identities distinct across workspaces with the same booking ID (partial: %s)", async (partial) => {
+    const input = partial ? { action: "move" as const, sessionId: "cheaper" } : { action: "refund" as const };
+    const first = fixture();
+    // Approval refunds have their own plan-scoped identity.
+    const receipt = first.links.find((link) => link.kind === "receipt")!;
+    expect((await customerChoice(repository.customerToken(receipt), repository)).receipt?.status).toBe("COMPLETED");
+    expect((await submitChoice(first.token, input, repository)).receipt?.status).toBe("COMPLETED");
+    const second = fixture();
+    expect(second.bookingId).toBe(first.bookingId);
+    expect(second.workspaceId).not.toBe(first.workspaceId);
+    const captureId = repository.requireWorkspace(second.workspaceId).state.bookings.find((booking) => booking.id === second.bookingId)!.payment!.captureId;
+    // A previous partial refund also makes the second request's amount/body different.
+    repository.appendLedger({ workspaceId: second.workspaceId, bookingId: second.bookingId, kind: "refund", amount: "1.00",
+      captureId, requestId: "earlier-partial", paypalId: "earlier-refund", status: "COMPLETED", partial: true });
+    const result = await POST(new Request(`http://localhost/api/choices/${second.token}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }), { params: Promise.resolve({ token: second.token }) });
+    expect(result.status).toBe(200);
+    expect((await result.json()).receipt).toMatchObject({ status: "COMPLETED", amount: partial ? "3.00" : "21.00" });
+    const ids = refundCalls.map((call) => new Headers(call.init.headers).get("PayPal-Request-Id"));
+    expect(new Set(ids).size).toBe(3);
+    expect(ids[0]).toBe(`${first.plan.id}:${receipt.bookingId}`);
+    for (const [index, item] of [first, second].entries()) {
+      const requestId = ids[index + 1]!;
+      expect(requestId).toBe(`choice:${item.links[0].id}`);
+      expect(JSON.parse(refundCalls[index + 1].init.body as string).invoice_id).toBe(requestId);
+      expect(repository.customerLinkByToken(item.token)?.reply?.requestId).toBe(requestId);
+      expect(repository.latestMoneyEvents(item.workspaceId).find((event) => event.requestId === requestId)).toMatchObject({
+        kind: "refund", status: "COMPLETED", bookingId: item.bookingId,
+      });
+    }
+    await submitChoice(second.token, input, repository);
+    expect(refundCalls).toHaveLength(3);
+  });
   it("keeps the new time and projects the reply without a payment call", async () => {
     const { token, bookingId, workspaceId } = fixture();
     const before = repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === bookingId);
@@ -192,12 +239,12 @@ describe("one tap choices and money", () => {
     expect(ownerCustomerChoices(workspaceId, repository).replies[0].text).toContain("$4.00, PayPal 7GD-1");
   });
   it("makes one idempotent refund on double tap and rejects subsequent changes", async () => {
-    const { token, bookingId, workspaceId } = fixture();
+    const { token, bookingId, workspaceId, links } = fixture();
     const result = await Promise.allSettled([submitChoice(token, { action: "refund" }, repository), submitChoice(token, { action: "refund" }, repository)]);
     expect(result.filter((item) => item.status === "fulfilled").length).toBeGreaterThan(0);
     const again = await submitChoice(token, { action: "refund" }, repository);
     expect(refundCalls).toHaveLength(1);
-    expect(new Headers(refundCalls[0].init.headers).get("PayPal-Request-Id")).toBe(`choice:${bookingId}`);
+    expect(new Headers(refundCalls[0].init.headers).get("PayPal-Request-Id")).toBe(`choice:${links[0].id}`);
     expect(again.receipt).toMatchObject({ amount: "22.00", status: "COMPLETED", paypalId: "7GD-1" });
     expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === bookingId)?.status).toBe("refunded");
     await expect(submitChoice(token, { action: "keep" }, repository)).rejects.toMatchObject({ status: 409 });
@@ -227,12 +274,27 @@ describe("one tap choices and money", () => {
     expect((await customerChoice(token, repository)).receipt?.status).toBe("COMPLETED");
     expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === bookingId)?.status).toBe("moved");
   });
-  it("replays a lost response with the original request ID after restart", async () => {
-    const { token, bookingId } = fixture(); loseResponse = true;
-    expect((await submitChoice(token, { action: "refund" }, repository)).receipt?.status).toBe("REQUESTED");
+  it.each([false, true])("matches webhook invoice evidence to a lost choice refund response (partial: %s)", async (partial) => {
+    const { token, bookingId, workspaceId, links } = fixture(); loseResponse = true;
+    expect((await submitChoice(token, partial ? { action: "move", sessionId: "cheaper" } : { action: "refund" }, repository)).receipt?.status).toBe("REQUESTED");
+    const requestId = `choice:${links[0].id}`;
+    const captureId = repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === bookingId)!.payment!.captureId;
+    const amount = partial ? "4.00" : "22.00";
+    for (const id of ["invoice-event-1", "invoice-event-2"]) expect(processWebhook(JSON.stringify({ id, event_type: "PAYMENT.CAPTURE.REFUNDED",
+      resource: { id: "7GD-1", capture_id: captureId, invoice_id: requestId, amount: { currency_code: "USD", value: amount } } }), repository).matched).toBe(true);
+    expect(repository.latestMoneyEvents(workspaceId).filter((event) => event.kind === "refund")).toEqual([
+      expect.objectContaining({ requestId, paypalId: "7GD-1", amount, status: "COMPLETED", ...(partial ? { partial: true } : {}) }),
+    ]);
+    expect((await customerChoice(token, repository)).receipt?.status).toBe("COMPLETED");
+    expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === bookingId)?.status).toBe(partial ? "moved" : "refunded");
+    expect(refundCalls).toHaveLength(1);
+  });
+  it.each([false, true])("replays a lost response with the original request ID after restart (partial: %s)", async (partial) => {
+    const { token, links } = fixture(); loseResponse = true;
+    expect((await submitChoice(token, partial ? { action: "move", sessionId: "cheaper" } : { action: "refund" }, repository)).receipt?.status).toBe("REQUESTED");
     closeRepository(); repository = getRepository(); loseResponse = false;
     expect((await customerChoice(token, repository)).receipt?.status).toBe("COMPLETED");
-    expect(refundCalls.map((call) => new Headers(call.init.headers).get("PayPal-Request-Id"))).toEqual([`choice:${bookingId}`, `choice:${bookingId}`]);
+    expect(refundCalls.map((call) => new Headers(call.init.headers).get("PayPal-Request-Id"))).toEqual([`choice:${links[0].id}`, `choice:${links[0].id}`]);
   });
   it("labels simulated refunds and never calls PayPal", async () => {
     const { token, workspaceId } = fixture(true);

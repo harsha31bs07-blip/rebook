@@ -23,6 +23,7 @@ export type LedgerEvent = {
   amount: string; paypalId: string; status: string; createdAt: string; debugId?: string; error?: string;
   requestId: string; captureId: string; firstAttemptAt?: string;
   partial?: boolean;
+  mergedInto?: string;
 };
 export type CustomerLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; bookingId: string;
@@ -35,6 +36,7 @@ type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
 export type CheckoutReservation = {
   id: string; workspaceId: string; requestId: string; sessionId: string;
+  requestAliases?: string[];
   customer: { name: string; email: string }; amount: string; currency: "USD";
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
   status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;
@@ -260,6 +262,32 @@ export class Repository {
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }
   appendLedger(input: LedgerInput): LedgerEvent {
+    if (input.kind === "refund" && input.paypalId && input.status !== "MERGED") {
+      const persist = () => this.appendRefund(input);
+      return this.db.isTransaction ? persist() : this.transaction(persist);
+    }
+    return this.appendLedgerEntry(input);
+  }
+  private appendRefund(input: LedgerInput): LedgerEvent {
+    const sameId = this.latestMoneyEvents(input.workspaceId).filter((event) => event.kind === "refund" && event.paypalId === input.paypalId);
+    if (sameId.some((event) => event.captureId !== input.captureId || event.amount !== input.amount || event.bookingId !== input.bookingId)) {
+      throw new StoreError(502, "Refund identity does not match the recorded payment");
+    }
+    const webhookKey = `webhook:${input.paypalId}`;
+    const canonical = sameId.find((event) => event.requestId !== webhookKey);
+    if (canonical && input.requestId !== canonical.requestId) {
+      if (input.requestId !== webhookKey) throw new StoreError(502, "Refund belongs to another request");
+      input = { ...input, requestId: canonical.requestId, partial: canonical.partial };
+    }
+    const external = sameId.find((event) => event.requestId === webhookKey);
+    if (external && input.requestId !== webhookKey) {
+      // Keep both deliveries in the audit trail, but only the proven app identity counts as money.
+      this.appendLedgerEntry({ ...external, status: "MERGED", mergedInto: input.requestId });
+    }
+    if (sameId.some((event) => event.status === "COMPLETED")) input = { ...input, status: "COMPLETED", error: undefined };
+    return this.appendLedgerEntry(input);
+  }
+  private appendLedgerEntry(input: LedgerInput): LedgerEvent {
     // Repeated delivery or recovery records the same transition only once. Status changes append a new row.
     const previous = this.latestMoneyEvents(input.workspaceId).find((event) => event.kind === input.kind && event.requestId === input.requestId);
     if (previous && previous.paypalId === input.paypalId && previous.status === input.status && previous.error === input.error) return previous;
@@ -283,7 +311,7 @@ export class Repository {
   latestMoneyEvents(workspaceId: string): LedgerEvent[] {
     const latest = new Map<string, LedgerEvent>();
     for (const event of this.listLedger(workspaceId)) latest.set(`${event.kind}:${event.requestId}`, event);
-    return [...latest.values()];
+    return [...latest.values()].filter((event) => event.status !== "MERGED");
   }
   ledgerSummary(workspaceId: string): { captured: string; refunded: string; pending: string; simulatedCaptured: string; simulatedRefunded: string } {
     const totals = { captured: 0, refunded: 0, pending: 0, simulatedCaptured: 0, simulatedRefunded: 0 };

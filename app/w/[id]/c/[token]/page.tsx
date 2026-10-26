@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import CustomerChoicePage from "@/components/booking/customer-choice-page";
+import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
   title: "Your class, your choice · Rebook",
@@ -9,5 +9,5 @@ export const metadata: Metadata = {
 
 export default async function ChoicePage({ params }: { params: Promise<{ id: string; token: string }> }) {
   const { token } = await params;
-  return <CustomerChoicePage token={token} />;
+  redirect(`/c/${encodeURIComponent(token)}`);
 }

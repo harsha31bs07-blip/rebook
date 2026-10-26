@@ -35,11 +35,21 @@ export function bookingCatalog(workspaceId: string, repository = getRepository()
 export async function createOrder(workspaceId: string, input: CheckoutInput, requestId: string, repository = getRepository()) {
   input = CheckoutInputSchema.parse(input);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
-    let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId);
+    let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId || item.requestAliases?.includes(requestId));
     if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer))) throw new StoreError(409, "This checkout key belongs to another booking");
     if (row?.status === "failed" || (row?.status === "pending" && row.expiresAt <= Date.now())) throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
     if (row?.orderId) return { orderId: row.orderId };
     if (!row) {
+      const unresolved = repository.listCheckout(workspaceId).find((item) => item.status === "capturing" &&
+        item.sessionId === input.sessionId && item.customer.email.toLowerCase() === input.customer.email.toLowerCase());
+      if (unresolved?.orderId) {
+        if (JSON.stringify(unresolved.customer) !== JSON.stringify(input.customer) || (unresolved.requestAliases?.length ?? 0) >= 32) {
+          throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
+        }
+        // Remember every accepted key before responding, even if a webhook settles the order next.
+        repository.saveCheckout({ ...unresolved, requestAliases: [...(unresolved.requestAliases ?? []), requestId] });
+        return { orderId: unresolved.orderId };
+      }
       row = repository.transaction(() => {
         const { state } = repository.requireReadyWorkspace(workspaceId);
         const session = state.sessions.find((item) => item.id === input.sessionId);
@@ -133,16 +143,23 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
       // Crash/timeout recovery must inspect the existing order before attempting another capture.
       const existing = await getOrder(orderId);
       if (existing.status === "COMPLETED") return confirmOrder(row, existing, repository);
-      if (row.expiresAt <= Date.now() && !existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) {
+      if (existing.status === "VOIDED" && !existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) {
         repository.saveCheckout({ ...row, status: "failed" });
-        throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
+        throw new StoreError(410, "This payment was voided. Start checkout again.", "RESTART_CHECKOUT");
       }
+      if (row.expiresAt <= Date.now()) throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
+    }
+    const current = row;
+    if (repository.listCheckout(workspaceId).some((other) => other.id !== current.id && other.status === "capturing" &&
+      other.sessionId === current.sessionId && other.customer.email.toLowerCase() === current.customer.email.toLowerCase())) {
+      throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
     }
     const { state } = repository.requireReadyWorkspace(workspaceId);
     const session = state.sessions.find((item) => item.id === row!.sessionId);
     if (!session || !sessionAvailable(state, session) || session.start !== row.session.start || session.end !== row.session.end
       || session.roomId !== row.session.roomId || session.instructorId !== row.session.instructorId
       || !seatsLeft(state, session, repository.listCheckout(workspaceId), row.id)) {
+      if (row.status === "capturing") throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
       repository.saveCheckout({ ...row, status: "failed" });
       throw new StoreError(409, "This class changed during checkout. Please choose a class again.", "RESTART_CHECKOUT");
     }
@@ -162,7 +179,8 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
       try {
         const existing = await getOrder(orderId);
         if (existing.status === "COMPLETED") return confirmOrder(row, existing, repository);
-        if (!existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) repository.saveCheckout({ ...row, status: "failed" });
+        // An empty snapshot cannot rule out a capture that is still completing upstream.
+        if (existing.status === "VOIDED" && !existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) repository.saveCheckout({ ...row, status: "failed" });
       } catch { /* Unknown money outcome: retain the hold; retry capture reconciles it. */ }
       throw error;
     }

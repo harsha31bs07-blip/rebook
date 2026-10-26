@@ -16,7 +16,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
   const changes = new Map(applied.flatMap((plan) => plan.sessionChanges.map((change) => [change.sessionId, change] as const)));
   const latest = new Map<string, LedgerEvent>();
   for (const event of ledger) latest.set(`${event.kind}:${event.requestId}`, event);
-  const moneyEvents = [...latest.values()].map((event) => {
+  const moneyEvents = [...latest.values()].filter((event) => event.status !== "MERGED").map((event) => {
     const plan = plans.find((plan) => event.requestId === `${plan.id}:${event.bookingId}`);
     return {
       id: event.id, kind: event.kind, amount: dollars(event.amount), status: event.status,

@@ -12,6 +12,11 @@ import { lookupRefund } from "../lib/executor/reconcileRefund";
 import { limits } from "../lib/api/limits";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
+import { applyPlan } from "../lib/solver/validate";
+import { calculateTotals } from "../lib/solver/score";
+import { processWebhook } from "../lib/paypal/webhook";
+import { executeRefund } from "../lib/executor/refund";
+import { buildInsights } from "../lib/insights/data";
 import { closeRepository, getRepository, type Repository } from "../lib/store";
 
 let directory: string, repository: Repository;
@@ -46,6 +51,124 @@ function transport(handler: (url: string, init: RequestInit) => Promise<Response
 }
 
 describe("refund recovery via mocked SDK transport", () => {
+  it.each(["COMPLETED", "PENDING"])("counts a no-invoice webhook only once when HTTP later returns %s", async (httpStatus) => {
+    const { workspace, plan, refunds } = prepared();
+    const send = transport(async (url, init) => {
+      expect(init.method).toBe("POST");
+      const captureId = url.split("/").at(-2)!;
+      const amount = JSON.parse(init.body as string).amount;
+      const id = `refund-${captureId}`;
+      expect(processWebhook(JSON.stringify({ id: `event-${id}`, event_type: "PAYMENT.CAPTURE.REFUNDED", resource: { id, capture_id: captureId, amount } }), repository).matched).toBe(true);
+      return Response.json({ id, status: httpStatus }, { status: 201 });
+    });
+    const result = await executePlan(workspace.id, plan.id, repository);
+    expect(result.results.every((item) => item.status === "COMPLETED")).toBe(true);
+    expect(repository.ledgerSummary(workspace.id)).toMatchObject({ refunded: plan.totals.refundAmount, pending: "0.00" });
+    expect(repository.latestMoneyEvents(workspace.id).filter((item) => item.kind === "refund")).toHaveLength(refunds.length);
+    expect(buildInsights(repository.requireWorkspace(workspace.id).state, repository.listPlans(workspace.id), repository.listLedger(workspace.id)).money_events.filter((item) => item.kind === "refund")).toHaveLength(refunds.length);
+    expect(repository.listLedger(workspace.id).some((item) => item.requestId.startsWith("webhook:"))).toBe(true);
+    for (const action of refunds) {
+      const event = repository.latestMoneyEvents(workspace.id).find((item) => item.requestId === `${plan.id}:${action.bookingId}`)!;
+      for (const invoice of [undefined, event.requestId]) processWebhook(JSON.stringify({ id: `repeat-${event.paypalId}-${invoice}`, event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
+        id: event.paypalId, capture_id: event.captureId, invoice_id: invoice, amount: { currency_code: "USD", value: event.amount },
+      } }), repository);
+    }
+    closeRepository(); repository = getRepository();
+    expect(repository.ledgerSummary(workspace.id)).toMatchObject({ refunded: plan.totals.refundAmount, pending: "0.00" });
+    expect(send.mock.calls.filter(([url]) => url.endsWith("/refund"))).toHaveLength(refunds.length);
+  });
+  it("coalesces a webhook with SDK reconciliation after a lost partial-refund response", async () => {
+    const { workspace } = prepared();
+    const booking = workspace.state.bookings[0];
+    const requestId = "partial-difference";
+    const input = { bookingId: booking.id, amount: "4.00", reason: "Price difference", partial: true };
+    const send = transport(async (_url, init) => {
+      if (init.method === "GET") return Response.json({ id: booking.payment!.captureId, status: "PARTIALLY_REFUNDED", refunds: [{
+        id: "partial-refund", status: "PENDING", invoice_id: requestId, amount: { currency_code: "USD", value: "4.00" },
+      }] });
+      processWebhook(JSON.stringify({ id: "partial-first", event_type: "PAYMENT.CAPTURE.REFUNDED", resource: {
+        id: "partial-refund", capture_id: booking.payment!.captureId, amount: { currency_code: "USD", value: "4.00" },
+      } }), repository);
+      throw new Error("Lost refund response");
+    });
+    const first = await executeRefund(workspace.id, input, requestId, repository, () => {});
+    expect(first.status).toBe("REQUESTED");
+    closeRepository(); repository = getRepository();
+    const settled = await executeRefund(workspace.id, input, requestId, repository, () => {});
+    expect(settled.status).toBe("COMPLETED");
+    expect(repository.latestMoneyEvents(workspace.id).filter((item) => item.kind === "refund")).toHaveLength(1);
+    expect(repository.ledgerSummary(workspace.id)).toMatchObject({ refunded: "4.00", pending: "0.00" });
+    expect(repository.requireWorkspace(workspace.id).state.bookings[0].status).toBe("confirmed");
+    expect(send.mock.calls.filter(([url]) => url.endsWith("/refund"))).toHaveLength(1);
+    // The rest of the captured payment remains refundable exactly once.
+    const remaining = (Number(booking.amount) - 4).toFixed(2);
+    transport(async () => Response.json({ id: "remaining-refund", status: "COMPLETED" }, { status: 201 }));
+    expect((await executeRefund(workspace.id, { bookingId: booking.id, amount: remaining, reason: "Refund balance" }, "remaining", repository, () => {})).status).toBe("COMPLETED");
+    expect(repository.ledgerSummary(workspace.id)).toMatchObject({ refunded: booking.amount, pending: "0.00" });
+  });
+  it("uses a late invoice webhook to associate only the proven original request", () => {
+    const { workspace, plan, refunds } = prepared();
+    const action = refunds[0];
+    const booking = workspace.state.bookings.find((item) => item.id === action.bookingId)!;
+    const requestId = `${plan.id}:${booking.id}`;
+    repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", amount: booking.amount,
+      captureId: booking.payment!.captureId, paypalId: "", status: "REQUESTED", requestId });
+    const resource = { id: "early", capture_id: booking.payment!.captureId, amount: { currency_code: "USD", value: booking.amount } };
+    processWebhook(JSON.stringify({ id: "no-invoice", event_type: "PAYMENT.CAPTURE.REFUNDED", resource }), repository);
+    expect(repository.latestMoneyEvents(workspace.id).find((item) => item.requestId === requestId)?.status).toBe("REQUESTED");
+    processWebhook(JSON.stringify({ id: "with-invoice", event_type: "PAYMENT.CAPTURE.REFUNDED", resource: { ...resource, invoice_id: requestId } }), repository);
+    expect(repository.latestMoneyEvents(workspace.id).find((item) => item.requestId === requestId)?.status).toBe("COMPLETED");
+    expect(repository.ledgerSummary(workspace.id)).toMatchObject({ refunded: booking.amount, pending: "0.00" });
+  });
+  it("settles an already-applied legacy plan without retroactively enforcing new scheduling rules", async () => {
+    const { workspace, plan } = prepared();
+    const legacy = structuredClone(plan);
+    legacy.bookingActions.find((item) => item.reason.includes("overlap"))!.action = "move";
+    legacy.totals = calculateTotals(legacy.sessionChanges.length, legacy.bookingActions);
+    const applied = applyPlan(workspace.state, legacy);
+    repository.saveState(workspace.id, applied);
+    repository.savePlan({ ...legacy, status: "partially_failed", basis: workspace.state });
+    transport(async (url) => Response.json({ id: `refund-${url.split("/").at(-2)}`, status: "COMPLETED" }));
+    const result = await executePlan(workspace.id, plan.id, repository);
+    expect(result.results.every((item) => item.status === "COMPLETED")).toBe(true);
+    expect(result.results).toHaveLength(legacy.bookingActions.filter((item) => item.action === "refund").length);
+    expect(repository.requireWorkspace(workspace.id).state.sessions).toEqual(applied.sessions);
+  });
+  it.each(["COMPLETED", "FAILED"])("checks an applied plan's PENDING refunds through owner approval when PayPal later reports %s without a webhook", async (settled) => {
+    const { workspace, plan, refunds, context, request } = prepared();
+    const evidence = new Map<string, { id: string; amount: unknown }>();
+    const send = transport(async (url, init) => {
+      if (init.method === "GET") {
+        const refund = evidence.get(url.split("/").at(-1)!)!;
+        return Response.json({ ...refund, status: settled });
+      }
+      const id = `pending-${url.split("/").at(-2)}`;
+      const refund = { id, amount: JSON.parse(init.body as string).amount };
+      evidence.set(id, refund);
+      return Response.json({ ...refund, status: "PENDING" }, { status: 201 });
+    });
+    expect(await (await approve(request(), context)).json()).toMatchObject({ plan: { status: "executed" } });
+    const applied = repository.requireWorkspace(workspace.id).state;
+    // A fresh booking/state update after application must survive settlement checks.
+    applied.customers[0].name = "Updated after approval";
+    repository.saveState(workspace.id, applied);
+    closeRepository(); repository = getRepository();
+    const response = await approve(request(), context);
+    expect(response.status).toBe(200);
+    const checked = await response.json();
+    expect(checked.plan.status).toBe(settled === "COMPLETED" ? "executed" : "partially_failed");
+    expect(checked.results.every((item: { status: string }) => item.status === settled)).toBe(true);
+    expect(send.mock.calls.filter(([url]) => url.endsWith("/refund"))).toHaveLength(refunds.length);
+    expect(send.mock.calls.filter(([url]) => url.includes("/payments/refunds/"))).toHaveLength(refunds.length);
+    expect(repository.requireWorkspace(workspace.id).state.customers[0].name).toBe("Updated after approval");
+    if (settled === "COMPLETED") {
+      expect(repository.ledgerSummary(workspace.id).pending).toBe("0.00");
+      expect(repository.ledgerSummary(workspace.id).refunded).toBe(plan.totals.refundAmount);
+      send.mockClear();
+      await approve(request(), context);
+      expect(send).not.toHaveBeenCalled();
+    }
+  });
   it.each(["invoice_id"])("reconciles a timed-out refund by %s without a second refund POST", async (field) => {
     const { workspace, plan, refunds } = prepared();
     const byCapture = new Map<string, { id: string; status: string; amount: { currency_code: string; value: string }; [key: string]: unknown }>();

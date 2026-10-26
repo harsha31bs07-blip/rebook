@@ -12,7 +12,8 @@ import { recoveryDropStart, scheduleRange } from "../lib/client/scheduler-mappin
 import { adjustmentFixture, disruption } from "./adjust-fixture";
 
 const harness = vi.hoisted(() => ({ eventId: "s1-new", target: undefined as Date | undefined,
-  effects: [] as (() => unknown)[], scrollToDate: vi.fn(), zoomToLevel: vi.fn(), scrollEventIntoView: vi.fn() }));
+  effects: [] as (() => unknown)[], scrollToDate: vi.fn(), zoomToLevel: vi.fn(), scrollEventIntoView: vi.fn(),
+  commit: vi.fn().mockResolvedValue(undefined), setSpan: vi.fn().mockResolvedValue(undefined), coordinate: vi.fn().mockReturnValue(480), horizontal: vi.fn() }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
   useMemo: (factory: () => unknown) => factory(),
@@ -20,6 +21,8 @@ vi.mock("react", async (original) => ({
   useRef: (initial: unknown) => ({ current: initial ?? { instance: {
     resolveEventRecord: () => ({ id: harness.eventId }), getDateFromDomEvent: () => harness.target,
     scrollToDate: harness.scrollToDate, zoomToLevel: harness.zoomToLevel,
+    project: { commitAsync: harness.commit }, getCoordinateFromDate: harness.coordinate, scrollHorizontallyTo: harness.horizontal,
+    setTimeSpan: harness.setSpan,
     scrollEventIntoView: harness.scrollEventIntoView, eventStore: { getById: (id: string) => ({ id }) },
   } } }),
   useEffect: (effect: () => unknown) => { harness.effects.push(effect); },
@@ -135,7 +138,7 @@ it("bounds the configured week by studio-local Monday midnight through Sunday 24
   expect(recoveryDropStart("2026-10-26T14:15:00Z", new Date("2026-11-01T18:00:00"), zoned.studio.timezone, "week")).toBe("2026-11-01T15:15:00.000Z");
 });
 
-it("preview and applied-plan focus scroll inside the fixed workspace week, including a DST boundary", () => {
+it("preview and applied-plan focus scroll inside the fixed workspace week, including a DST boundary", async () => {
   const zoned = structuredClone(state);
   zoned.studio.timezone = "America/New_York";
   zoned.studio.weekStart = "2026-10-26T04:00:00.000Z";
@@ -147,26 +150,34 @@ it("preview and applied-plan focus scroll inside the fixed workspace week, inclu
     start: "2026-10-26T04:00:00.000Z", end: "2026-11-02T05:00:00.000Z", focusKey: "2026-10-28" });
   for (const preview of [true, false]) {
     harness.effects = [];
+    harness.horizontal.mockClear();
     const { props } = schedule({ state: zoned, plan: preview ? focused : undefined, updatedPlan: preview ? undefined : focused });
     harness.effects[1]();
+    await vi.waitFor(() => expect(harness.horizontal).toHaveBeenCalled());
     expect(props.startDate).toBe("2026-10-26T04:00:00.000Z");
     expect(props.endDate).toBe("2026-11-02T05:00:00.000Z");
-    expect(harness.scrollToDate).toHaveBeenLastCalledWith(new Date("2026-10-28T07:00:00"), { block: "start", animate: false });
+    expect(harness.commit).toHaveBeenCalled();
+    expect(harness.setSpan).toHaveBeenLastCalledWith(new Date("2026-10-26T00:00:00"), new Date("2026-11-02T00:00:00"));
+    expect(harness.coordinate).toHaveBeenLastCalledWith(new Date("2026-10-28T07:00:00"), { local: true });
+    expect(harness.horizontal).toHaveBeenLastCalledWith(480, { animate: false });
+    expect(harness.scrollToDate).not.toHaveBeenCalled();
     expect(harness.zoomToLevel).not.toHaveBeenCalled();
   }
   focused.disruption.from = "2026-10-22T00:00:00Z";
   expect(scheduleRange(zoned, "week", 0, focused).focusKey).toBe("2026-10-26");
 });
 
-it("scrolls an accepted placement into view and highlights it without expanding a Day view", () => {
+it("scrolls an accepted placement into view and highlights it without expanding a Day view", async () => {
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => { callback(); return 1; });
   const { props } = schedule({ highlightedSessionId: "s1" });
   harness.effects[2]();
+  await vi.waitFor(() => expect(harness.scrollEventIntoView).toHaveBeenCalled());
   expect(props.events!.find((item) => item.id === "s1-new")?.cls).toContain("new-booking-highlight");
-  expect(harness.scrollEventIntoView).toHaveBeenCalledWith({ id: "s1-new" }, { block: "nearest", inline: "nearest", animate: false });
+  expect(harness.scrollEventIntoView).toHaveBeenCalledWith({ id: "s1-new" }, { block: "nearest", inline: "nearest", animate: false, extendTimeAxis: false });
   harness.scrollEventIntoView.mockClear(); harness.effects = [];
   schedule({ highlightedSessionId: "s1", zoom: "day", day: 1 });
   harness.effects[2]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   expect(harness.scrollEventIntoView).not.toHaveBeenCalled();
 });
 
@@ -180,6 +191,13 @@ it("lists changed sessions with Move links in preview and says Recovery complete
   const executed = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, status: "executed" } }));
   expect(executed).toContain("<h2>Recovery complete</h2>");
   expect(executed).not.toContain("move-session-link");
+  expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true }))).not.toContain("Processing refunds");
+  expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true, approving: true }))).toContain("Processing refunds");
+  const pending = { ...props, plan: { ...publicPlan, status: "executed" as const }, results: [{ bookingId: "b1", status: "PENDING" }] };
+  expect(renderToStaticMarkup(createElement(PlanPanel, pending))).toContain("Check refund status</button>");
+  expect(renderToStaticMarkup(createElement(PlanPanel, { ...pending, busy: true }))).toContain("Checking refund status");
+  expect(executed).not.toContain("Check refund status");
+  expect(renderToStaticMarkup(createElement(PlanPanel, { ...pending, plan: { ...pending.plan, status: "partially_failed" } }))).toContain("Retry refunds</button>");
 });
 
 it("compares an owner's adjustment with the previous version's totals beside Undo", () => {

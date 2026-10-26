@@ -1,5 +1,5 @@
-import type { Booking, BookingAction, Customer, Plan, Remedy, Session, Weights } from "../domain/types";
-import { byId, DAY, fitsPreferences, fromCents, localParts, MINUTE, toCents } from "../domain/time";
+import type { Booking, BookingAction, Customer, Plan, Remedy, Session, State, Weights } from "../domain/types";
+import { byId, DAY, fitsPreferences, fromCents, localParts, MINUTE, overlaps, toCents } from "../domain/time";
 
 export const defaultWeights: Weights = {
   substitute: 0, moveRoom: 1_000_000, moveTime: 2_000_000, cancel: 1_000_000_000,
@@ -9,8 +9,22 @@ export const defaultWeights: Weights = {
 export const isActiveBooking = (booking: Booking): boolean =>
   booking.status === "confirmed" || booking.status === "moved";
 
+type BookingCalendar = Pick<State, "sessions" | "bookings"> & { originalSessions: Session[] };
+const changedTime = (before: Session, after: Session) => Date.parse(before.start) !== Date.parse(after.start) || Date.parse(before.end) !== Date.parse(after.end);
+
+export function hasCustomerConflict(booking: Booking, before: Session, after: Session, calendar: BookingCalendar): boolean {
+  return calendar.bookings.some((other) => {
+    if (!isActiveBooking(other) || other.customerId !== booking.customerId || other.sessionId === before.id) return false;
+    const session = calendar.sessions.find((item) => item.id === other.sessionId);
+    if (!session || !overlaps(after.start, after.end, session.start, session.end)) return false;
+    const original = calendar.originalSessions.find((item) => item.id === session.id) ?? session;
+    // Existing overlaps are unrelated to this recovery when neither class changes time.
+    return changedTime(before, after) || changedTime(original, session);
+  });
+}
+
 export function actionsFor(
-  bookings: Booking[], customers: Customer[], before: Session, after: Session | undefined, tz: string,
+  bookings: Booking[], customers: Customer[], before: Session, after: Session | undefined, tz: string, calendar?: BookingCalendar,
 ): BookingAction[] {
   const people = new Map(customers.map((customer) => [customer.id, customer]));
   let retained = 0;
@@ -28,6 +42,8 @@ export function actionsFor(
       reason = "Replacement instructor is outside the customer's preferences.";
     } else if (moved && !fitsPreferences(customer, after.start, after.end, tz)) {
       reason = "New time does not fit the customer's availability.";
+    } else if (calendar && hasCustomerConflict(booking, before, after, calendar)) {
+      reason = "Recovery would overlap the customer's other class; refund the booking.";
     } else if (retained >= after.capacity) reason = "Replacement capacity is full; earlier booking IDs take priority.";
 
     if (reason) return { bookingId: booking.id, customerId: booking.customerId, action: "refund", amount: booking.amount, reason };
@@ -37,6 +53,29 @@ export function actionsFor(
       amount: booking.amount, reason: moved ? "New time fits the customer's availability." : "Booking stays at the same time.",
     };
   });
+}
+
+/** Unaffected classes reserve customers first, followed by recoveries in session-ID order. */
+export function recoveryActions(state: State, changes: Plan["sessionChanges"]): BookingAction[] {
+  const affected = new Set(changes.map((item) => item.sessionId));
+  const calendar: BookingCalendar = { originalSessions: state.sessions,
+    sessions: state.sessions.filter((item) => !affected.has(item.id)),
+    bookings: state.bookings.filter((item) => !affected.has(item.sessionId)) };
+  const actions: BookingAction[] = [];
+  for (const change of [...changes].sort((a, b) => byId({ id: a.sessionId }, { id: b.sessionId }))) {
+    const before = state.sessions.find((item) => item.id === change.sessionId);
+    if (!before) continue;
+    const room = state.rooms.find((item) => item.id === change.after?.roomId);
+    const after = change.after && change.remedy !== "cancel" ? { ...before, ...change.after, capacity: Math.min(before.capacity, room?.capacity ?? before.capacity) } : undefined;
+    const bookings = state.bookings.filter((item) => item.sessionId === before.id);
+    const next = actionsFor(bookings, state.customers, before, after, state.studio.timezone, calendar);
+    actions.push(...next);
+    if (after) {
+      calendar.sessions.push(after);
+      calendar.bookings.push(...bookings.filter((booking) => next.some((item) => item.bookingId === booking.id && item.action !== "refund")));
+    }
+  }
+  return actions.sort((a, b) => byId({ id: a.bookingId }, { id: b.bookingId }));
 }
 
 export function scoreCandidate(

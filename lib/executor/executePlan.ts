@@ -1,6 +1,7 @@
-import { applyPlan, validate } from "../solver/validate";
+import { applyPlan, planTimeErrors, validate } from "../solver/validate";
 import { activateConstraint } from "../solver/constraints";
 import { executeRefund } from "./refund";
+import { reconcileRefund } from "./reconcileRefund";
 import { createCustomerLinks } from "../choices/service";
 import { getRepository, StoreError, withWorkspaceLock, type ExecutionResult, type Repository, type StoredPlan } from "../store";
 
@@ -11,13 +12,28 @@ export async function executePlan(workspaceId: string, planId: string, repositor
     let plan = repository.getPlan(workspaceId, planId);
     if (!plan) throw new StoreError(404, "Plan not found");
     if (expectedVersion !== undefined && expectedVersion !== (plan.version ?? 1)) throw new StoreError(409, "This plan changed. Reload the preview before approving.", "stale_plan");
-    if (plan.status === "executed") return { plan, results: plan.results };
+    if (plan.status === "executed") {
+      // Settlement checks must not reapply the schedule or start another refund.
+      for (const result of plan.results.filter((item) => item.status === "PENDING")) {
+        const event = repository.latestMoneyEvents(workspaceId).find((item) => item.kind === "refund" && item.requestId === `${planId}:${result.bookingId}`);
+        if (!event || event.status !== "PENDING") continue;
+        repository.renewLock(workspaceId, owner);
+        await reconcileRefund(event, repository);
+        repository.renewLock(workspaceId, owner);
+      }
+      const view = repository.getPlan(workspaceId, planId)!;
+      return { plan: view, results: view.results };
+    }
     const workspace = repository.requireReadyWorkspace(workspaceId);
     if (plan.status !== "proposed" && (!["executing", "partially_failed"].includes(plan.status) || !plan.basis)) throw new StoreError(409, "Plan cannot be executed");
     const basis = plan.status === "proposed" ? workspace.state : plan.basis!;
-    const validation = validate(basis, plan);
-    if (!validation.ok) throw new StoreError(409, `Plan is no longer valid: ${validation.errors.join("; ")}`);
     if (plan.status === "proposed") {
+      if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing")) throw new StoreError(409, "A customer payment is still being reconciled. Check its status, then refresh the recovery preview.", "CHECK_PAYMENT_STATUS");
+      if (planTimeErrors(plan, Date.now()).length) throw new StoreError(409, "This recovery preview has expired. Plan a fresh recovery before approving.", "PLAN_EXPIRED");
+    }
+    if (plan.status === "proposed") {
+      const validation = validate(basis, plan);
+      if (!validation.ok) throw new StoreError(409, `Plan is no longer valid: ${validation.errors.join("; ")}`);
       // Preserve existing terminal money states when applying the pure scheduling transformation.
       const next = activateConstraint(applyPlan(workspace.state, plan), plan.disruption);
       for (const booking of next.bookings) {
@@ -27,6 +43,7 @@ export async function executePlan(workspaceId: string, planId: string, repositor
       plan = { ...plan, status: "executing", basis };
       repository.transaction(() => { repository.saveState(workspaceId, next); repository.savePlan(plan!); createCustomerLinks(plan!, basis, next, repository); });
     } else {
+      // Scheduling rules apply at approval; retries settle the already-approved money actions.
       plan = { ...plan, status: "executing" };
       repository.savePlan(plan);
     }

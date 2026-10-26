@@ -169,7 +169,7 @@ describe("customer checkout", () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
     captureBehavior = () => Response.json(null, { status: 422 });
     await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ status: 422, name: "PAYPAL_ERROR" });
-    expect(repository.listCheckout(workspaceId)[0].status).toBe("failed");
+    expect(repository.listCheckout(workspaceId)[0].status).toBe("capturing");
   });
   it("recovers a lost capture response without capturing twice", async () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
@@ -191,11 +191,69 @@ describe("customer checkout", () => {
     expect(calls.filter((call) => call.url.endsWith("/capture"))).toHaveLength(1);
     expect(await cancelCheckout(workspaceId, orderId, repository)).toMatchObject({ cancelled: false, receipt: { status: "confirmed" } });
   });
-  it("releases transport failures once PayPal proves there was no capture", async () => {
+  it("retains an inconclusive empty capture snapshot and recovers a late completion webhook", async () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
     captureBehavior = () => { throw new Error("Timeout before capture"); };
     await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    expect(repository.listCheckout(workspaceId)[0].status).toBe("capturing");
+    const retryKey = randomUUID();
+    expect(await createOrder(workspaceId, input(), retryKey, repository)).toEqual({ orderId });
+    await expect(createOrder(workspaceId, { ...input(), customer: { ...input().customer, name: "Changed name" } }, retryKey, repository)).rejects.toMatchObject({ status: 409 });
+    await expect(createOrder(workspaceId, { ...input(), customer: { ...input().customer, name: "Changed name" } }, randomUUID(), repository)).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS" });
+    expect(orders.size).toBe(1);
+    vi.setSystemTime(Date.now() + 11 * 60_000);
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS" });
+    expect(repository.listCheckout(workspaceId)[0].status).toBe("capturing");
+    expect(calls.filter((call) => call.url.endsWith("/capture"))).toHaveLength(1);
+    const unit = complete(orderId).purchase_units[0];
+    expect(processWebhook(JSON.stringify({ id: "delayed-completion", event_type: "PAYMENT.CAPTURE.COMPLETED", resource: {
+      ...unit.payments!.captures[0], custom_id: unit.custom_id, supplementary_data: { related_ids: { order_id: orderId } },
+    } }), repository).matched).toBe(true);
+    expect(receipt(workspaceId, orderId, repository).status).toBe("confirmed");
+    closeRepository(); repository = getRepository();
+    expect(await createOrder(workspaceId, input(), retryKey, repository)).toEqual({ orderId });
+    expect(orders.size).toBe(1);
+    expect(repository.requireWorkspace(workspaceId).state.bookings).toHaveLength(1);
+    expect(repository.listLedger(workspaceId)).toHaveLength(1);
+  });
+  it("blocks a second pre-created order while the same customer's class payment is unresolved", async () => {
+    const first = await createOrder(workspaceId, input(), randomUUID(), repository);
+    const second = await createOrder(workspaceId, { ...input(), customer: { ...input().customer, email: "JAMIE@example.com" } }, randomUUID(), repository);
+    captureBehavior = () => { throw new Error("Unknown capture outcome"); };
+    await expect(captureCheckout(workspaceId, first.orderId, repository)).rejects.toThrow("Unknown capture outcome");
+    closeRepository(); repository = getRepository();
+    await expect(captureCheckout(workspaceId, second.orderId, repository)).rejects.toMatchObject({ status: 409, code: "CHECK_PAYMENT_STATUS" });
+    expect(repository.checkoutByOrder(workspaceId, first.orderId)?.status).toBe("capturing");
+    expect(repository.checkoutByOrder(workspaceId, second.orderId)?.status).toBe("pending");
+    expect(calls.filter((call) => call.url.endsWith("/capture"))).toHaveLength(1);
+    complete(first.orderId);
+    expect((await captureCheckout(workspaceId, first.orderId, repository)).status).toBe("confirmed");
+    expect(repository.requireWorkspace(workspaceId).state.bookings).toHaveLength(1);
+    expect(calls.filter((call) => call.url.endsWith("/capture"))).toHaveLength(1);
+  });
+  it("releases an unresolved hold only when PayPal authoritatively voids the order", async () => {
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("unknown capture"); };
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    orders.get(orderId)!.status = "VOIDED";
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ code: "RESTART_CHECKOUT" });
     expect(repository.listCheckout(workspaceId)[0].status).toBe("failed");
+  });
+  it("blocks recovery application while a capture is unresolved, then requires a fresh plan after reconciliation", async () => {
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("unknown capture"); };
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    const before = repository.requireWorkspace(workspaceId).state;
+    const disruption = { kind: "closure" as const, from: before.studio.weekStart, to: "2026-11-23T05:00:00Z" };
+    const plan = repository.createPlan(workspaceId, replan(before, disruption));
+    await expect(executePlan(workspaceId, plan.id, repository)).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS" });
+    expect(repository.requireWorkspace(workspaceId).state).toEqual(before);
+    expect(repository.getPlan(workspaceId, plan.id)?.status).toBe("proposed");
+    complete(orderId);
+    await captureCheckout(workspaceId, orderId, repository);
+    await expect(executePlan(workspaceId, plan.id, repository)).rejects.toThrow("Missing booking action");
+    const fresh = repository.createPlan(workspaceId, replan(repository.requireWorkspace(workspaceId).state, disruption));
+    expect((await executePlan(workspaceId, fresh.id, repository)).results[0]).toMatchObject({ status: "COMPLETED" });
   });
   it("refuses checkout for a changed or cancelled class and releases its seat", async () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);

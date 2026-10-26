@@ -36,7 +36,8 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
   const weights = { ...defaultWeights, ...options.weights };
   const affected = affectedSessions(state, disruption, now);
   const affectedIds = new Set(affected.map((session) => session.id));
-  const working: State = { ...state, sessions: state.sessions.filter((session) => !affectedIds.has(session.id)) };
+  const working: State = { ...state, sessions: state.sessions.filter((session) => !affectedIds.has(session.id)),
+    bookings: state.bookings.filter((booking) => !affectedIds.has(booking.sessionId)) };
   const instructors = [...state.instructors].sort(byId);
   const rooms = [...state.rooms].sort(byId);
   const plan: Plan = {
@@ -52,7 +53,7 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
     };
     const consider = (remedy: Remedy, candidate: Session) => {
       if (feasibilityErrors(working, candidate, disruption).length) return;
-      const actions = actionsFor(bookings, state.customers, session, candidate, tz);
+      const actions = actionsFor(bookings, state.customers, session, candidate, tz, { ...working, originalSessions: state.sessions });
       const score = scoreCandidate(remedy, session, candidate, actions, weights, tz);
       const key = `${candidate.start}|${candidate.instructorId}|${candidate.roomId}|${remedy}`;
       if (score < best.score || (score === best.score && compare(key, best.key) < 0)) {
@@ -111,7 +112,10 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
     const change: Plan["sessionChanges"][number] = {
       sessionId: session.id, remedy: best.remedy, before: placement(session), reason: reasons[best.remedy],
     };
-    if (best.after) { change.after = placement(best.after); working.sessions.push(best.after); }
+    if (best.after) {
+      change.after = placement(best.after); working.sessions.push(best.after);
+      working.bookings.push(...bookings.filter((booking) => best.actions.some((action) => action.bookingId === booking.id && action.action !== "refund")));
+    }
     plan.sessionChanges.push(change);
     plan.bookingActions.push(...best.actions);
     if (best.remedy === "cancel") plan.warnings.push(`${session.title}: cancelled within the recovery horizon.`);

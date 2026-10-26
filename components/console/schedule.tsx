@@ -15,6 +15,7 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
   useEffect(() => { latest.current = { state, plan, busy, onAdjust, mode }; }, [state, plan, busy, onAdjust, mode]);
   const [dropError, setDropError] = useState("");
   const schedulerRef = useRef<BryntumScheduler>(null);
+  const axisReady = useRef<Promise<void>>(Promise.resolve());
   const data = useMemo(() => {
     const mapped = mapSchedule(state, mode, plan, updatedPlan);
     if (highlightedSessionId) for (const event of mapped.events) {
@@ -70,24 +71,45 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
   const focusStart = range.focusKey;
   useEffect(() => {
     const scheduler = schedulerRef.current?.instance;
-    if (!scheduler || zoom !== "week") return;
-    // Runtime timeline methods use wall dates after the project's initial timezone conversion.
-    void scheduler.scrollToDate(new Date(`${focusStart}T07:00:00`), { block: "start", animate: false });
-  }, [focusStart, zoom]);
+    if (!scheduler) return;
+    const project = scheduler.project;
+    if (!("commitAsync" in project)) return;
+    let cancelled = false;
+    // Initial timezone conversion can shift midnight across a day. Runtime bounds are studio wall dates.
+    axisReady.current = project.commitAsync().then(async () => {
+      if (cancelled || scheduler.isDestroyed) return;
+      const start = new Date(`${range.startKey}T${zoom === "day" ? "07:00:00" : "00:00:00"}`);
+      const end = new Date(`${range.endKey}T00:00:00`);
+      scheduler.minDate = start;
+      scheduler.maxDate = end;
+      await scheduler.setTimeSpan(start, end);
+      if (cancelled || scheduler.isDestroyed || zoom !== "week") return;
+      // Pixel scrolling cannot extend the fixed range.
+      const x = scheduler.getCoordinateFromDate(new Date(`${focusStart}T07:00:00`), { local: true });
+      if (x >= 0) void scheduler.scrollHorizontallyTo(x, { animate: false });
+    });
+    return () => { cancelled = true; };
+  }, [focusStart, zoom, range.startKey, range.endKey]);
   useEffect(() => {
     const scheduler = schedulerRef.current?.instance;
     if (!scheduler || !highlightedSessionId) return;
+    const project = scheduler.project;
+    if (!("commitAsync" in project)) return;
     // Run after React's event-store update; scroll both the day and resource into view.
+    let cancelled = false;
     const frame = requestAnimationFrame(() => {
-      if (scheduler.isDestroyed) return;
-      const event = (scheduler.eventStore.getById(`${highlightedSessionId}-new`) ?? scheduler.eventStore.getById(highlightedSessionId)) as EventModel | undefined;
-      const mapped = data.events.find((item) => item.id === event?.id);
-      // A booking on another day must not expand a Day view's axis.
-      if (event && mapped && Date.parse(String(mapped.startDate)) >= Date.parse(range.start) && Date.parse(String(mapped.endDate)) <= Date.parse(range.end)) {
-        void scheduler.scrollEventIntoView(event, { block: "nearest", inline: "nearest", animate: false });
-      }
+      void axisReady.current.then(() => project.commitAsync()).then(() => {
+        if (cancelled || scheduler.isDestroyed) return;
+        const event = (scheduler.eventStore.getById(`${highlightedSessionId}-new`) ?? scheduler.eventStore.getById(highlightedSessionId)) as EventModel | undefined;
+        const mapped = data.events.find((item) => item.id === event?.id);
+        // A booking on another day must not expand a Day view's axis.
+        if (event && mapped && Date.parse(String(mapped.startDate)) >= Date.parse(range.start) && Date.parse(String(mapped.endDate)) <= Date.parse(range.end)) {
+          const options = { block: "nearest" as const, inline: "nearest" as const, animate: false, extendTimeAxis: false };
+          void scheduler.scrollEventIntoView(event, options);
+        }
+      });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelled = true; cancelAnimationFrame(frame); };
   }, [highlightedSessionId, data.events, range.start, range.end]);
   const renderer = useMemo<NonNullable<BryntumSchedulerProps["eventRenderer"]>>(() => ({ eventRecord, renderData }) => {
     const info = data.details[String(eventRecord.id)];

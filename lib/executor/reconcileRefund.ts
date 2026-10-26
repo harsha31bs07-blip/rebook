@@ -1,15 +1,8 @@
 import { Client, Environment, PaymentsController } from "@paypal/paypal-server-sdk";
 import type { ApiResponse, CapturedPayment, Refund } from "@paypal/paypal-server-sdk";
-import { z } from "zod";
-import { MoneySchema } from "../domain/schemas";
 import type { PayPalPayment } from "../paypal/client";
 import type { LedgerEvent, Repository } from "../store";
-
-const Evidence = z.object({
-  id: z.string().min(1), status: z.string().min(1), invoice_id: z.string().optional(), request_id: z.string().optional(),
-  paypal_request_id: z.string().optional(), note_to_payer: z.string().optional(),
-  amount: z.object({ currency_code: z.literal("USD"), value: MoneySchema }).optional(),
-});
+import { matchingRefund } from "../paypal/refund-evidence";
 type Reconciliation = { kind: "found"; payment: PayPalPayment } | { kind: "absent" } | { kind: "unknown" };
 
 function body(response: ApiResponse<CapturedPayment | Refund>): Record<string, unknown> {
@@ -18,18 +11,6 @@ function body(response: ApiResponse<CapturedPayment | Refund>): Record<string, u
   if (typeof response.body !== "string") return {};
   const value: unknown = JSON.parse(response.body);
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-function matchingPayment(candidate: unknown, event: LedgerEvent): PayPalPayment | undefined {
-  const parsed = Evidence.safeParse(candidate);
-  if (!parsed.success) return;
-  const refund = parsed.data;
-  // Structured identifiers must agree. A note or echoed request header is not ownership proof.
-  if (refund.invoice_id !== undefined && refund.invoice_id !== event.requestId) return;
-  if (event.paypalId && refund.id !== event.paypalId) return;
-  if ([refund.request_id, refund.paypal_request_id].some((id) => id !== undefined && id !== event.requestId)) return;
-  if (refund.invoice_id !== event.requestId && refund.id !== event.paypalId) return;
-  if (!refund.amount || refund.amount.value !== event.amount) return;
-  return { id: refund.id, status: refund.status, amount: refund.amount };
 }
 
 /** Read-only SDK reconciliation, isolated from the refund writer and its retry policy. */
@@ -45,7 +26,7 @@ export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> 
   }));
   try {
     if (event.paypalId) {
-      const found = matchingPayment(body(await controller.getRefund({ refundId: event.paypalId })), event);
+      const found = matchingRefund(body(await controller.getRefund({ refundId: event.paypalId })), event);
       if (!found) return { kind: "unknown" };
       return { kind: "found", payment: found };
     }
@@ -58,7 +39,7 @@ export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> 
       if (id) candidates.push(body(await controller.getRefund({ refundId: id })));
     }
     for (const candidate of candidates) {
-      const found = matchingPayment(candidate, event);
+      const found = matchingRefund(candidate, event);
       if (found) return { kind: "found", payment: found };
     }
     // An unrefunded completed capture is positive evidence for retrying a rejected request.
@@ -73,15 +54,16 @@ export async function reconcileRefund(event: LedgerEvent, repository: Repository
   const delivered = repository.latestMoneyEvents(event.workspaceId).find((item) => item.kind === "refund" && item.requestId === event.requestId);
   const status = delivered?.status === "COMPLETED" ? "COMPLETED" : outcome.payment.status;
   const paypalId = delivered?.status === "COMPLETED" ? delivered.paypalId : outcome.payment.id;
-  repository.transaction(() => {
-    repository.appendLedger({ ...event, paypalId, status,
+  const settled = repository.transaction(() => {
+    const recorded = repository.appendLedger({ ...event, paypalId, status,
       error: status === "FAILED" ? "PayPal reports that this refund failed" : undefined });
     const workspace = repository.requireWorkspace(event.workspaceId, true);
     const booking = workspace.state.bookings.find((item) => item.id === event.bookingId && item.payment?.captureId === event.captureId);
     if (booking && !event.partial) {
-      booking.status = status === "COMPLETED" ? "refunded" : "refund_pending";
+      booking.status = recorded.status === "COMPLETED" ? "refunded" : "refund_pending";
       repository.saveState(workspace.id, workspace.state);
     }
+    return recorded;
   });
-  return { kind: "found", payment: { ...outcome.payment, id: paypalId, status } };
+  return { kind: "found", payment: { ...outcome.payment, id: settled.paypalId, status: settled.status } };
 }

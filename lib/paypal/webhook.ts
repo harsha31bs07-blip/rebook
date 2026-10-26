@@ -3,6 +3,7 @@ import { MoneySchema } from "../domain/schemas";
 import { toCents } from "../domain/time";
 import { getRepository, type Repository } from "../store";
 import { confirmOrder } from "../checkout/service";
+import { matchingRefund } from "./refund-evidence";
 
 export const WebhookSchema = z.object({
   id: z.string().min(1), event_type: z.string().min(1),
@@ -57,17 +58,26 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
       }
     }
     if (event.event_type === "PAYMENT.CAPTURE.REFUNDED") {
-      const previousRefund = latest.find((item) => item.kind === "refund" && item.paypalId === resource.id)
-        ?? latest.find((item) => item.kind === "refund" && item.captureId === capture.captureId && ["REQUESTED", "PENDING"].includes(item.status));
+      const evidence = { ...resource, status };
+      const exact = latest.find((item) => item.kind === "refund" && item.paypalId === resource.id);
+      const matchesExact = exact && (exact.requestId === `webhook:${resource.id}`
+        ? resource.amount?.value === exact.amount : matchingRefund(evidence, exact));
+      if (exact && (exact.captureId !== capture.captureId || !matchesExact)) return { duplicate: false, matched: false };
+      const byRequest = latest.find((item) => item.kind === "refund" && item.captureId === capture.captureId &&
+        ["REQUESTED", "PENDING"].includes(item.status) && matchingRefund(evidence, item));
+      const previousRefund = exact && exact.requestId !== `webhook:${resource.id}` ? exact : byRequest ?? exact;
       const amount = resource.amount?.value ?? previousRefund?.amount;
       if (!amount || toCents(amount) > toCents(capture.amount)) return { duplicate: false, matched: false };
-      const otherRefunded = latest.filter((item) => item.kind === "refund" && item.captureId === capture.captureId && item.status === "COMPLETED" && item.requestId !== previousRefund?.requestId)
+      const otherRefunded = latest.filter((item) => item.kind === "refund" && item.captureId === capture.captureId && item.status === "COMPLETED" && item.requestId !== previousRefund?.requestId && item.paypalId !== resource.id)
         .reduce((sum, item) => sum + toCents(item.amount), 0);
       if (otherRefunded + toCents(amount) > toCents(capture.amount)) return { duplicate: false, matched: false };
       repository.appendLedger({ workspaceId: workspace.id, bookingId: capture.bookingId, kind: "refund", amount,
         paypalId: resource.id, captureId: capture.captureId, requestId: previousRefund?.requestId ?? `webhook:${resource.id}`, status,
         ...(previousRefund?.partial ? { partial: true } : {}) });
-      if (booking && !previousRefund?.partial) booking.status = otherRefunded + toCents(amount) >= toCents(capture.amount) ? "refunded" : "refund_pending";
+      if (booking && !previousRefund?.partial) {
+        if (otherRefunded + toCents(amount) >= toCents(capture.amount)) booking.status = "refunded";
+        else if (previousRefund && previousRefund.requestId !== `webhook:${resource.id}`) booking.status = "refund_pending";
+      }
     } else {
       // A late completion event must not undo a reversal or a booking's refund state.
       if (capture.status !== "REVERSED" || status === "REVERSED") repository.appendLedger({ ...capture, status });

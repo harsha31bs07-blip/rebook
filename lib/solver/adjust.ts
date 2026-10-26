@@ -1,6 +1,6 @@
 import type { Plan, Session, State } from "../domain/types";
-import { addLocalDays, compare, iso, localParts, zonedTimeToUtc } from "../domain/time";
-import { actionsFor, calculateTotals } from "./score";
+import { addLocalDays, iso, localParts, zonedTimeToUtc } from "../domain/time";
+import { calculateTotals, recoveryActions } from "./score";
 import { applyPlan, feasibilityErrors, validate } from "./validate";
 
 export type OwnerAdjustment = { sessionId: string; start: string; instructorId?: string; roomId?: string };
@@ -43,10 +43,7 @@ export function adjustPlan(state: State, plan: Plan, input: OwnerAdjustment): Pl
   change.remedy = Date.parse(before.start) !== Date.parse(after.start) ? "move_time" : before.roomId !== after.roomId ? "move_room" : "substitute";
   change.ownerAdjusted = true;
   change.reason = "Owner adjusted the proposed placement; booking preferences were checked again.";
-  const bookings = state.bookings.filter((item) => item.sessionId === input.sessionId);
-  const ids = new Set(bookings.map((item) => item.id));
-  next.bookingActions = [...next.bookingActions.filter((item) => !ids.has(item.bookingId)),
-    ...actionsFor(bookings, state.customers, before, after, state.studio.timezone)].sort((a, b) => compare(a.bookingId, b.bookingId));
+  next.bookingActions = recoveryActions(state, next.sessionChanges);
   next.totals = calculateTotals(next.sessionChanges.length, next.bookingActions);
   // Rebuild placement warnings so old capacity warnings do not survive an adjustment.
   next.warnings = next.sessionChanges.flatMap((item) => {

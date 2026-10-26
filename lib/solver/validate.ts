@@ -1,7 +1,7 @@
 import type { Disruption, Plan, Session, State } from "../domain/types";
 import { PlanSchema } from "../domain/schemas";
 import { byId, compare, insideOpenHours, localParts, overlaps } from "../domain/time";
-import { actionsFor, calculateTotals, isActiveBooking } from "./score";
+import { calculateTotals, hasCustomerConflict, isActiveBooking, recoveryActions } from "./score";
 import { activeConstraints } from "./constraints";
 
 export function usesDisruptedResource(session: Session, disruption: Disruption): boolean {
@@ -70,6 +70,12 @@ export function applyPlan(state: State, plan: Plan): State {
   return result;
 }
 
+/** Check elapsed time at the write boundary without changing a plan's historical validation basis. */
+export function planTimeErrors(plan: Plan, now: number): string[] {
+  return plan.sessionChanges.flatMap((change) => Date.parse(change.before.start) <= now ||
+    (change.after && Date.parse(change.after.start) <= now) ? [`Recovery class has already started: ${change.sessionId}`] : []);
+}
+
 export function validate(state: State, plan: Plan): { ok: boolean; errors: string[] } {
   const parsed = PlanSchema.safeParse(plan);
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).sort(compare) };
@@ -116,18 +122,19 @@ export function validate(state: State, plan: Plan): { ok: boolean; errors: strin
     const booking = state.bookings.find((item) => item.id === action.bookingId);
     if (booking && (booking.customerId !== action.customerId || booking.amount !== action.amount)) errors.push(`Booking details do not match: ${action.bookingId}`);
   }
-  for (const session of affected) {
-    const expected = actionsFor(expectedBookings.filter((booking) => booking.sessionId === session.id), state.customers,
-      session, next.sessions.find((item) => item.id === session.id), state.studio.timezone);
-    for (const action of expected) {
-      const actual = plan.bookingActions.find((item) => item.bookingId === action.bookingId);
-      if (!actual) errors.push(`Missing booking action: ${action.bookingId}`);
-      else if (actual.action !== action.action) errors.push(`Invalid booking action: ${action.bookingId}`);
-    }
+  for (const action of recoveryActions(state, plan.sessionChanges)) {
+    const actual = plan.bookingActions.find((item) => item.bookingId === action.bookingId);
+    if (!actual) errors.push(`Missing booking action: ${action.bookingId}`);
+    else if (actual.action !== action.action) errors.push(`Invalid booking action: ${action.bookingId}`);
   }
   for (const booking of next.bookings.filter(isActiveBooking)) {
     if (!next.sessions.some((session) => session.id === booking.sessionId)) errors.push(`Active booking has no session: ${booking.id}`);
     if (!next.customers.some((customer) => customer.id === booking.customerId)) errors.push(`Active booking has no customer: ${booking.id}`);
+    const before = state.sessions.find((session) => session.id === booking.sessionId);
+    const after = next.sessions.find((session) => session.id === booking.sessionId);
+    if (before && after && hasCustomerConflict(booking, before, after, { ...next, originalSessions: state.sessions })) {
+      errors.push(`Customer double booking: ${booking.id}`);
+    }
   }
   try {
     const totals = calculateTotals(affected.length, plan.bookingActions);

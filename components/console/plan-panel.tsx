@@ -15,7 +15,7 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
     const customer = state.customers.find((item) => item.id === booking?.customerId);
     return <div className="refund-row" key={result.bookingId}>
       <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{result.status === "SIMULATED" ? "Simulated" : result.status.toLowerCase()}</span></div>
-      {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{result.error}</p>}
+      {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{["REQUESTED", "UNKNOWN", "PENDING"].includes(result.status) ? "PayPal hasn't confirmed this refund yet. Retry checks its status before another attempt." : "This refund needs attention. Retry to reconcile with PayPal."}</p>}
     </div>;
   })}</section>;
 }
@@ -58,9 +58,9 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     </div>}
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-    {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={onApprove}>{approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
+    {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button id="judge-approve" className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={onApprove}>{approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
     {plan.status === "executing" && <><p className="notice" role="status">Applying recovery and processing sandbox refunds…</p>{!busy && <button className="primary full-width" onClick={onApprove}>Resume refund processing</button>}</>}
-    {plan.status === "partially_failed" && <><p className="warning">The schedule was updated, but some refunds need attention. Review the results below.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry refunds"}</button></>}
+    {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={onApprove}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
     <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <RefundResults results={results} state={state} />

@@ -6,6 +6,8 @@ type WireCall = NonNullable<StudioChatRequest["messages"][number]["tool_calls"]>
 type RememberedCall = { call: WireCall; turnId: string };
 type SignedCall = AgAiToolCall & { extra_content?: WireCall["extra_content"]; rebook_turn_id?: string };
 
+export const ANALYST_UNAVAILABLE = "The Recovery analyst can't reach Gemini right now. Your dashboard still works. Please try again shortly.";
+
 export function toChatRequest(request: AgLlmRequest, remembered: ReadonlyMap<string, RememberedCall> = new Map()): StudioChatRequest {
   const messages: StudioChatRequest["messages"] = [];
   let calls: WireCall[] = [];
@@ -75,13 +77,21 @@ export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmA
   return {
     executeTurn(request, options) {
       const pending = (async () => {
-        const response = await fetch(endpoint, { method: "POST", signal: options?.signal,
+        const unavailable = () => fromChatCompletion({ id: `unavailable-${Date.now()}`, choices: [{ finish_reason: "stop", message: { role: "assistant", content: ANALYST_UNAVAILABLE } }] }, remembered);
+        let response: Response;
+        try { response = await fetch(endpoint, { method: "POST", signal: options?.signal,
           headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools, toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
+        } catch {
+          options?.signal?.throwIfAborted();
+          return unavailable();
+        }
         if (!response.ok) {
+          if (response.status >= 500 || response.status === 429) return unavailable();
           const error = await response.json().catch(() => ({}));
           throw new Error(error.error || "The recovery analyst is unavailable. Please try again shortly.");
         }
-        return fromChatCompletion(await response.json(), remembered);
+        try { return fromChatCompletion(await response.json(), remembered); }
+        catch { options?.signal?.throwIfAborted(); return unavailable(); }
       })();
       const complete = pending.then((result) => result.response);
       // The stream consumer owns failures; avoid an unhandled rejection before it awaits complete.

@@ -30,12 +30,12 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <textarea ref={textarea} id="disruption" name="text" {...{ toolparamdescription: "What changed: instructor absence, unavailable room, or studio closure, including the local day and time." }} maxLength={500} rows={4} placeholder="An instructor is out, a room is unavailable…" value={text} onChange={(event) => setText(event.target.value)} disabled={busy} required />
       <div className="input-caption"><span>Use your own words</span><span>{text.length}/500</span></div>
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
-      <p className="try-label">Or try an example</p><div className="examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
+      <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
-      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill">{interpretation.aiBusy ? "Rules (AI busy)" : interpretationSource(interpretation.source, interpretation.model)}</span></div>
+      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={interpretation.aiBusy ? 0 : undefined} title={interpretation.aiBusy ? "Gemini is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{interpretation.aiBusy ? "Rules (AI busy)" : interpretationSource(interpretation.source, interpretation.model)}</span></div>
       <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone} · {Math.round(interpretation.confidence * 100)}% confidence</p>
       {interpretation.notes.length > 0 && <ul>{interpretation.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
-      <div className="button-row"><button className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>
+      <div className="button-row"><button id="judge-plan" className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>
     </div>}
     <div className="how-it-works"><h3>A calmer way to handle change</h3><ol><li>Describe the disruption.</li><li>Review every change on your timeline.</li><li>Approve the plan. Refunds are handled.</li></ol><p>You stay in control. Nothing changes until you approve.</p></div>
   </>;

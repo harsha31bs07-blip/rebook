@@ -179,7 +179,7 @@ export async function interpretDisruption(text: string, state: State, nowIso: st
     result = await generateJson(promptFor(text, state, nowIso, weekStart), responseSchema, IntentSchema, { identity });
   } catch (error) {
     if (!(error instanceof AiUnavailable)) throw error;
-    return { ...fallback(), ...(error.busy ? { aiBusy: true } : {}) };
+    return { ...fallback(), aiBusy: true };
   }
   if (result.data.confidence < 0.7) throw new InterpretationError(state);
   try {

@@ -1,9 +1,20 @@
 import { api, PlanIdSchema, WorkspaceIdSchema } from "../../../../../../lib/api/http";
 import { explainPlan } from "../../../../../../lib/ai/explain";
 import { draftCustomerMessages } from "../../../../../../lib/ai/messages";
-import { getRepository, StoreError } from "../../../../../../lib/store";
+import { getRepository, StoreError, withWorkspaceLock } from "../../../../../../lib/store";
 
 export const runtime = "nodejs";
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string; planId: string }> }): Promise<Response> {
+  return api(async () => {
+    const params = await context.params;
+    const id = WorkspaceIdSchema.parse(params.id);
+    const planId = PlanIdSchema.parse(params.planId);
+    const repository = getRepository();
+    await withWorkspaceLock(repository, id, async () => repository.discardPlan(id, planId));
+    return { discarded: true };
+  });
+}
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string; planId: string }> }): Promise<Response> {
   return api(async () => {

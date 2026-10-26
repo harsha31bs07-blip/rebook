@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type WorkspaceResponse } from "@/lib/client/api";
+import { studioStartupMessage, watchStudioRequest } from "../../lib/client/studio-startup";
 
 function hasPendingRefunds(workspace?: WorkspaceResponse): boolean {
   const latest = new Map<string, string>();
@@ -13,6 +14,8 @@ export function useWorkspace(id: string, watchExecution: boolean) {
   const [workspace, setWorkspace] = useState<WorkspaceResponse>();
   const [error, setError] = useState("");
   const [expired, setExpired] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => workspace || expired ? undefined : watchStudioRequest(() => setSlow(true)), [workspace, expired]);
   const [bookingNotice, setBookingNotice] = useState<{ message: string; sessionId: string }>();
   const previous = useRef<WorkspaceResponse | undefined>(undefined);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -70,5 +73,5 @@ export function useWorkspace(id: string, watchExecution: boolean) {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [id, watchExecution, workspace?.status, executing, pending, receive]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
-  return { workspace, error, refresh, expired, bookingNotice };
+  return { workspace, error, refresh, expired, bookingNotice, startupMessage: studioStartupMessage(workspace ? "preparing" : slow ? "waking" : "requesting") };
 }

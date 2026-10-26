@@ -258,6 +258,13 @@ export class Repository {
     const result = this.db.prepare("UPDATE plans SET data = ? WHERE id = ? AND workspace_id = ?").run(JSON.stringify(plan), plan.id, plan.workspaceId);
     if (!result.changes) throw new StoreError(404, "Plan not found");
   }
+  discardPlan(workspaceId: string, id: string): void {
+    this.requireReadyWorkspace(workspaceId);
+    const plan = this.getPlan(workspaceId, id);
+    if (!plan) throw new StoreError(404, "Plan not found");
+    if (plan.status !== "proposed") throw new StoreError(409, "Only a proposed plan can be discarded.");
+    this.db.prepare("DELETE FROM plans WHERE id = ? AND workspace_id = ?").run(id, workspaceId);
+  }
   clearPlans(workspaceId: string): void {
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }

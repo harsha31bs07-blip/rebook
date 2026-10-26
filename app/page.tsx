@@ -13,6 +13,6 @@ export default function Home() {
         <div className="preview-bottom"><span>You review every change.</span><strong>You make the call.</strong></div>
       </div>
     </section>
-    <footer className="landing-footer"><span>Less admin. More room to move.</span><Link href="/agent-ready">Agent-ready with WebMCP</Link><span>Rebook · A calmer week starts here.</span></footer>
+    <footer className="landing-footer"><span>Less admin. More room to move.</span><Link href="/built-with">How it&apos;s built</Link><Link href="/agent-ready">Agent-ready with WebMCP</Link><span>Rebook · A calmer week starts here.</span></footer>
   </main>;
 }

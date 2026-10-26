@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgAiConversationItem, AgAiEvent, AgLlmRequest } from "ag-studio";
-import { fromChatCompletion, geminiAdapter, toChatRequest } from "../lib/insights/gemini-adapter";
+import { ANALYST_UNAVAILABLE, fromChatCompletion, geminiAdapter, toChatRequest } from "../lib/insights/gemini-adapter";
 import type { StudioCompletion } from "../lib/ai/studio-gemini";
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -73,10 +73,21 @@ describe("Studio Gemini adapter", () => {
     expect(wire.messages[0].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
     expect(wire.messages[3].tool_calls?.[0].id).toBe("call-3");
   });
-  it("surfaces friendly proxy errors and marks token truncation incomplete", async () => {
+  it("shows a friendly chat message during proxy outages and marks token truncation incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Please try again shortly." }, { status: 503 })));
     const handler = geminiAdapter("/llm").executeTurn(request);
-    await expect(handler.complete).rejects.toThrow("Please try again shortly.");
+    const events: AgAiEvent[] = [];
+    for await (const event of handler.stream) events.push(event);
+    expect(events).toContainEqual(expect.objectContaining({ type: "TEXT_MESSAGE_CHUNK", delta: ANALYST_UNAVAILABLE }));
+    expect((await handler.complete).output[0]).toMatchObject({ type: "message", content: [{ type: "text", text: ANALYST_UNAVAILABLE, annotations: [] }] });
     expect(fromChatCompletion({ ...toolResponse, choices: [{ message: { role: "assistant", content: "partial" }, finish_reason: "length" }] }, new Map()).response.status).toBe("incomplete");
+  });
+  it("keeps transport errors out of chat and still honours cancellation", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed: upstream stack")));
+    const handler = geminiAdapter("/llm").executeTurn(request);
+    expect((await handler.complete).output[0]).toMatchObject({ content: [{ type: "text", text: ANALYST_UNAVAILABLE, annotations: [] }] });
+    const controller = new AbortController(); controller.abort();
+    const cancelled = geminiAdapter("/llm").executeTurn(request, { signal: controller.signal });
+    await expect(cancelled.complete).rejects.toMatchObject({ name: "AbortError" });
   });
 });

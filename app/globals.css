@@ -433,3 +433,26 @@ textarea { resize: vertical; min-height: 120px; }
 .agent-ready-page dt { font-weight: 600; }
 .agent-ready-page code { overflow-wrap: anywhere; }
 .agent-ready-page ol { list-style: decimal; padding-left: 24px; }
+
+.judge-hint { padding: 14px; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 10px; background: #eff6ff; font-size: 12px; }
+.judge-hint > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.judge-hint > div button { padding: 0 8px; font-size: 20px; }
+.judge-hint ol { list-style: decimal; padding-left: 20px; margin-top: 8px; }
+.judge-hint li { padding-block: 3px; }
+.judge-hint li button, .judge-hint a { padding: 2px 0; border: 0; background: transparent; text-align: left; color: #1d4ed8; text-decoration: underline; text-underline-offset: 3px; }
+.judge-hint li button:disabled { color: var(--muted); text-decoration: none; }
+.built-with-page { max-width: 1200px; }
+.built-with-page article { max-width: 1000px; }
+.built-nav { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.built-nav a, .built-flow { color: #1d4ed8; text-decoration: underline; text-underline-offset: 3px; }
+.built-table { overflow-x: auto; margin: 20px 0 32px; border: 1px solid var(--border); border-radius: 10px; background: white; }
+.built-table table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; line-height: 1.6; }
+.built-table th, .built-table td { padding: 14px 16px; vertical-align: top; border-bottom: 1px solid var(--border); }
+.built-table thead { background: #f8fafc; }
+.built-table tbody tr:last-child > * { border-bottom: 0; }
+.built-table th[scope="row"] { min-width: 150px; width: 24%; font-weight: 600; }
+.built-table .demo-button { min-width: 150px; padding: 8px 10px; font-size: 12px; }
+.built-table .error { font-size: 12px; }
+.built-with-page section { scroll-margin-top: 24px; }
+.error-box > button, .warning > button { margin-top: 10px; }
+@media (max-width: 600px) { .built-table th, .built-table td { padding: 10px; } .built-table th[scope="row"] { min-width: 120px; } }

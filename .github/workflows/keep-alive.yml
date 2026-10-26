@@ -1,0 +1,16 @@
+name: Keep demo awake
+
+on:
+  workflow_dispatch:
+  # enable on Nov 16
+  # schedule:
+  #   - cron: '*/10 * * * *'
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check demo health
+        run: curl --fail --silent --show-error --max-time 10 https://rebook-by9u.onrender.com/api/health

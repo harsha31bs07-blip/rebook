@@ -17,6 +17,7 @@ vi.mock("react", async (original) => ({
     return [harness.slots[index], (value: unknown) => { harness.slots[index] = typeof value === "function" ? value(harness.slots[index]) : value; }];
   },
   useEffect: () => {},
+  useCallback: (callback: unknown) => callback,
 }));
 vi.mock("next/dynamic", () => ({ default: () => "dynamic-view" }));
 vi.mock("next/link", () => ({ default: "a" }));
@@ -119,6 +120,23 @@ describe("WebMCP page handlers and human payment boundary", () => {
     (find(tree, (element) => element.type === "plan-panel").props.onApprove as () => void)();
     for (let index = 0; index < 8; index++) await Promise.resolve();
     expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 2);
+  });
+
+  it("shows an honest PayPal outage banner and retries the same approval route", async () => {
+    renderOwner(); await call("request_approval", { planId: "plan-1" });
+    harness.api.approve.mockRejectedValueOnce(new Error("upstream stack trace"));
+    (find(renderOwner(), (element) => element.type === "plan-panel").props.onApprove as () => void)();
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    const tree = renderOwner();
+    const alert = find(tree, (element) => element.props.role === "alert");
+    expect(alert.props.children).toContain("PayPal sandbox couldn't confirm every refund. Retry to check recorded payments before any further refund attempt.");
+    expect(JSON.stringify(alert.props.children)).not.toContain("upstream stack trace");
+    const retry = find(alert, (element) => element.type === "button" && element.props.children === "Retry");
+    harness.api.approve.mockResolvedValueOnce({ plan: { ...details.plan, status: "executed" }, results: [] });
+    (retry.props.onClick as () => void)();
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(harness.api.approve.mock.calls).toEqual([["workspace", "plan-1", 1], ["workspace", "plan-1", 1]]);
+    expect(harness.api.plan).not.toHaveBeenCalled();
   });
 
   it("accepts a saved adjustment when its subsequent workspace refresh fails", async () => {

@@ -26,7 +26,7 @@ export default function Dashboard({ id }: { id: string }) {
   }, [id, retry]);
   if (expired) return <ExpiredDemo />;
   return <main id="main-content" tabIndex={-1} className="insights-app">
-    <ConsoleHeader name={data?.studio.name} week={data?.studio.week_label}><Link href={`/w/${id}`}>Back to schedule <span aria-hidden="true">↗</span></Link></ConsoleHeader>
+    <ConsoleHeader workspaceId={id} name={data?.studio.name} week={data?.studio.week_label}><Link href={`/w/${id}`}>Back to schedule <span aria-hidden="true">↗</span></Link></ConsoleHeader>
     <div className="insights-heading"><div><p className="eyebrow">Your studio, in perspective</p><h1>Studio insights</h1></div><p className="muted">Real bookings. Every recovery accounted for.</p></div>
     {error ? <div className="insight-loading" role="alert"><p>{error}</p><button onClick={() => setRetry((value) => value + 1)}>Try again</button></div> : data ? <StudioReport key={id} id={id} data={data} /> : <p className="insight-loading" role="status">Loading workspace records…</p>}
   </main>;

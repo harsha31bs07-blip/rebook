@@ -56,9 +56,12 @@ export default function StudioReport({ id, data }: { id: string; data: Insights 
     const api = ref.current?.api;
     if (api) { api.setState({ ...api.getState(), selectedPageId: pageId }); reconcileTools(); }
   };
+  useEffect(() => {
+    if (window.location.hash === "#recovery-analyst") document.getElementById("recovery-analyst")?.focus();
+  }, []);
   return <section className="insights-report" aria-label="Studio report">
     <div className="insights-toolbar"><nav aria-label="Insight pages">{reportPages.map((page) => <button key={page.id} aria-pressed={page.id === selectedPage} onClick={() => changePage(page.id)}>{page.label}</button>)}</nav>
-      <div><button aria-pressed={edit} onClick={() => setEdit(!edit)}>{edit ? "Done editing" : "Edit report"}</button><button className="primary" onClick={() => {
+      <div><button aria-pressed={edit} onClick={() => setEdit(!edit)}>{edit ? "Done editing" : "Edit report"}</button><button id="recovery-analyst" className="primary" onClick={() => {
         setEdit(true);
         const api = ref.current?.api;
         if (api) { const state = api.getState(); api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: false } } }); reconcileTools(); }

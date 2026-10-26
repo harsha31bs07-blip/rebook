@@ -8,6 +8,7 @@ import { replan } from "../lib/solver/replan";
 const harness = vi.hoisted(() => ({
   cursor: 0, slots: [] as unknown[], effects: [] as (() => void)[], cleanups: [] as (() => void)[],
   api: { create: vi.fn(), details: vi.fn(), workspace: vi.fn() }, push: vi.fn(),
+  ApiError: class extends Error { constructor(public status: number, message: string, public code?: string, public retryAfter?: number) { super(message); } },
 }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
@@ -31,8 +32,8 @@ vi.mock("react", async (original) => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: harness.push }) }));
 vi.mock("next/link", () => ({ default: "a" }));
 vi.mock("next/dynamic", () => ({ default: () => "booking-grid" }));
-vi.mock("@/lib/client/api", () => ({ api: harness.api, ApiError: class extends Error {} }));
-vi.mock("../lib/client/api", () => ({ api: harness.api, ApiError: class extends Error {} }));
+vi.mock("@/lib/client/api", () => ({ api: harness.api, ApiError: harness.ApiError }));
+vi.mock("../lib/client/api", () => ({ api: harness.api, ApiError: harness.ApiError }));
 vi.mock("@/lib/client/scheduler-mapping", () => import("../lib/client/scheduler-mapping"));
 vi.mock("@/lib/domain/time", () => import("../lib/domain/time"));
 import OpenDemoButton from "../components/console/open-demo-button";
@@ -69,6 +70,41 @@ beforeEach(() => {
 afterEach(() => { harness.cleanups.forEach((cleanup) => cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("cold start feedback", () => {
+  it("shows the 429 reason and Retry-After countdown, ignores clicks and retries exactly once", async () => {
+    vi.useFakeTimers();
+    harness.api.create.mockRejectedValueOnce(new harness.ApiError(429, "Busy preparing another studio", undefined, 8))
+      .mockRejectedValueOnce(new harness.ApiError(429, "Busy preparing another studio", undefined, 8));
+    const View = () => OpenDemoButton({});
+    const click = button(render(View)).props.onClick as () => void;
+    click(); await settle();
+    expect(button(render(View)).props.children).toContain("Busy preparing another studio, retrying in 8 s");
+    for (let i = 0; i < 10; i++) click();
+    expect(harness.api.create).toHaveBeenCalledTimes(1);
+    expect(button(render(View)).props.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(button(render(View)).props.children).toContain("Busy preparing another studio, retrying in 1 s");
+    await vi.advanceTimersByTimeAsync(1000); await settle();
+    expect(harness.api.create).toHaveBeenCalledTimes(2);
+    expect(renderToStaticMarkup(render(View))).toContain("Busy preparing another studio. Try again in 8 s.");
+    expect(button(render(View)).props.disabled).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.api.create).toHaveBeenCalledTimes(2);
+  });
+  it("opens the demo when the automatic busy retry succeeds and cancels retries on unmount", async () => {
+    vi.useFakeTimers();
+    harness.api.create.mockRejectedValueOnce(new harness.ApiError(429, "Busy preparing another studio", undefined, 2))
+      .mockResolvedValueOnce({ id: "workspace1" });
+    const View = () => OpenDemoButton({});
+    (button(render(View)).props.onClick as () => void)(); await settle();
+    await vi.advanceTimersByTimeAsync(2000); await settle();
+    expect(harness.push).toHaveBeenCalledExactlyOnceWith("/w/workspace1");
+    harness.cleanups.forEach((cleanup) => cleanup?.()); harness.cleanups = []; harness.slots = [];
+    harness.api.create.mockRejectedValueOnce(new harness.ApiError(429, "Busy preparing another studio", undefined, 2));
+    (button(render(View)).props.onClick as () => void)(); await settle();
+    harness.cleanups.forEach((cleanup) => cleanup?.());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(harness.api.create).toHaveBeenCalledTimes(3);
+  });
   it("shows immediate, waking and preparing states without duplicate workspace creation", async () => {
     vi.useFakeTimers();
     let resolve!: (value: { id: string }) => void;
@@ -117,7 +153,7 @@ describe("cold start feedback", () => {
 
 describe("saved recovery preview", () => {
   it("restores the latest proposed plan on reload, including its original sessions", async () => {
-    workspace.plans = [{ ...details.plan, id: "older" }, details.plan, { ...details.plan, id: "executed", status: "executed" }];
+    workspace.plans = [{ ...details.plan, id: "executed", status: "executed" }, { ...details.plan, id: "older" }, details.plan];
     const View = () => usePlanPreview("workspace1", workspace);
     expect(render(View).details).toBeUndefined(); await settle();
     expect(render(View)).toMatchObject({ details, basis: { sessions: details.sessions } });
@@ -128,12 +164,23 @@ describe("saved recovery preview", () => {
     expect(render(View).details?.plan.id).toBe("proposal");
     expect(harness.api.details).toHaveBeenCalledTimes(2);
   });
-  it("does not restore executed plans and ignores a stale restore after owner input", async () => {
-    workspace.plans = [{ ...details.plan, status: "executed" }];
+  it.each(["executing", "executed", "partially_failed"] as const)("restores the latest %s recovery with refund rows and resume/check controls", async (status) => {
+    const plan = { ...details.plan, id: "latest", status, results: [{ bookingId: workspace.state.bookings[0].id, status: "PENDING", paypalId: "saved-refund" }] };
+    workspace.plans = [{ ...details.plan, id: "older" }, plan];
+    harness.api.details.mockResolvedValue({ ...details, plan });
     const View = () => usePlanPreview("workspace1", workspace);
-    render(View); await settle(); expect(harness.api.details).not.toHaveBeenCalled();
-    harness.slots = []; harness.cleanups = [];
-    workspace.plans = [details.plan];
+    render(View); await settle();
+    const restored = render(View);
+    expect(restored.details?.plan).toEqual(plan);
+    expect(harness.api.details).toHaveBeenCalledWith("workspace1", "latest", expect.any(AbortSignal));
+    const panel = PlanPanel({ details: restored.details!, plan, state: restored.basis!, results: plan.results, busy: false,
+      onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() });
+    const expected = status === "executing" ? "Resume refund processing" : status === "executed" ? "Check refund status" : "Retry";
+    expect(elements(panel).find((element) => element.type === "button" && element.props.children === expected)).toBeDefined();
+    expect(renderToStaticMarkup(RefundResults({ state: workspace.state, results: restored.details!.plan.results }))).toContain("saved-refund");
+  });
+  it("ignores a stale restore after owner input", async () => {
+    const View = () => usePlanPreview("workspace1", workspace);
     let resolve!: (value: PlanDetails) => void;
     harness.api.details.mockReturnValue(new Promise((done) => { resolve = done; }));
     render(View).setDetails(undefined);

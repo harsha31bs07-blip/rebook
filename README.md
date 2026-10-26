@@ -2,21 +2,22 @@
 
 When your schedule breaks, rebook everyone in one click: a recovery desk for class studios, with owner-approved PayPal sandbox refunds.
 
-**[Open the live demo](https://rebook-by9u.onrender.com)** ? [How it is built](https://rebook-by9u.onrender.com/built-with) ? [Agent-ready flow](https://rebook-by9u.onrender.com/agent-ready)
+**[Open the live demo](https://rebook-by9u.onrender.com)** | [How it is built](https://rebook-by9u.onrender.com/built-with) | [Agent-ready flow](https://rebook-by9u.onrender.com/agent-ready)
 
-<!-- Screenshot placeholders: capture these three views into docs/img/ before submission. -->
-![Recovery preview: original classes, proposed moves and refund totals](docs/img/recovery-preview.png)
-![PayPal sandbox refund results and customer links](docs/img/refund-results.png)
-![AG Studio dashboard and Recovery analyst](docs/img/studio-insights.png)
+![Recovery preview: original classes, proposed moves and refund totals](docs/img/console-preview.png)
+![Customer booking paid with PayPal card fields in the sandbox](docs/img/booking-receipt.png)
+![AG Studio dashboard and Recovery analyst](docs/img/insights.png)
 
-## Try it in 60 seconds
+## Try it in about 60 seconds
+
+The walkthrough takes about 60 seconds once your studio is ready (first load can take up to a minute on free hosting).
 
 1. Click **Open the live demo**. Free hosting may take up to a minute to wake; progress messages explain the wait. Each visitor gets a fictional studio with 42 classes and 120 members.
-2. Pick **Maya has the flu and can't teach Monday**, then **Understand disruption ? Plan recovery**.
+2. Pick **Maya has the flu and can't teach Monday**, then **Understand disruption > Plan recovery**.
 3. Review **9 kept / 16 moved / 6 refunded**, with **$577 kept vs $135 refunded**. Alex covers yoga; dance and barre move to Tuesday. Optionally use **Move** or drag a recovery class; totals update after validation.
 4. Click **Approve and refund**. Review the six sandbox refund receipts. If PayPal is slow, **Retry** reconciles existing refunds before another attempt.
-5. Open a private customer link from **Customer messages and links** to try a reply.
-6. Open **Dashboard ? Ask Recovery analyst** and ask ?What did Monday's disruption cost us?? or ?Show refunds by reason as a chart?.
+5. In **Customer messages and links**, open a card labelled **Private choice link** and choose **Keep** or **Refund**.
+6. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?" or "Show refunds by reason as a chart".
 
 ## What is real
 
@@ -24,7 +25,7 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 
 ## Built with
 
-[See every integration in the product ? /built-with](https://rebook-by9u.onrender.com/built-with)
+[See every integration in the product: /built-with](https://rebook-by9u.onrender.com/built-with)
 
 **PayPal:** Orders v2; JS SDK v6 PayPal buttons and hosted card fields; server-side captures; Payments v2 refunds; Webhooks with signature verification; Transaction Search for uncertain seeded capture reconciliation; the APIMatic-generated PayPal Server SDK for TypeScript. Server credentials stay on the server. A durable ledger and stable `PayPal-Request-Id` protect refund retries.
 

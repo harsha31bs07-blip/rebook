@@ -1,12 +1,12 @@
 import type { State } from "../domain/types";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
-import type { LedgerEvent, StoredPlan } from "../store";
+import type { CustomerLink, LedgerEvent, StoredPlan } from "../store";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
-export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[]) {
+export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
   const sessions = new Map(state.sessions.map((session) => [session.id, session]));
   // Execution removes cancellations from the live schedule. Their original records still join bookings.
@@ -16,14 +16,22 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
   const changes = new Map(applied.flatMap((plan) => plan.sessionChanges.map((change) => [change.sessionId, change] as const)));
   const latest = new Map<string, LedgerEvent>();
   for (const event of ledger) latest.set(`${event.kind}:${event.requestId}`, event);
+  const choiceLink = (event: LedgerEvent) => event.kind === "refund" ? links.find((link) =>
+    link.kind === "choice" && event.requestId === `choice:${link.id}` && event.bookingId === link.bookingId && event.workspaceId === link.workspaceId) : undefined;
+  const originatingPlan = (event: LedgerEvent) => {
+    const link = choiceLink(event);
+    return plans.find((plan) => plan.workspaceId === event.workspaceId && (link ? plan.id === link.planId : event.requestId === `${plan.id}:${event.bookingId}`));
+  };
   const moneyEvents = [...latest.values()].filter((event) => event.status !== "MERGED").map((event) => {
-    const plan = plans.find((plan) => event.requestId === `${plan.id}:${event.bookingId}`);
+    const plan = originatingPlan(event);
+    const link = choiceLink(event);
     return {
       id: event.id, kind: event.kind, amount: dollars(event.amount), status: event.status,
       paypal_id: event.paypalId, created_at: event.createdAt, booking_id: event.bookingId,
       plan_id: plan?.id ?? null,
       booking_action_id: plan ? `${plan.id}:${event.bookingId}` : null,
-      reason: plan?.bookingActions.find((action) => action.bookingId === event.bookingId)?.reason ?? "",
+      reason: link ? link.reply?.action === "move" ? "Customer chose a lower-priced class" : "Customer chose a refund"
+        : plan?.bookingActions.find((action) => action.bookingId === event.bookingId)?.reason ?? "",
       // Issued money excludes pending/failed requests; simulations remain clearly labelled.
       issued_refund: event.kind === "refund" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
       payment_mode: event.status === "SIMULATED" ? "simulated" : "real",
@@ -67,7 +75,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     disruptions: plans.map((plan) => {
       const label = disruptionLabel(plan, state);
       const active = plan.status !== "proposed";
-      const refunds = [...latest.values()].filter((event) => event.kind === "refund" && event.requestId === `${plan.id}:${event.bookingId}`);
+      const refunds = [...latest.values()].filter((event) => event.kind === "refund" && originatingPlan(event)?.id === plan.id);
       const amountFor = (statuses: string[]) => refunds.filter((event) => statuses.includes(event.status)).reduce((sum, event) => sum + toCents(event.amount), 0) / 100;
       return {
         id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window,
@@ -97,7 +105,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       id: `${plan.id}:${action.bookingId}`, plan_id: plan.id, booking_id: action.bookingId,
       action: action.action, reason: action.reason, amount: dollars(action.amount),
     }))),
-    notes: ["USD amounts include clearly labelled simulated sandbox payments. Proposed recovery totals are forecasts; overview recovery KPIs include applied plans only. Refund totals use the latest status per request, excluding pending and failed requests. Revenue kept measures recovery interventions, so repeat disruptions can count a booking again."],
+    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Overview recovery KPIs include applied plans only. Refund totals use the latest status per request. Revenue kept measures recovery interventions, so repeat disruptions can count a booking again."],
   };
 }
 

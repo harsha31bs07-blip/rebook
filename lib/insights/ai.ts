@@ -21,7 +21,10 @@ export function recoveryDisruptions(data: Insights, planId?: string) {
   return data.disruptions.filter((row) => !planId || row.id === planId).map((row) => ({
     disruption: `${row.subject}, ${row.window}`, status: row.status,
     classesAffected: row.sessions_affected, bookingsKept: row.kept, bookingsMoved: row.moved,
-    bookingsRefunded: row.refunded, refundsUSD: row.refund_amount, revenueKeptUSD: row.revenue_kept,
+    bookingsRefunded: row.refunded, plannedRefundsUSD: row.planned_refund_amount,
+    completedRefundsUSD: row.completed_refund_amount, pendingRefundsUSD: row.pending_refund_amount,
+    simulatedRefundsUSD: row.simulated_refund_amount, failedRefundsUSD: row.failed_refund_amount,
+    revenueKeptUSD: row.revenue_kept,
     instructorCover: row.covers || "No instructor cover",
   }));
 }

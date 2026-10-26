@@ -169,7 +169,7 @@ export function startWarmPool(repository: Repository = getRepository()): Promise
   if (repository.stalePreparations(Date.now(), 0).some((workspace) => workspace.pooled)) return Promise.resolve();
   const state = initialState();
   let release: () => void;
-  try { release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length); }
+  try { release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length, true, true); }
   catch (error) { if (error instanceof StoreError && error.status === 429) return Promise.resolve(); throw error; }
   let workspace: Workspace;
   try { workspace = repository.createWorkspace(state, undefined, { preparing: true, pooled: true }); }
@@ -218,7 +218,7 @@ export async function resumeStalePreparations(repository: Repository = getReposi
           const recentDelay = Date.parse(current.updatedAt) + 120_001 - Date.now();
           if (recentDelay > 0) { schedule(recentDelay); return; }
           const captured = new Set(repository.latestMoneyEvents(workspace.id).filter((event) => event.kind === "capture" && event.status === "COMPLETED").map((event) => event.bookingId));
-          const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false);
+          const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false, !!current.pooled);
           try { await prepare(workspace.id, {}, repository); } finally { release(); }
         }
       } catch (error) {

@@ -65,6 +65,7 @@ it("shows old/new class details, drafted message and three choices; offers the l
 
 it("suppresses double taps, shows pending status, then polls the receipt to completion", async () => {
   render(); await settle();
+  expect(elements(tree).find((element) => element.type === "details")?.props.open).toBe(true);
   let resolve!: (response: Response) => void;
   send.mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }));
   const click = button("Refund me").props.onClick as () => void; click(); click(); render();
@@ -72,8 +73,15 @@ it("suppresses double taps, shows pending status, then polls the receipt to comp
   expect(send.mock.calls.filter((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")).toHaveLength(1);
   data = { ...data, canChoose: false, reply: { action: "refund", at: new Date().toISOString() }, receipt: { amount: "22.00", status: "PENDING", paypalId: "7GD-DEMO", error: undefined } };
   resolve(Response.json(data)); await settle(); expect(renderToStaticMarkup(tree)).toContain("Refund pending");
+  expect(renderToStaticMarkup(tree)).toContain("Original message from your studio");
+  expect(elements(tree).find((element) => element.type === "details")?.props.open).toBe(false);
   data.receipt!.status = "COMPLETED"; await vi.advanceTimersByTimeAsync(5000); await settle();
   const html = renderToStaticMarkup(tree); expect(html).toContain("Refund completed"); expect(html).toContain("7GD-DEMO"); expect(html).not.toContain("Refund me");
+  expect(elements(tree).find((element) => element.type === "details")?.props.open).toBe(false);
+  for (const cleanup of hooks.cleanups.values()) cleanup?.();
+  hooks.slots = []; hooks.cleanups.clear(); render(); await settle();
+  expect(elements(tree).find((element) => element.type === "details")?.props.open).toBe(false);
+  expect(renderToStaticMarkup(tree)).toContain("Original message from your studio");
 });
 
 it("labels simulation and gives receipt-only customers no choice controls", async () => {
@@ -95,4 +103,16 @@ it("includes demo customer links and copy controls in approved messages", () => 
   const html = renderToStaticMarkup(MessagesDrawer({ messages: [{ bookingId: "booking", customerId: "customer", subject: "Your class", body: "Use your link below." }],
     links: [{ bookingId: "booking", planId: "plan", kind: "choice", path: "/c/private-token", expiresAt: Date.now() + 60_000 }], onClose: () => {} }));
   expect(html).toContain("Open as customer"); expect(html).toContain("Copy link"); expect(html).toContain("/c/private-token");
+});
+
+it("labels receipt and choice cards and lists kept/moved choice links first", () => {
+  hooks.cursor = 0; hooks.slots = []; hooks.pending = [];
+  const messages = ["refunded", "kept", "moved"].map((bookingId) => ({ bookingId, customerId: "customer", subject: bookingId, body: "Class update" }));
+  const drawer = MessagesDrawer({ messages, links: messages.map((message) => ({ bookingId: message.bookingId, planId: "plan",
+    kind: message.bookingId === "refunded" ? "receipt" as const : "choice" as const, path: `/c/${message.bookingId}`, expiresAt: Date.now() + 60_000 })), onClose: () => {} });
+  const cards = elements(drawer).filter((element) => element.type === "article").map((card) => renderToStaticMarkup(card));
+  expect(cards).toHaveLength(3);
+  expect(cards[0]).toContain("Private choice link"); expect(cards[0]).toContain("/c/kept");
+  expect(cards[1]).toContain("Private choice link"); expect(cards[1]).toContain("/c/moved");
+  expect(cards[2]).toContain("Refund receipt"); expect(cards[2]).toContain("/c/refunded");
 });

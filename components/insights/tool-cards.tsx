@@ -30,7 +30,7 @@ function RecoveryToolCard({ result }: AgAiToolDetailParams) {
   return <div className={styles.toolCard}>
     {!rows.length ? <p>No matching records in this workspace.</p> : rows.slice(0, 8).map((row, index) => <p key={index}>
       <strong>{String(row.customer ?? row.disruption ?? "Recovery record")}</strong><br />
-      {row.customer ? `${String(row.class)} · $${Number(row.amountUSD).toFixed(2)} · ${titleCase(String(row.status))} · ${String(row.payment)}` : `${Number(row.bookingsKept) + Number(row.bookingsMoved)} bookings saved · $${Number(row.refundsUSD).toFixed(2)} in planned refunds · ${titleCase(String(row.status))}`}
+      {row.customer ? `${String(row.class)} · $${Number(row.amountUSD).toFixed(2)} · ${titleCase(String(row.status))} · ${String(row.payment)}` : `${Number(row.bookingsKept) + Number(row.bookingsMoved)} bookings saved · $${Number(row.plannedRefundsUSD).toFixed(2)} in planned refunds · $${Number(row.completedRefundsUSD).toFixed(2)} in completed refunds · ${titleCase(String(row.status))}`}
     </p>)}
     {rows.length > 8 && <p>{rows.length - 8} more records read.</p>}
   </div>;

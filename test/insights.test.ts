@@ -11,6 +11,7 @@ import { buildStudioData, insightRelationships } from "../lib/insights/studio-da
 import { initialReport, REPORT_STATE_VERSION, restoreReportState } from "../lib/insights/report";
 import { recoveryDisruptions, recoveryReceipts } from "../lib/insights/ai";
 import { buildInsights, type Insights } from "../lib/insights/data";
+import { createCustomerLinks } from "../lib/choices/service";
 
 let directory: string;
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "rebook-insights-")); vi.stubEnv("DATA_DIR", directory); });
@@ -18,6 +19,44 @@ afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force:
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("workspace insights", () => {
+  it("attributes completed customer-choice refunds through persisted links without changing planned totals", async () => {
+    const repository = getRepository();
+    const workspace = repository.createWorkspace(seedStudio());
+    const plan = repository.createPlan(workspace.id, replan(workspace.state, demoDisruption));
+    plan.status = "executed"; plan.basis = workspace.state; repository.savePlan(plan);
+    const state = applyPlan(workspace.state, plan);
+    repository.saveState(workspace.id, state);
+    createCustomerLinks(plan, workspace.state, state, repository);
+    for (const action of plan.bookingActions.filter((item) => item.action === "refund")) {
+      repository.appendLedger({ workspaceId: workspace.id, bookingId: action.bookingId, kind: "refund", amount: action.amount,
+        requestId: `${plan.id}:${action.bookingId}`, captureId: `cap-${action.bookingId}`, paypalId: `ref-${action.bookingId}`, status: "COMPLETED" });
+    }
+    const link = repository.listCustomerLinks(workspace.id).find((item) => item.bookingId === "booking-0003")!;
+    const requestId = `choice:${link.id}`;
+    link.reply = { action: "refund", at: new Date().toISOString(), amount: "22.00", requestId };
+    repository.saveCustomerLink(link);
+    const event = { workspaceId: workspace.id, bookingId: link.bookingId, kind: "refund" as const, amount: "22.00",
+      requestId, captureId: "cap-choice", paypalId: "ref-choice" };
+    repository.appendLedger({ ...event, status: "REQUESTED" });
+    const pending: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
+    expect(pending.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 135, pending_refund_amount: 22 });
+    repository.appendLedger({ ...event, status: "COMPLETED" });
+    // Persisted links must survive reopening the repository, just like a server restart.
+    closeRepository();
+    const data: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
+    expect(data.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 157, pending_refund_amount: 0 });
+    expect(data.money_events.find((row) => row.paypal_id === "ref-choice")).toMatchObject({
+      plan_id: plan.id, booking_action_id: `${plan.id}:${link.bookingId}`, reason: "Customer chose a refund", issued_refund: 22,
+    });
+    expect(recoveryDisruptions(data, plan.id)[0]).toMatchObject({ plannedRefundsUSD: 135, completedRefundsUSD: 157, pendingRefundsUSD: 0 });
+    expect(recoveryReceipts(data, plan.id, "COMPLETED")).toHaveLength(7);
+    expect(recoveryReceipts(data, plan.id).find((row) => row.reason === "Customer chose a refund")?.disruption).not.toBe("Disruption unavailable");
+    expect(getRepository().listLedger(workspace.id).filter((row) => row.paypalId === "ref-choice").every((row) => row.requestId === requestId)).toBe(true);
+    const source = buildStudioData(data).sources.find((source) => source.id === "disruptions")!;
+    if (!("fields" in source)) throw new Error("Expected explicit disruption fields");
+    expect(source.fields!.find((field) => field.id === "completed_refund_amount")?.format).toBe("currencyFormat");
+  });
+
   it("separates planned, pending, completed, simulated and failed refund amounts using latest events", () => {
     const repository = getRepository();
     const workspace = repository.createWorkspace(seedStudio());

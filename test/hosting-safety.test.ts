@@ -62,11 +62,27 @@ describe("public hosting guards", () => {
     vi.stubEnv("MAX_REAL_CAPTURES_PER_HOUR", "3");
     vi.stubEnv("MAX_CONCURRENT_PREPARATIONS", "2");
     const a = budget.preparation(1), b = budget.preparation(1);
-    expect(() => budget.preparation(0)).toThrow("being prepared");
+    expect(() => budget.preparation(0)).toThrow("Busy preparing another studio");
     a(); a();
     expect(() => budget.preparation(2)).toThrow("busy");
     const c = budget.preparation(1); c(); b();
     expect(() => budget.preparation(1)).toThrow("busy");
+  });
+  it("admits two foreground visitors while the cold-start pool is still filling", async () => {
+    vi.stubEnv("DEMO_WARM_POOL", "1"); vi.stubEnv("MAX_CONCURRENT_PREPARATIONS", "2");
+    const filling = startWarmPool();
+    const first = await create(request({}, "judge-one"));
+    const second = await create(request({}, "judge-two"));
+    expect(first.status).toBe(202); expect(second.status).toBe(202);
+    const ids = await Promise.all([first.json(), second.json()]);
+    expect(ids[0].id).not.toBe(ids[1].id);
+    const denied = await create(request({}, "judge-three"));
+    expect(denied.status).toBe(429);
+    expect(await denied.json()).toMatchObject({ error: "Busy preparing another studio" });
+    expect(denied.headers.get("Retry-After")).toBe("8");
+    await filling; await waitForWorkspacePreparation();
+    for (const { id } of ids) expect(getRepository().requireWorkspace(id).status).toBe("ready");
+    expect(getRepository().readyPoolWorkspace()?.status).toBe("ready");
   });
   it("serves a warm workspace at the creation ceiling, then returns 429 without captures", async () => {
     vi.stubEnv("DEMO_WARM_POOL", "1"); vi.stubEnv("MAX_WORKSPACE_CREATIONS_PER_HOUR", "1");

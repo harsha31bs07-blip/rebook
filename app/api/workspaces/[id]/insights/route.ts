@@ -8,6 +8,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const id = WorkspaceIdSchema.parse((await context.params).id);
     const repository = getRepository();
     const { state } = repository.requireReadyWorkspace(id);
-    return buildInsights(state, repository.listPlans(id), repository.listLedger(id));
+    return buildInsights(state, repository.listPlans(id), repository.listLedger(id), repository.listCustomerLinks(id));
   });
 }

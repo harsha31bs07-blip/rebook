@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState, type SetStateAction } from "r
 import { api, type PlanDetails, type PublicPlan, type WorkspaceResponse } from "../../lib/client/api";
 import type { State } from "../../lib/domain/types";
 
-export function latestProposedPlan(plans: PublicPlan[]): PublicPlan | undefined {
-  return plans.toReversed().find((plan) => plan.status === "proposed");
+export function latestSavedPlan(plans: PublicPlan[]): PublicPlan | undefined {
+  return plans.at(-1);
 }
 
 export function usePlanPreview(id: string, workspace?: WorkspaceResponse) {
@@ -20,18 +20,18 @@ export function usePlanPreview(id: string, workspace?: WorkspaceResponse) {
     setRestoreError("");
   }, []);
   const restore = useCallback(async () => {
-    const proposal = workspace && latestProposedPlan(workspace.plans);
-    if (!proposal || !workspace) return;
+    const saved = workspace && latestSavedPlan(workspace.plans);
+    if (!saved || !workspace) return;
     pending.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
     try {
-      const next = await api.details(id, proposal.id, controller.signal);
-      if (controller.signal.aborted || next.plan.status !== "proposed") return;
+      const next = await api.details(id, saved.id, controller.signal);
+      if (controller.signal.aborted) return;
       setBasis({ ...workspace.state, sessions: next.sessions });
       updateDetails(next); setRestoreError("");
     } catch {
-      if (!controller.signal.aborted) setRestoreError("Your saved preview couldn't be opened. Retry to restore it.");
+      if (!controller.signal.aborted) setRestoreError("Your saved recovery couldn't be opened. Retry to restore it.");
     }
   }, [id, workspace]);
   useEffect(() => {

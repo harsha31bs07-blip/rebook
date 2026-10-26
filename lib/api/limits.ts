@@ -9,9 +9,10 @@ export function envLimit(name: string, fallback: number): number {
 export class Limits {
   private buckets = new Map<string, { count: number; until: number }>();
   private preparations = 0;
+  private poolPreparations = 0;
   private ai = 0;
   /** Tests can model a new server process without changing production limits. */
-  reset(): void { this.buckets.clear(); this.preparations = 0; this.ai = 0; }
+  reset(): void { this.buckets.clear(); this.preparations = 0; this.poolPreparations = 0; this.ai = 0; }
   take(entries: { key: string; max: number; ms: number; count?: number }[], status = 429): void {
     const now = Date.now();
     for (const [key, bucket] of this.buckets) if (bucket.until <= now) this.buckets.delete(key);
@@ -29,15 +30,18 @@ export class Limits {
       this.buckets.set(entry.key, bucket);
     }
   }
-  preparation(captures: number, creation = true): () => void {
-    if (this.preparations >= envLimit("MAX_CONCURRENT_PREPARATIONS", 2)) throw new StoreError(429, "Studios are being prepared. Please try again shortly.", undefined, 60);
+  preparation(captures: number, creation = true, pooled = false): () => void {
+    // Pool filling has one dedicated slot; it cannot consume either visitor slot.
+    if (pooled ? this.poolPreparations >= 1 : this.preparations >= envLimit("MAX_CONCURRENT_PREPARATIONS", 2)) {
+      throw new StoreError(429, "Busy preparing another studio", undefined, 8);
+    }
     this.take([
       ...(creation ? [{ key: "creations", max: envLimit("MAX_WORKSPACE_CREATIONS_PER_HOUR", 60), ms: 3_600_000 }] : []),
       { key: "captures", max: envLimit("MAX_REAL_CAPTURES_PER_HOUR", 1500), ms: 3_600_000, count: captures },
     ]);
-    this.preparations++;
+    if (pooled) this.poolPreparations++; else this.preparations++;
     let released = false;
-    return () => { if (!released) { released = true; this.preparations--; } };
+    return () => { if (!released) { released = true; if (pooled) this.poolPreparations--; else this.preparations--; } };
   }
   aiCall(client: string, workspace: string): () => void {
     if (this.ai >= envLimit("AI_MAX_CONCURRENT", 4)) throw new StoreError(503, "The analyst is busy. Please try again shortly.", undefined, 30);

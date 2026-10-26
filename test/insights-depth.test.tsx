@@ -113,7 +113,7 @@ describe("C4 Studio depth", () => {
 
   it("gives successful, empty, failed and cancelled tool steps human-readable cards", () => {
     const base: AgAiToolLabelParams = { args: {}, status: "done", fieldName: () => undefined, widgetName: () => undefined, tableName: () => undefined };
-    const disruptions = { success: true as const, response: "Read", data: { disruptions: [{ disruption: "Maya, Monday", bookingsKept: 3, bookingsMoved: 2, refundsUSD: 25, status: "proposed" }] } };
+    const disruptions = { success: true as const, response: "Read", data: { disruptions: [{ disruption: "Maya, Monday", bookingsKept: 3, bookingsMoved: 2, plannedRefundsUSD: 25, completedRefundsUSD: 47, status: "executed" }] } };
     const receipts = { success: true as const, response: "Read", data: { receipts: Array.from({ length: 5 }, () => ({ customer: "Sam", class: "Yoga, Mon Oct 26 at 7:00 AM", amountUSD: 25, status: "COMPLETED", payment: "Real" })) } };
     expect(recoveryToolDisplay.get_disruptions.label({ ...base, result: disruptions })).toEqual({ text: "Looked up 1 disruption" });
     expect(recoveryToolDisplay.get_refund_receipts.label({ ...base, result: receipts })).toEqual({ text: "Read 5 refund receipts" });
@@ -126,6 +126,9 @@ describe("C4 Studio depth", () => {
     expect(html).toContain("Mon Oct 26 at 7:00 AM");
     expect(html).toContain("Completed");
     expect(html).not.toContain("get_refund_receipts");
+    const disruptionHtml = renderToStaticMarkup(createElement(recoveryToolDisplay.get_disruptions.detail!, { name: "get_disruptions", args: {}, status: "done", result: disruptions }));
+    expect(disruptionHtml).toContain("$25.00 in planned refunds");
+    expect(disruptionHtml).toContain("$47.00 in completed refunds");
   });
 
   it("registers the built-in specialists and delegates chart placement/configuration and real filters", () => {

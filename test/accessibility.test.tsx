@@ -82,8 +82,9 @@ it("keeps the visible rebook. text at the start of wordmark accessible names on 
     const html = renderToStaticMarkup(page);
     const link = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find((match) => match[1].includes('class="wordmark"'))!;
     expect(link).toBeDefined();
-    const label = link[1].match(/aria-label="([^"]+)"/)?.[1] ?? link[2].replace(/<[^>]+>/g, "");
+    // Accessible name from content, skipping aria-hidden parts (the "r" badge), as assistive technology does.
+    const label = link[1].match(/aria-label="([^"]+)"/)?.[1] ?? link[2].replace(/<span[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/span>/g, "").replace(/<[^>]+>/g, "");
     expect(label.startsWith("rebook.")).toBe(true);
   }
-  expect(readFileSync("app/built-with/page.tsx", "utf8")).toContain('aria-label="rebook. home"');
+  expect(readFileSync("app/built-with/page.tsx", "utf8")).toContain('<span className="sr-only"> home</span>');
 });

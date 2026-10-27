@@ -47,7 +47,7 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
         else void result.catch(() => {});
       } else void onInterpret(value);
     }}>
-      <label className="field-label" htmlFor="disruption">What happened?</label>
+      <label className="field-label disruption-label" htmlFor="disruption">What happened?</label>
       <textarea ref={textarea} id="disruption" name="text" {...{ toolparamdescription: "What changed: instructor absence, unavailable room, or studio closure, including the local day and time." }} maxLength={500} rows={4} placeholder="An instructor is out, a room is unavailable…" value={text} onChange={(event) => setText(event.target.value)} disabled={busy} required />
       <div className="input-caption"><span>Use your own words</span><span>{text.length}/500</span></div>
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>

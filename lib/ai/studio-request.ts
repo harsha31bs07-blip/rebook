@@ -3,3 +3,18 @@
 export const STUDIO_REQUEST_BYTES = 262_144;
 export const studioRequestFits = (body: unknown) => new TextEncoder().encode(JSON.stringify(body)).byteLength <= STUDIO_REQUEST_BYTES;
 export const STUDIO_REQUEST_TOO_LARGE = "This conversation is too large. Please start a new conversation.";
+
+// Gemini 3 rejects history whose tool calls lack a thought signature. AG Studio injects calls
+// (e.g. a delegated agent's initial view_page) that the model never produced, so those get
+// Google's documented placeholder; model-produced signatures are echoed unchanged.
+// https://ai.google.dev/gemini-api/docs/thought-signatures
+type ToolCallLike = { extra_content?: Record<string, unknown> };
+export function withThoughtSignatures<M extends { tool_calls?: ToolCallLike[] }>(messages: M[]): M[] {
+  return messages.map((message) => !message.tool_calls?.length ? message : {
+    ...message,
+    tool_calls: message.tool_calls.map((call) => {
+      const google = call.extra_content?.google as Record<string, unknown> | undefined;
+      return google?.thought_signature ? call : { ...call, extra_content: { ...call.extra_content, google: { ...google, thought_signature: "skip_thought_signature_validator" } } };
+    }),
+  });
+}

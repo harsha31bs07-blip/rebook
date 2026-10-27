@@ -25,8 +25,9 @@ const api = async (method, path) => {
 async function audit(page, name) {
   await sleep(2500); // let entry animations settle; mid-fade text briefly fails contrast
   await page.addScriptTag({ content: AXE });
-  const violations = await page.evaluate(async () => (await window.axe.run(document, { resultTypes: ["violations"] })).violations.map((v) => v.id));
-  const ours = violations.filter((id) => !LIBRARY_RULES.has(id));
+  const found = await page.evaluate(async () => (await window.axe.run(document, { resultTypes: ["violations"] })).violations.map((v) => ({ id: v.id, html: v.nodes[0]?.html.slice(0, 160) })));
+  const violations = found.map((v) => v.id);
+  const ours = found.filter((v) => !LIBRARY_RULES.has(v.id)).map((v) => `${v.id} at ${v.html}`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   if (ours.length) throw new Error(`${name}: accessibility violations ${ours.join(", ")}`);
   if (overflow > 1) throw new Error(`${name}: horizontal overflow ${overflow}px`);

@@ -116,7 +116,8 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     if (!info) return StringHelper.encodeHtml(eventRecord.name);
     renderData.iconCls = "";
     // The accessible name starts with exactly the visible text (WCAG 2.5.3 label in name), then adds context.
-    const visible = [info.title, info.time, ...(zoom === "day" ? [info.location, info.occupancy] : []), ...(zoom === "day" && mode === "rooms" ? [info.room] : []), ...(info.badge ? [info.badge] : [])];
+    const canMove = Boolean(plan?.sessionChanges.some((change) => change.after && `${change.sessionId}-new` === String(eventRecord.id)) && onMove);
+    const visible = [info.title, info.time, ...(zoom === "day" ? [info.location, info.occupancy] : []), ...(zoom === "day" && mode === "rooms" ? [info.room] : []), ...(info.badge ? [info.badge] : []), ...(canMove ? ["Move"] : [])];
     const context = [info.status, ...(zoom === "day" && mode === "rooms" ? [] : [info.room]), ...(zoom === "day" ? [] : [info.location, info.occupancy])];
     renderData.ariaLabel = `${visible.join(" ")}. ${[...new Set(context)].join(", ")}`;
     return [{ tag: "div", className: "session-label", children: [
@@ -125,7 +126,7 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),
       ...(zoom === "day" && mode === "rooms" ? [{ tag: "span", text: info.room }] : []),
       ...(info.badge ? [{ tag: "span", className: "session-badge", text: info.badge }] : []),
-      ...(plan?.sessionChanges.some((change) => change.after && `${change.sessionId}-new` === String(eventRecord.id)) && onMove ? [{
+      ...(canMove ? [{
         tag: "button", type: "button", className: "recovery-move", text: "Move", disabled: Boolean(busy),
         "aria-label": `Move ${info.title} to…`, "aria-haspopup": "dialog",
         "data-move-session": String(eventRecord.id).replace(/-new$/, ""),

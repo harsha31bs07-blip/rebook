@@ -253,8 +253,20 @@ textarea { resize: vertical; min-height: 120px; }
 .messages-drawer > .muted { font-size: 12px; margin-bottom: 24px; }
 .message-card { padding: 20px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; }
 .message-card > span { font-size: 10px; }
-.message-card h3 { margin: 8px 0 16px; }
+.message-card h3, .message-card h4 { margin: 8px 0 16px; }
 .message-card p { white-space: pre-wrap; font-size: 12px; line-height: 1.8; }
+.outbox-toolbar { margin-bottom: 24px; }
+.outbox-toolbar > p, .outbox-reminder p { margin: 12px 0; font-size: 13px; }
+.outbox-filters, .outbox-actions, .outbox-reminder { display: flex; flex-wrap: wrap; gap: 8px; }
+.outbox-filters button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+.outbox-filters button, .outbox-actions button, .outbox-reminder button, .outbox-customer .message-links button, .outbox-customer .message-links a { min-height: 44px; }
+.outbox-list { list-style: none; padding: 0; }
+.outbox-customer { border-top: 1px solid var(--border); padding: 20px 0; }
+.outbox-customer > h3 { margin-bottom: 8px; }
+.outbox-status { margin-bottom: 16px; font-size: 13px; }
+.outbox-status .muted { margin-top: 6px; font-size: 12px; }
+.outbox-reminder p { width: 100%; }
+.outbox-reminder-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; margin: 16px 0; background: #eff6ff; border-radius: 8px; font-size: 13px; }
 .placeholder-page { padding: 80px 32px; max-width: 640px; margin: auto; }
 .placeholder-page .eyebrow { margin: 48px 0 16px; }
 .placeholder-page .muted { margin: 16px 0 32px; }

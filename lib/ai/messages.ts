@@ -1,6 +1,6 @@
 import type { Plan, State } from "../domain/types";
 
-export type CustomerMessage = { bookingId: string; customerId: string; subject: string; body: string };
+export type CustomerMessage = { bookingId: string; customerId: string; customerName?: string; subject: string; body: string };
 
 /** Drafts only: sending and refund execution belong to the approval flow. No AI or network calls. */
 export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage[] {
@@ -37,6 +37,6 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
         : roomChanged ? `Your class will take place in ${room?.name ?? "a replacement room"}.` : "Your booking is confirmed.";
       body = `${greeting}\n\n${update} Your ${session.title} class stays at ${formatTime(change?.after?.start ?? session.start)} (${state.studio.timezone}). We're looking forward to welcoming you.\n\n${signature}`;
     }
-    return { bookingId: action.bookingId, customerId: action.customerId, subject, body };
+    return { bookingId: action.bookingId, customerId: action.customerId, customerName: customer.name, subject, body };
   });
 }

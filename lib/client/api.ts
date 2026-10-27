@@ -20,12 +20,12 @@ export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string, public retryAfter?: number) { super(message); }
 }
 
-async function request<T>(path: string, body?: object, signal?: AbortSignal, method?: string): Promise<T> {
+async function request<T>(path: string, body?: object, signal?: AbortSignal, method?: string, keepalive = false): Promise<T> {
   const response = await fetch(`/api/workspaces${path}`, {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store", signal,
+    cache: "no-store", signal, keepalive,
   });
   const data = await response.json();
   if (!response.ok) {
@@ -48,4 +48,5 @@ export const api = {
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
   approve: (id: string, planId: string, version = 1) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
+  contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),
 };

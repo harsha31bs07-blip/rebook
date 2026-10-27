@@ -253,11 +253,12 @@ it("shows applied recovery, reply counts, settled refunds and the manual sharing
   const plan = { ...details.plan, status: "executed" as const };
   const results = plan.bookingActions.filter((action) => action.action === "refund").map((action) => ({ bookingId: action.bookingId, status: "COMPLETED" }));
   const outcomes = recoveryOutcomes(workspace.state, [{ ...plan, results }], []);
-  const panel = (current = outcomes) => renderToStaticMarkup(PlanPanel({ details, state: workspace.state, plan, results, outcomes: current, busy: false, onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() }));
+  const panel = (current = outcomes) => renderToStaticMarkup(PlanPanel({ details, state: workspace.state, plan, results, outcomes: current, outboxSummary: { sent: 12, replied: 7, waiting: 5, notSent: 19 }, busy: false, onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() }));
   const applied = panel();
   expect(applied).toContain("Recovery applied");
   expect(applied).not.toContain("Recovery complete");
   expect(applied).toContain("25 customers haven&#x27;t replied");
+  expect(applied).toContain("12 sent · 7 replied · 5 waiting");
   expect(applied).toContain("Owner time saved (estimate)");
   expect(applied).toContain("replaces about 31 calls or messages once you share the links");
   for (const text of ["Kept or moved", "Refunded", "Pending", "No reply yet", "9 kept / 16 moved", "$577.00", "$135.00"]) expect(applied).toContain(text);

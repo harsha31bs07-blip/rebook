@@ -7,6 +7,7 @@ import type { Placement, State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
 import { formatMoney, toCents } from "@/lib/domain/time";
 import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
+import type { summarizeOutbox } from "../../lib/choices/outbox";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" aria-label="Loading booking actions" /> });
 
@@ -22,9 +23,10 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, outboxSummary, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   outcomes?: RecoveryOutcome[];
+  outboxSummary?: ReturnType<typeof summarizeOutbox>;
   approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
@@ -47,6 +49,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
     <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
     {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}
+    {!proposed && outboxSummary && <p className="muted plan-context" role="status" aria-live="polite">{outboxSummary.sent} sent · {outboxSummary.replied} replied · {outboxSummary.waiting} waiting</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
     <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
     <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">

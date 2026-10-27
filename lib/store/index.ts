@@ -30,6 +30,7 @@ export type CustomerLink = {
   kind: "choice" | "receipt"; expiresAt: number; createdAt: string;
   message: { subject: string; body: string };
   before: State["sessions"][number]; after?: State["sessions"][number];
+  sentAt?: string;
   reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;

@@ -5,6 +5,7 @@ import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc 
 import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
+import { type OutboxCustomer } from "./outbox";
 import { getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -159,7 +160,23 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
 export function ownerCustomerChoices(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireWorkspace(workspaceId);
   const links = repository.listCustomerLinks(workspaceId);
-  return { outcomes: recoveryOutcomes(state, repository.listPlans(workspaceId), repository.listLedger(workspaceId), links),
+  const outbox = new Map<string, OutboxCustomer>();
+  const plans = repository.listPlans(workspaceId);
+  for (const link of links.toSorted((a, b) => Number(b.kind === "choice") - Number(a.kind === "choice"))) {
+    const booking = state.bookings.find((item) => item.id === link.bookingId);
+    if (!booking) continue;
+    const key = `${link.planId}:${booking.customerId}`;
+    const row = outbox.get(key) ?? { customerId: booking.customerId,
+      customerName: state.customers.find((item) => item.id === booking.customerId)?.name ?? "Customer", planId: link.planId, changes: [] };
+    const action = plans.find((plan) => plan.id === link.planId)?.bookingActions.find((item) => item.bookingId === link.bookingId);
+    const reply = link.reply;
+    row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind,
+      path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
+      reply: reply ? { at: reply.at, status: reply.action === "refund" ? "refunded" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
+    outbox.set(key, row);
+  }
+  return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links),
+    outbox: [...outbox.values()],
     links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
     path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
     replies: links.filter((link) => link.reply).map((link) => {
@@ -175,3 +192,15 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     }).sort((a, b) => b.at.localeCompare(a.at)) };
 }
 export type OwnerCustomerChoices = ReturnType<typeof ownerCustomerChoices>;
+
+export async function markCustomerContact(workspaceId: string, planId: string, customerId: string, sent: boolean, repository = getRepository()) {
+  return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
+    const { state } = repository.requireReadyWorkspace(workspaceId);
+    const links = repository.listCustomerLinks(workspaceId).filter((link) => link.planId === planId
+      && state.bookings.some((booking) => booking.id === link.bookingId && booking.customerId === customerId));
+    if (!links.length) throw new StoreError(404, "Customer message not found in this recovery.");
+    const sentAt = sent ? new Date().toISOString() : undefined;
+    for (const link of links) repository.saveCustomerLink({ ...link, sentAt });
+    return ownerCustomerChoices(workspaceId, repository);
+  }));
+}

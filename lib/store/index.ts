@@ -17,7 +17,7 @@ export type StoredPlan = Plan & {
   coverConfirmations?: CoverConfirmation[];
 };
 export type Workspace = {
-  id: string; state: State; createdAt: string; updatedAt: string;
+  id: string; bookingId: string; state: State; createdAt: string; updatedAt: string;
   status: "preparing" | "ready" | "failed"; progress: { done: number; total: number }; pooled?: true; preparationError?: string;
 };
 export type LedgerEvent = {
@@ -46,6 +46,7 @@ export type CheckoutReservation = {
   requestAliases?: string[];
   customer: { name: string; email: string }; amount: string; currency: "USD";
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
+  paypalCustomId?: string;
   status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;
 };
 const storeErrorBrand = Symbol.for("rebook.StoreError");
@@ -92,6 +93,13 @@ export class Repository {
         UNIQUE(plan_id, booking_id)
       );
     `);
+    // Persist separate public capabilities for existing demos before indexing them.
+    this.transaction(() => {
+      const rows = this.db.prepare("SELECT id FROM workspaces WHERE json_extract(data, '$.bookingId') IS NULL").all() as { id: string }[];
+      for (const { id } of rows) this.db.prepare("UPDATE workspaces SET data = json_set(data, '$.bookingId', ?) WHERE id = ?")
+        .run(randomBytes(24).toString("base64url"), id);
+    });
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS workspace_booking_id ON workspaces(json_extract(data, '$.bookingId'))");
     this.db.prepare("INSERT OR IGNORE INTO choice_secrets VALUES (1, ?)").run(randomBytes(32).toString("hex"));
   }
   close(): void { this.db.close(); }
@@ -144,7 +152,7 @@ export class Repository {
   }
   createWorkspace(state: State, id = randomBytes(8).toString("base64url").slice(0, 10), options: { preparing?: boolean; pooled?: true } = {}): Workspace {
     const now = new Date().toISOString();
-    const workspace: Workspace = { id, state: preserveConstraints(state, StateSchema.parse(state)), createdAt: now, updatedAt: now,
+    const workspace: Workspace = { id, bookingId: randomBytes(24).toString("base64url"), state: preserveConstraints(state, StateSchema.parse(state)), createdAt: now, updatedAt: now,
       status: options.preparing ? "preparing" : "ready", progress: { done: options.preparing ? 0 : state.bookings.length, total: state.bookings.length },
       ...(options.pooled ? { pooled: true } : {}),
     };
@@ -176,6 +184,15 @@ export class Repository {
   }
   requireWorkspace(id: string, includePooled = false): Workspace {
     const workspace = this.getWorkspace(id, includePooled);
+    if (!workspace) throw new StoreError(404, "This demo has ended (demos reset when the server restarts). Start a fresh one.", "expired");
+    return workspace;
+  }
+  getWorkspaceByBookingId(bookingId: string): Workspace | undefined {
+    const row = this.db.prepare("SELECT id FROM workspaces WHERE json_extract(data, '$.bookingId') = ?").get(bookingId) as { id: string } | undefined;
+    return row ? this.getWorkspace(row.id) : undefined;
+  }
+  requireBookingWorkspace(bookingId: string): Workspace {
+    const workspace = this.getWorkspaceByBookingId(bookingId);
     if (!workspace) throw new StoreError(404, "This demo has ended (demos reset when the server restarts). Start a fresh one.", "expired");
     return workspace;
   }

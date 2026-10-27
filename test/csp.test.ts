@@ -3,9 +3,9 @@ import { NextRequest } from "next/server";
 import { proxy } from "../proxy";
 
 afterEach(() => vi.unstubAllEnvs());
-it("uses a fresh matching request/response script nonce without unsafe-inline", () => {
+it.each(["/w/demo", "/w/demo/book", "/b/public-booking-id", "/c/private-token", "/api/paypal/webhook"])("uses a fresh matching request/response script nonce without unsafe-inline on %s", (path) => {
   vi.stubEnv("NODE_ENV", "production");
-  const request = new NextRequest("http://localhost/w/demo", { headers: { "x-nonce": "spoof", "content-security-policy": "script-src 'unsafe-inline'" } });
+  const request = new NextRequest(`http://localhost${path}`, { headers: { "x-nonce": "spoof", "content-security-policy": "script-src 'unsafe-inline'" } });
   const response = proxy(request);
   const csp = response.headers.get("content-security-policy")!;
   const script = csp.split(";").find((value) => value.trim().startsWith("script-src"))!;

@@ -31,8 +31,10 @@ export function bookingCatalog(workspaceId: string, repository = getRepository()
   const { state } = repository.requireReadyWorkspace(workspaceId);
   const reservations = repository.listCheckout(workspaceId);
   const paused = pausedSessionIds(workspaceId, repository);
-  return { studio: state.studio, sessions: state.sessions.filter((session) => sessionAvailable(state, session)).sort((a, b) => a.start.localeCompare(b.start)).map((session) => ({
-    ...session, bookingPaused: paused.has(session.id), seatsLeft: seatsLeft(state, session, reservations),
+  const { name, timezone, weekStart, currency } = state.studio;
+  return { studio: { name, timezone, weekStart, currency }, sessions: state.sessions.filter((session) => sessionAvailable(state, session)).sort((a, b) => a.start.localeCompare(b.start)).map((session) => ({
+    id: session.id, classType: session.classType, title: session.title, start: session.start, end: session.end, price: session.price, capacity: session.capacity,
+    bookingPaused: paused.has(session.id), seatsLeft: seatsLeft(state, session, reservations),
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team",
     room: state.rooms.find((item) => item.id === session.roomId)?.name ?? "Studio",
   })) };
@@ -58,15 +60,16 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
         return { orderId: unresolved.orderId };
       }
       row = repository.transaction(() => {
-        const { state } = repository.requireReadyWorkspace(workspaceId);
+        const { state, bookingId } = repository.requireReadyWorkspace(workspaceId);
         const session = state.sessions.find((item) => item.id === input.sessionId);
         if (!session || !sessionAvailable(state, session)) throw new StoreError(409, "This class is no longer available");
         if (!seatsLeft(state, session, repository.listCheckout(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
         if (toCents(session.price) <= 0) throw new StoreError(409, "This class cannot be purchased");
         limits.take([{ key: "captures", max: envLimit("MAX_REAL_CAPTURES_PER_HOUR", 1500), ms: 3_600_000 }]);
-        const reservation: CheckoutReservation = { id: randomUUID(), workspaceId, requestId, sessionId: session.id,
+        const reservationId = randomUUID();
+        const reservation: CheckoutReservation = { id: reservationId, workspaceId, requestId, sessionId: session.id,
           customer: input.customer, amount: session.price, currency: state.studio.currency, session,
-          expiresAt: Date.now() + 10 * 60_000, status: "pending" };
+          paypalCustomId: `${bookingId}:${reservationId}`, expiresAt: Date.now() + 10 * 60_000, status: "pending" };
         repository.saveCheckout(reservation);
         return reservation;
       });
@@ -75,7 +78,9 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
     try {
       const { state } = repository.requireReadyWorkspace(workspaceId);
       const localTime = new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(reservation.session.start));
-      const order = await createBookingOrder(reservation.amount, { workspaceId, bookingId: reservation.id, requestId: reservation.id }, `${reservation.session.title} · ${localTime}`);
+      // PayPal order metadata is visible to buyers: never send the owner capability.
+      const publicReference = reservation.paypalCustomId?.split(":")[0] ?? workspaceId;
+      const order = await createBookingOrder(reservation.amount, { workspaceId: publicReference, bookingId: reservation.id, requestId: reservation.id }, `${reservation.session.title} · ${localTime}`);
       if (!order.id) throw new Error("PayPal did not return an order ID");
       repository.renewLock(workspaceId, owner);
       repository.saveCheckout({ ...reservation, orderId: order.id });
@@ -92,7 +97,7 @@ function validateCapture(row: CheckoutReservation, order: PayPalOrder) {
   const unit = order.purchase_units?.[0];
   const capture = unit?.payments?.captures?.[0];
   if (order.id !== row.orderId || order.status !== "COMPLETED" || order.purchase_units?.length !== 1 || !capture?.id || capture.status !== "COMPLETED"
-    || unit?.payments?.captures?.length !== 1 || unit.custom_id !== `${row.workspaceId}:${row.id}` || unit.reference_id !== row.id
+    || unit?.payments?.captures?.length !== 1 || unit.custom_id !== (row.paypalCustomId ?? `${row.workspaceId}:${row.id}`) || unit.reference_id !== row.id
     || capture.amount?.currency_code !== row.currency || capture.amount?.value !== row.amount
     || unit.amount?.currency_code !== row.currency || unit.amount?.value !== row.amount) {
     throw new StoreError(502, "PayPal capture did not match this booking. Please retry to reconcile.", "CAPTURE_MISMATCH");

@@ -57,12 +57,16 @@ beforeEach(() => {
   const state = seedStudio();
   const plan: PublicPlan = { ...replan(state, demoDisruption), id: "plan-1", workspaceId: "workspace", createdAt: new Date().toISOString(), status: "proposed", results: [] };
   details = { plan, sessions: state.sessions, explanation: { headline: "Recovery ready", bullets: [], source: "template" }, messages: [] };
-  harness.workspace = { id: "workspace", createdAt: plan.createdAt, updatedAt: plan.createdAt, status: "ready", state, plans: [plan], ledger: [], ledgerSummary: {}, progress: { done: 1, total: 1 } };
+  harness.workspace = { id: "workspace", bookingId: "0123456789abcdefghijklmnopqrstuv", createdAt: plan.createdAt, updatedAt: plan.createdAt, status: "ready", state, plans: [plan], ledger: [], ledgerSummary: {}, progress: { done: 1, total: 1 } };
   harness.api.interpret.mockResolvedValue({ disruption: demoDisruption, confidence: 1, source: "rules", notes: [] });
   harness.api.plan.mockResolvedValue(plan); harness.api.details.mockResolvedValue(details); harness.refresh.mockResolvedValue(undefined);
 });
 
 describe("WebMCP page handlers and human payment boundary", () => {
+  it("links the owner console's customer booking action to the separate public URL", () => {
+    const tree = renderOwner();
+    expect(find(tree, (element) => element.props.children === "Customer booking page").props.href).toBe(`/b/${harness.workspace!.bookingId}`);
+  });
   it("prepares the exact same timeline preview through tools and the owner UI", async () => {
     let tree = renderOwner();
     const ui = find(tree, (element) => element.type === DisruptionPanel);

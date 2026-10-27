@@ -341,6 +341,21 @@ describe("one tap choices and money", () => {
 });
 
 describe("token-only API", () => {
+  it("exposes only the token's booking outcome and never another customer's reply or receipt", async () => {
+    const { token, otherToken, workspaceId, otherBookingId } = fixture();
+    await submitChoice(token, { action: "refund" }, repository);
+    const first = await (await GET(new Request("http://localhost"), { params: Promise.resolve({ token }) })).json();
+    const other = await (await GET(new Request("http://localhost"), { params: Promise.resolve({ token: otherToken }) })).json();
+    expect(first.reply.action).toBe("refund"); expect(first.receipt.status).toBe("COMPLETED");
+    expect(other.reply).toBeUndefined(); expect(other.receipt).toBeUndefined();
+    expect(JSON.stringify(first)).not.toContain(otherBookingId);
+    for (const view of [first, other]) {
+      expect(Object.keys(view).sort()).toEqual(["after", "alternatives", "before", "canChoose", "choicesClosed", "expiresAt", "kind", "message", "refundable", "simulated", "studio", ...(view.reply ? ["reply"] : []), ...(view.receipt ? ["receipt"] : [])].sort());
+      expect(JSON.stringify(view)).not.toContain(workspaceId);
+      expect(JSON.stringify(view)).not.toContain(repository.requireWorkspace(workspaceId).bookingId);
+      expect(JSON.stringify(view)).not.toContain("@example.com");
+    }
+  });
   it("validates input, blocks foreign origins, returns private no-store responses without workspace/customer identifiers", async () => {
     const { token, workspaceId } = fixture();
     const context = { params: Promise.resolve({ token }) };

@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
   const state = seedStudio();
   const plan = { ...replan(state, demoDisruption), id: "proposal", workspaceId: "workspace1", status: "proposed" as const, createdAt: "2026-10-26T00:00:00Z", results: [] };
-  workspace = { id: "workspace1", createdAt: plan.createdAt, updatedAt: plan.createdAt, status: "ready", state, plans: [plan], ledger: [], ledgerSummary: {}, progress: { done: 1, total: 1 } };
+  workspace = { bookingId: "0123456789abcdefghijklmnopqrstuv", id: "workspace1", createdAt: plan.createdAt, updatedAt: plan.createdAt, status: "ready", state, plans: [plan], ledger: [], ledgerSummary: {}, progress: { done: 1, total: 1 } };
   details = { plan, sessions: state.sessions, explanation: { headline: "Recovery ready", bullets: [], source: "template" }, messages: [] };
   harness.api.details.mockResolvedValue(details);
 });

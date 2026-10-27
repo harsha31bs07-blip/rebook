@@ -15,6 +15,10 @@ import { eligibleCheckoutMethods, calendarFile, payLaterButtonTag } from "../lib
 import { POST as postOrder } from "../app/api/workspaces/[id]/checkout/orders/route";
 import { POST as postCapture } from "../app/api/workspaces/[id]/checkout/orders/[orderId]/capture/route";
 import { DELETE as cancel } from "../app/api/workspaces/[id]/checkout/orders/[orderId]/route";
+import { GET as publicCatalog } from "../app/api/bookings/[bookingId]/checkout/route";
+import { POST as publicOrder } from "../app/api/bookings/[bookingId]/checkout/orders/route";
+import { POST as publicCapture } from "../app/api/bookings/[bookingId]/checkout/orders/[orderId]/capture/route";
+import { GET as publicReceipt, DELETE as publicCancel } from "../app/api/bookings/[bookingId]/checkout/orders/[orderId]/route";
 
 let directory: string;
 let repository: Repository;
@@ -97,7 +101,7 @@ describe("customer checkout", () => {
     for (const change of next.sessionChanges) {
       const session = catalog.sessions.find((item) => item.id === change.sessionId);
       if (change.after) {
-        expect(session).toMatchObject({ ...change.after, bookingPaused: false });
+        expect(session).toMatchObject({ start: change.after.start, end: change.after.end, bookingPaused: false });
         sessionId = change.sessionId;
         expect((await postOrder(post(input()), ctx())).status).toBe(200);
       } else {
@@ -136,7 +140,7 @@ describe("customer checkout", () => {
     const row = repository.listCheckout(workspaceId)[0];
     const posted = calls.find((call) => call.url.endsWith("/v2/checkout/orders"))!;
     expect(body(posted.init)).toMatchObject({ intent: "CAPTURE", purchase_units: [{ reference_id: row.id,
-      custom_id: `${workspaceId}:${row.id}`, amount: { currency_code: "USD", value: row.amount }, description: expect.stringContaining("Yoga Flow") }] });
+      custom_id: row.paypalCustomId, amount: { currency_code: "USD", value: row.amount }, description: expect.stringContaining("Yoga Flow") }] });
     expect(body(posted.init).payment_source).toBeUndefined();
     expect(new Headers(posted.init.headers).get("PayPal-Request-Id")).toBe(row.id);
     expect(calls.filter((call) => call.url.endsWith("/v2/checkout/orders"))).toHaveLength(1);
@@ -379,6 +383,113 @@ describe("customer checkout", () => {
 });
 
 describe("checkout routes and client helpers", () => {
+  it("books, captures, reconciles webhooks and cancels through the public capability without disclosing owner data", async () => {
+    const { bookingId } = repository.requireWorkspace(workspaceId);
+    const base = `http://localhost/api/bookings/${bookingId}/checkout`;
+    const publicContext = { params: Promise.resolve({ bookingId }) };
+    const catalogResponse = await publicCatalog(new Request(base), publicContext);
+    expect(catalogResponse.status).toBe(200);
+    expect(catalogResponse.headers.get("Cache-Control")).toBe("no-store");
+    const catalog = await catalogResponse.json();
+    expect(Object.keys(catalog).sort()).toMatchInlineSnapshot(`
+      [
+        "sessions",
+        "studio",
+      ]
+    `);
+    expect(Object.keys(catalog.studio).sort()).toMatchInlineSnapshot(`
+      [
+        "currency",
+        "name",
+        "timezone",
+        "weekStart",
+      ]
+    `);
+    expect(Object.keys(catalog.sessions[0]).sort()).toMatchInlineSnapshot(`
+      [
+        "bookingPaused",
+        "capacity",
+        "classType",
+        "end",
+        "id",
+        "instructor",
+        "price",
+        "room",
+        "seatsLeft",
+        "start",
+        "title",
+      ]
+    `);
+    expect(JSON.stringify(catalog)).not.toContain(workspaceId);
+    const createRequest = () => new Request(`${base}/orders`, { method: "POST", body: JSON.stringify(input()) });
+    const created = await publicOrder(createRequest(), publicContext);
+    expect(created.status).toBe(200);
+    const order = await created.json();
+    expect(Object.keys(order)).toEqual(["orderId"]);
+    const context = { params: Promise.resolve({ bookingId, orderId: order.orderId }) };
+    const captured = await publicCapture(new Request(`${base}/orders/${order.orderId}/capture`, { method: "POST" }), context);
+    expect(captured.status).toBe(200);
+    const result = await captured.json();
+    expect(result).toMatchObject({ orderId: order.orderId, status: "confirmed", captureId: `capture-${order.orderId}` });
+    expect(Object.keys(result).sort()).toMatchInlineSnapshot(`
+      [
+        "amount",
+        "bookingId",
+        "captureId",
+        "class",
+        "currency",
+        "end",
+        "orderId",
+        "start",
+        "status",
+        "webhookConfigured",
+        "webhookConfirmed",
+      ]
+    `);
+    expect(JSON.stringify(result)).not.toContain(workspaceId);
+    expect(JSON.stringify(result)).not.toContain(input().customer.email);
+    const unit = orders.get(order.orderId)!.purchase_units[0];
+    expect(unit.custom_id).toBe(`${bookingId}:${result.bookingId}`);
+    expect(JSON.stringify(unit)).not.toContain(workspaceId);
+    expect(processWebhook(JSON.stringify({ id: "public-webhook", event_type: "PAYMENT.CAPTURE.COMPLETED", resource: {
+      ...unit.payments!.captures[0], custom_id: unit.custom_id, supplementary_data: { related_ids: { order_id: order.orderId } },
+    } }), repository).matched).toBe(true);
+    const read = await publicReceipt(new Request(`${base}/orders/${order.orderId}`), context);
+    expect(await read.json()).toMatchObject({ status: "confirmed", webhookConfirmed: true });
+    expect((await publicCapture(new Request(`${base}/capture`, { method: "POST" }), context)).status).toBe(200);
+    expect(repository.requireWorkspace(workspaceId).state.bookings).toHaveLength(1);
+    expect(repository.listLedger(workspaceId)).toHaveLength(1);
+    const other = repository.createWorkspace(seedStudio());
+    const foreignContext = { params: Promise.resolve({ bookingId: other.bookingId, orderId: order.orderId }) };
+    for (const handler of [publicReceipt, publicCapture]) {
+      const method = handler === publicReceipt ? "GET" : "POST";
+      expect((await handler(new Request(base, { method }), foreignContext)).status).toBe(404);
+    }
+    expect(await (await publicCancel(new Request(base, { method: "DELETE" }), foreignContext)).json()).toEqual({ cancelled: false });
+    expect(repository.checkoutByOrder(workspaceId, order.orderId)?.status).toBe("confirmed");
+    const second = await (await publicOrder(createRequest(), publicContext)).json();
+    const cancelled = await publicCancel(new Request(base, { method: "DELETE" }), { params: Promise.resolve({ bookingId, orderId: second.orderId }) });
+    expect(await cancelled.json()).toEqual({ cancelled: true });
+  });
+  it("keeps same-origin, input validation, expiry and rate limits on all public checkout routes", async () => {
+    const { bookingId } = repository.requireWorkspace(workspaceId);
+    const context = { params: Promise.resolve({ bookingId, orderId: "ORDER-1" }) };
+    const request = (method: string, body?: object, origin = "http://localhost") => new Request("http://localhost/api/bookings/checkout", {
+      method, headers: { origin }, body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    for (const [handler, method] of [[publicOrder, "POST"], [publicCapture, "POST"], [publicCancel, "DELETE"]] as const) {
+      expect((await handler(request(method, {}, "https://foreign.example"), context)).status).toBe(403);
+    }
+    expect((await publicOrder(request("POST", { ...input(), amount: "0.01" }), context)).status).toBe(400);
+    for (const id of [workspaceId, "x".repeat(32), "bad"]) {
+      const response = await publicCatalog(request("GET"), { params: Promise.resolve({ bookingId: id }) });
+      expect(response.status).toBe(404); expect(await response.json()).toMatchObject({ code: "expired" });
+    }
+    limits.reset();
+    for (let index = 0; index < 60; index++) expect((await publicCatalog(request("GET"), context)).status).toBe(200);
+    const limited = await publicCatalog(request("GET"), context);
+    expect(limited.status).toBe(429); expect(limited.headers.get("Retry-After")).toBeTruthy();
+  });
   const ctx = () => ({ params: Promise.resolve({ id: workspaceId }) });
   const post = (value: unknown, key = randomUUID()) => new Request(`http://localhost/api/workspaces/${workspaceId}/checkout/orders`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(value) });
   it("rejects client prices, invalid customer lengths, cross-origin writes, and global budget exhaustion", async () => {

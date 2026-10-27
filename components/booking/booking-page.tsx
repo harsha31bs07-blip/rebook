@@ -42,7 +42,7 @@ export function Payments({ id, session, customer, validate, clientId, sandbox, o
   // mount so catalog refreshes and edits never replace the buyer's hosted fields.
   const configuration = useRef({ clientId, price: session.price });
   const initialization = useRef<Promise<{ sdk: PayPalV6; eligible: EligibleMethods }> | undefined>(undefined);
-  const base = `/api/workspaces/${id}/checkout/orders`;
+  const base = `/api/bookings/${id}/checkout/orders`;
 
   const create = useCallback(async () => {
     if (!current.current.validate()) throw new Error("Please enter your name and a valid email.");
@@ -186,13 +186,13 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     const controller = new AbortController();
-    const load = () => request<Catalog>(`/api/workspaces/${id}/checkout`, { signal: controller.signal }).then(setCatalog).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
+    const load = () => request<Catalog>(`/api/bookings/${id}/checkout`, { signal: controller.signal }).then(setCatalog).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
     void load(); const timer = setInterval(() => void load(), 15_000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [id]);
   useEffect(() => {
     if (!receipt?.webhookConfigured || receipt.webhookConfirmed) return;
-    const timer = setInterval(() => { void request<Receipt>(`/api/workspaces/${id}/checkout/orders/${receipt.orderId}`).then(setReceipt).catch(() => {}); }, 3000);
+    const timer = setInterval(() => { void request<Receipt>(`/api/bookings/${id}/checkout/orders/${receipt.orderId}`).then(setReceipt).catch(() => {}); }, 3000);
     return () => clearInterval(timer);
   }, [id, receipt?.orderId, receipt?.webhookConfigured, receipt?.webhookConfirmed]);
   const currentSelection = catalog?.sessions.find((session) => session.id === selected?.id);
@@ -219,7 +219,7 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     {error && <p className="error" role="alert">{error}</p>}
     {receipt ? <section className="booking-receipt"><span className="pill success-pill">Booking confirmed</span><h2>You’re on the list.</h2><h3>{classTitle(receipt.class)}</h3><p>{time(receipt.start)}</p><p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
       {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
-      <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button><Link className="button-link" href={`/w/${id}`} target="_blank" rel="noopener noreferrer">See it on the owner’s schedule</Link></div></section>
+      <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button></div></section>
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
         {!catalog && !error && <p role="status">Loading classes…</p>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}

@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { runJudgeSmoke, scenarioCapture } from "../scripts/judge-smoke.mjs";
 
 function fixture() {
-  return { status: "ready", state: { studio: { timezone: "America/New_York" }, instructors: [{ id: "maya", name: "Maya Chen" }],
+  return { bookingId: "0123456789abcdefghijklmnopqrstuv", status: "ready", state: { studio: { timezone: "America/New_York" }, instructors: [{ id: "maya", name: "Maya Chen" }],
     sessions: [{ id: "yoga", instructorId: "maya", start: "2026-11-09T12:00:00Z" }],
     bookings: [{ id: "booking", sessionId: "yoga", amount: "25.00", payment: { simulated: false, captureId: "9AB12345CD678901EF" } }] },
   ledger: [{ kind: "capture", status: "COMPLETED", bookingId: "booking", amount: "25.00", captureId: "9AB12345CD678901EF", paypalId: "9AB12345CD678901EF" }] };
@@ -23,7 +23,7 @@ it("wakes, creates one workspace and checks real capture evidence and all three 
   const h = harness();
   h.fetchImpl.mockResolvedValueOnce(new Response("Waking", { status: 503 }));
   expect(await runJudgeSmoke(h)).toMatchObject({ ok: true, workspaceId: "abcdefghij", pages: 3, captureId: "9AB12345CD678901EF" });
-  expect(h.fetchImpl.mock.calls.map(([url]) => url.pathname)).toEqual(["/api/health", "/api/health", "/api/workspaces", "/api/workspaces/abcdefghij", "/w/abcdefghij", "/w/abcdefghij/book", "/w/abcdefghij/dashboard"]);
+  expect(h.fetchImpl.mock.calls.map(([url]) => url.pathname)).toEqual(["/api/health", "/api/health", "/api/workspaces", "/api/workspaces/abcdefghij", "/w/abcdefghij", "/b/0123456789abcdefghijklmnopqrstuv", "/w/abcdefghij/dashboard"]);
   expect(h.fetchImpl.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
 

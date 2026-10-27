@@ -67,7 +67,8 @@ export async function runJudgeSmoke({ base = DEFAULT_BASE, fetchImpl = fetch, no
   if (workspace?.status !== "ready") throw new Error(`Workspace ${id} was not ready within 2 minutes: ${lastError}`);
   const booking = scenarioCapture(workspace);
   if (!booking) throw new Error(`Workspace ${id} has no real completed PayPal sandbox capture for Maya's Monday scenario`);
-  const pages = [`/w/${id}`, `/w/${id}/book`, `/w/${id}/dashboard`];
+  if (typeof workspace.bookingId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(workspace.bookingId)) throw new Error("Workspace returned an invalid public booking id");
+  const pages = [`/w/${id}`, `/b/${workspace.bookingId}`, `/w/${id}/dashboard`];
   for (const path of pages) {
     const response = await request(path);
     const status = response.status;

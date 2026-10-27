@@ -92,13 +92,13 @@ function clickPay() {
   (find(tree, (element) => element.type === "button" && element.props.className === "primary full-width").props.onClick as () => void)();
 }
 function alert() { return find(tree, (element) => element.props.role === "alert").props.children; }
-const base = "/api/workspaces/studio/checkout/orders";
+const base = "/api/bookings/studio/checkout/orders";
 const receipt = { orderId: "ORDER-1", captureId: "CAPTURE-1", status: "confirmed" };
 
 beforeEach(() => {
   hooks.cursor = 0; hooks.slots = []; hooks.pending = []; hooks.cleanups.clear();
   props = {
-    id: "studio", session: { id: "class-1", classType: "pilates", title: "Pilates Flow", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", instructorId: "teacher", roomId: "room", capacity: 10, price: "18.00", seatsLeft: 1, bookingPaused: false, instructor: "Teacher", room: "Studio" },
+    id: "studio", session: { id: "class-1", classType: "pilates", title: "Pilates Flow", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", capacity: 10, price: "18.00", seatsLeft: 1, bookingPaused: false, instructor: "Teacher", room: "Studio" },
     customer: { name: "Jamie", email: "jamie@example.com" }, validate: () => true,
     clientId: "sandbox-client", sandbox: true, onSuccess: vi.fn(), onLockChange: vi.fn(),
   };
@@ -248,6 +248,14 @@ it("renders singular seats and HIIT titles in the booking catalog", async () => 
   const text = elements(tree).flatMap((element) => typeof element.props.children === "string" ? [element.props.children] : []);
   expect(text).toContain("HIIT Flow");
   expect(text).toContain("1 seat left");
+});
+
+it("never links a public checkout receipt to the owner console", () => {
+  hooks.slots[0] = { studio: { name: "Studio", timezone: "UTC" }, sessions: [] };
+  hooks.slots[4] = { ...receipt, class: "Yoga", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", amount: "22.00", currency: "USD" };
+  tree = BookingPage({ id: "0123456789abcdefghijklmnopqrstuv", clientId: "sandbox-client", sandbox: true });
+  expect(elements(tree).some((element) => element.props.children === "Booking confirmed")).toBe(true);
+  expect(elements(tree).filter((element) => typeof element.props.href === "string").map((element) => element.props.href)).toEqual(["/"]);
 });
 
 it("shows paused classes disabled, then allows selection when a refreshed catalog resumes bookings", async () => {

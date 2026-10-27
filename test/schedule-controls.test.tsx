@@ -182,7 +182,7 @@ it("scrolls an accepted placement into view and highlights it without expanding 
   expect(harness.scrollEventIntoView).not.toHaveBeenCalled();
 });
 
-it("lists changed sessions with Move links in preview and says Recovery complete after approval", () => {
+it("lists changed sessions with Move links in preview and says Recovery applied while replies are outstanding", () => {
   const publicPlan: PublicPlan = { ...plan, id: "plan", workspaceId: "workspace", status: "proposed", createdAt: "2026-11-09T00:00:00Z", results: [] };
   const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Your recovery preview", bullets: [], source: "template" } };
   const props = { details, plan: publicPlan, state, busy: false, results: [], onMove: vi.fn(), onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
@@ -190,7 +190,8 @@ it("lists changed sessions with Move links in preview and says Recovery complete
   expect(preview).toContain("Yoga");
   expect(preview).toContain("Move...</button>");
   const executed = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, status: "executed" } }));
-  expect(executed).toContain("<h2>Recovery complete</h2>");
+  expect(executed).toContain("<h2>Recovery applied</h2>");
+  expect(executed).toContain("haven&#x27;t replied");
   expect(executed).not.toContain("move-session-link");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true }))).not.toContain("Processing refunds");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true, approving: true }))).toContain("Processing refunds");
@@ -224,9 +225,9 @@ it("derives owner work estimates from the current plan and displays API planning
   const props = { details, plan: publicPlan, state, busy: false, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
   const html = renderToStaticMarkup(createElement(PlanPanel, props));
   expect(html).toContain("Owner time saved (estimate)");
-  expect(html).toContain("Prepared in 2.8 s · replaces about 31 calls or messages and 6 manual refunds");
+  expect(html).toContain("Prepared in 2.8 s · replaces about 31 calls or messages once you share the links, plus 6 manual refunds");
   const changed = { ...publicPlan, planningDurationMs: undefined, bookingActions: publicPlan.bookingActions.slice(0, 2), totals: { ...publicPlan.totals, refunded: 1 } };
   const adjusted = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: changed }));
   expect(adjusted).not.toContain("Prepared in");
-  expect(adjusted).toContain("replaces about 2 calls or messages and 1 manual refund.");
+  expect(adjusted).toContain("replaces about 2 calls or messages once you share the links, plus 1 manual refund.");
 });

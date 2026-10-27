@@ -85,6 +85,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     return parsed;
   }
   async function previewPlan(parsed: Interpretation, signal?: AbortSignal) {
+    if (parsed.kind === "clarify") return parsed;
     if (!state) throw new Error("The studio is not ready.");
     const proposed = await api.plan(id, parsed.disruption, signal);
     const next = await api.details(id, proposed.id, signal);
@@ -94,7 +95,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     return planSummary(next.plan, state.studio.currency);
   }
   async function createPlan() {
-    if (!interpretation || !state) return;
+    if (!interpretation || interpretation.kind === "clarify" || !state) return;
     await run("plan", () => previewPlan(interpretation));
   }
   async function reportDisruption(value: string, signal?: AbortSignal) {
@@ -169,7 +170,7 @@ export default function OwnerConsole({ id }: { id: string }) {
       if (interpretation) setInterpretation(undefined);
       requestAnimationFrame(() => focusControl("#judge-examples button"));
     } else if (step === "plan") {
-      focusControl(interpretation ? "#judge-plan" : "#disruption");
+      focusControl(interpretation && interpretation.kind !== "clarify" ? "#judge-plan" : "#disruption");
       if (!interpretation) setToast("Pick an example, then choose Understand disruption to unlock Plan recovery.");
     } else if (step === "move") focusControl(".move-session-link");
     else if (step === "approve") focusControl("#judge-approve");

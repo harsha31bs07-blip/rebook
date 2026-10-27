@@ -168,6 +168,21 @@ describe("WebMCP page handlers and human payment boundary", () => {
     expect(find(renderOwner(), (element) => element.props.role === "alert").props.children).toBe("Please specify the day");
   });
 
+  it("returns clarification through the tool and owner UI without creating a plan", async () => {
+    const clarification = { kind: "clarify", question: "Which day is affected?", suggestions: ["Maya unavailable Monday"] };
+    harness.api.interpret.mockResolvedValue(clarification);
+    renderOwner();
+    expect(await call("report_disruption", { text: "Maya sick" })).toEqual(clarification);
+    let panel = find(renderOwner(), (element) => element.type === DisruptionPanel);
+    expect(panel.props.interpretation).toEqual(clarification);
+    await (panel.props.onPlan as () => Promise<void>)();
+    await (panel.props.onInterpret as (text: string) => Promise<unknown>)("Maya sick");
+    panel = find(renderOwner(), (element) => element.type === DisruptionPanel);
+    expect(panel.props.interpretation).toEqual(clarification);
+    expect(harness.api.plan).not.toHaveBeenCalled();
+    expect(harness.api.approve).not.toHaveBeenCalled();
+  });
+
   it("uses the visible declarative form's text and responds with the shared preview result", async () => {
     const onInterpret = vi.fn(async () => "interpreted"), onReport = vi.fn(async () => ({ planId: "plan-1" }));
     const tree = DisruptionPanel({ state: harness.workspace!.state, text: "old controlled value", setText: vi.fn(), onInterpret, onReport, onEdit: vi.fn(), onPlan: vi.fn(), busy: false });

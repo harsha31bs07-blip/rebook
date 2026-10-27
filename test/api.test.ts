@@ -105,8 +105,8 @@ describe("workspace API", () => {
     const disruption = demoDisruptionFor(weekStart, timezone);
     expect(monday.disruption).toMatchObject({ from: disruption.from, to: disruption.to });
     const today = await (await interpret(post({ text: "Maya has the flu today" }), context(id))).json();
-    expect(today.disruption.from).toBe("2026-12-03T05:00:00.000Z");
-    expect(today.notes).toContain("No classes are scheduled then");
+    expect(today).toMatchObject({ kind: "clarify", question: expect.stringContaining("studio week") });
+    expect(today).not.toHaveProperty("disruption");
     const timer = vi.spyOn(performance, "now").mockReturnValueOnce(100).mockReturnValueOnce(2900);
     const response = await propose(post({ disruption }), context(id));
     timer.mockRestore();

@@ -1,0 +1,1750 @@
+[
+  {
+    "id": 1,
+    "category": "plain",
+    "input": "Maya has the flu and can't teach Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 2,
+    "category": "plain",
+    "input": "Maya is sick Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 3,
+    "category": "plain",
+    "input": "Maya Chen unavailable Mon",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 4,
+    "category": "plain",
+    "input": "Maya can't teach Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 5,
+    "category": "plain",
+    "input": "Maya cannot teach Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 6,
+    "category": "plain",
+    "input": "Maya is absent Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 7,
+    "category": "plain",
+    "input": "Cancel Maya's Monday classes",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 8,
+    "category": "plain",
+    "input": "Maya off Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 9,
+    "category": "plain",
+    "input": "Maya out Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 10,
+    "category": "plain",
+    "input": "Maya unwell Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 11,
+    "category": "plain",
+    "input": "Alex Rivera unavailable Tuesday",
+    "expected": {
+      "instructor": "Alex Rivera",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 12,
+    "category": "plain",
+    "input": "Sam Okafor unavailable Tuesday",
+    "expected": {
+      "instructor": "Sam Okafor",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 13,
+    "category": "plain",
+    "input": "Jordan Lee unavailable Tuesday",
+    "expected": {
+      "instructor": "Jordan Lee",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 14,
+    "category": "plain",
+    "input": "Priya Shah unavailable Tuesday",
+    "expected": {
+      "instructor": "Priya Shah",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 15,
+    "category": "plain",
+    "input": "Chris Morgan unavailable Tuesday",
+    "expected": {
+      "instructor": "Chris Morgan",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 16,
+    "category": "typos",
+    "input": "Myaa is sick Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 17,
+    "category": "typos",
+    "input": "Mya has flu Mon",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 18,
+    "category": "typos",
+    "input": "Mayaa unavailable Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 19,
+    "category": "typos",
+    "input": "Maya Chne sick Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 20,
+    "category": "typos",
+    "input": "Maya is unwell mon",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 21,
+    "category": "typos",
+    "input": "MAYA SICK MONDAY",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 22,
+    "category": "indian-english",
+    "input": "Maya is down with fever, cancel her Monday classes",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 23,
+    "category": "indian-english",
+    "input": "Maya down with fever Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 24,
+    "category": "indian-english",
+    "input": "Maya is having fever Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 25,
+    "category": "indian-english",
+    "input": "Maya cannot come Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 26,
+    "category": "indian-english",
+    "input": "Maya not coming Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 27,
+    "category": "indian-english",
+    "input": "Maya not available Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 28,
+    "category": "indian-english",
+    "input": "Maya can't take class Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 29,
+    "category": "indian-english",
+    "input": "Maya is on leave Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 30,
+    "category": "indian-english",
+    "input": "Alex not coming tmrw",
+    "expected": {
+      "instructor": "Alex Rivera",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 31,
+    "category": "indian-english",
+    "input": "Priya is down with fever Tue",
+    "expected": {
+      "instructor": "Priya Shah",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 32,
+    "category": "informal",
+    "input": "Maya's out Mon",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 33,
+    "category": "informal",
+    "input": "Maya can't make it Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 34,
+    "category": "informal",
+    "input": "Maya called in sick Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 35,
+    "category": "informal",
+    "input": "Maya feeling poorly Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 36,
+    "category": "informal",
+    "input": "Maya is wiped out Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 37,
+    "category": "informal",
+    "input": "Maya's got the flu Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 38,
+    "category": "informal",
+    "input": "Maya's a no-show Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 39,
+    "category": "informal",
+    "input": "Maya away Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 40,
+    "category": "informal",
+    "input": "Maya can't do Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 41,
+    "category": "informal",
+    "input": "Maya is sick af Monday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 42,
+    "category": "time-windows",
+    "input": "Maya sick Monday morning",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T07:00",
+        "to": "2026-11-09T12:00"
+      }
+    }
+  },
+  {
+    "id": 43,
+    "category": "time-windows",
+    "input": "Maya cannot teach Monday afternoon",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T12:00",
+        "to": "2026-11-09T17:00"
+      }
+    }
+  },
+  {
+    "id": 44,
+    "category": "time-windows",
+    "input": "Maya out Monday evening",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T17:00",
+        "to": "2026-11-09T21:00"
+      }
+    }
+  },
+  {
+    "id": 45,
+    "category": "time-windows",
+    "input": "Cancel Maya Monday morning classes",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T07:00",
+        "to": "2026-11-09T12:00"
+      }
+    }
+  },
+  {
+    "id": 46,
+    "category": "time-windows",
+    "input": "Maya sick Monday from 2pm to 4pm",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T14:00",
+        "to": "2026-11-09T16:00"
+      }
+    }
+  },
+  {
+    "id": 47,
+    "category": "time-windows",
+    "input": "Maya sick Monday from 14:30 to 16:00",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T14:30",
+        "to": "2026-11-09T16:00"
+      }
+    }
+  },
+  {
+    "id": 48,
+    "category": "time-windows",
+    "input": "Maya sick Monday after 2pm",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T14:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 49,
+    "category": "time-windows",
+    "input": "Maya sick Monday before 11am",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-09T11:00"
+      }
+    }
+  },
+  {
+    "id": 50,
+    "category": "time-windows",
+    "input": "Maya unavailable Monday between 9am and 11am",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T09:00",
+        "to": "2026-11-09T11:00"
+      }
+    }
+  },
+  {
+    "id": 51,
+    "category": "time-windows",
+    "input": "Maya sick Monday from 12pm to 1pm",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T12:00",
+        "to": "2026-11-09T13:00"
+      }
+    }
+  },
+  {
+    "id": 52,
+    "category": "time-windows",
+    "input": "Maya sick Monday from 7:30am to 9:15am",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T07:30",
+        "to": "2026-11-09T09:15"
+      }
+    }
+  },
+  {
+    "id": 53,
+    "category": "time-windows",
+    "input": "Maya sick Monday after 18:30",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T18:30",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 54,
+    "category": "time-windows",
+    "input": "Maya sick Monday all day",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 55,
+    "category": "time-windows",
+    "input": "Maya sick Monday from 12am to 6am",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-09T06:00"
+      }
+    }
+  },
+  {
+    "id": 56,
+    "category": "rooms",
+    "input": "Cycle Lab flooded Wed",
+    "expected": {
+      "room": "Cycle Lab",
+      "window": {
+        "from": "2026-11-11T00:00",
+        "to": "2026-11-12T00:00"
+      }
+    }
+  },
+  {
+    "id": 57,
+    "category": "rooms",
+    "input": "Cycle Lab unavailable Wed morning",
+    "expected": {
+      "room": "Cycle Lab",
+      "window": {
+        "from": "2026-11-11T07:00",
+        "to": "2026-11-11T12:00"
+      }
+    }
+  },
+  {
+    "id": 58,
+    "category": "rooms",
+    "input": "Mat Studio flooded Tue",
+    "expected": {
+      "room": "Mat Studio",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 59,
+    "category": "rooms",
+    "input": "Mat Studio unavailable Tue morning",
+    "expected": {
+      "room": "Mat Studio",
+      "window": {
+        "from": "2026-11-10T07:00",
+        "to": "2026-11-10T12:00"
+      }
+    }
+  },
+  {
+    "id": 60,
+    "category": "rooms",
+    "input": "Movement Hall flooded Thu",
+    "expected": {
+      "room": "Movement Hall",
+      "window": {
+        "from": "2026-11-12T00:00",
+        "to": "2026-11-13T00:00"
+      }
+    }
+  },
+  {
+    "id": 61,
+    "category": "rooms",
+    "input": "Movement Hall unavailable Thu morning",
+    "expected": {
+      "room": "Movement Hall",
+      "window": {
+        "from": "2026-11-12T07:00",
+        "to": "2026-11-12T12:00"
+      }
+    }
+  },
+  {
+    "id": 62,
+    "category": "rooms",
+    "input": "Small Studio flooded Fri",
+    "expected": {
+      "room": "Small Studio",
+      "window": {
+        "from": "2026-11-13T00:00",
+        "to": "2026-11-14T00:00"
+      }
+    }
+  },
+  {
+    "id": 63,
+    "category": "rooms",
+    "input": "Small Studio unavailable Fri morning",
+    "expected": {
+      "room": "Small Studio",
+      "window": {
+        "from": "2026-11-13T07:00",
+        "to": "2026-11-13T12:00"
+      }
+    }
+  },
+  {
+    "id": 64,
+    "category": "rooms",
+    "input": "Cycle Lab AC is broken Wednesday afternoon",
+    "expected": {
+      "room": "Cycle Lab",
+      "window": {
+        "from": "2026-11-11T12:00",
+        "to": "2026-11-11T17:00"
+      }
+    }
+  },
+  {
+    "id": 65,
+    "category": "rooms",
+    "input": "Small Studio is closed Friday",
+    "expected": {
+      "room": "Small Studio",
+      "window": {
+        "from": "2026-11-13T00:00",
+        "to": "2026-11-14T00:00"
+      }
+    }
+  },
+  {
+    "id": 66,
+    "category": "closures",
+    "input": "Studio closed Saturday for a burst pipe",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-14T00:00",
+        "to": "2026-11-15T00:00"
+      }
+    }
+  },
+  {
+    "id": 67,
+    "category": "closures",
+    "input": "The studio is closed Monday",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 68,
+    "category": "closures",
+    "input": "Close the studio Sunday",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-15T00:00",
+        "to": "2026-11-16T00:00"
+      }
+    }
+  },
+  {
+    "id": 69,
+    "category": "closures",
+    "input": "Cancel all classes Tuesday",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 70,
+    "category": "closures",
+    "input": "Studio closed Saturday morning for a burst pipe",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-14T07:00",
+        "to": "2026-11-14T12:00"
+      }
+    }
+  },
+  {
+    "id": 71,
+    "category": "relative-dates",
+    "input": "Maya sick today",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-10T00:00"
+      }
+    }
+  },
+  {
+    "id": 72,
+    "category": "relative-dates",
+    "input": "Maya sick tomorrow",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 73,
+    "category": "relative-dates",
+    "input": "Maya sick tmrw morning",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-10T07:00",
+        "to": "2026-11-10T12:00"
+      }
+    }
+  },
+  {
+    "id": 74,
+    "category": "relative-dates",
+    "input": "Maya sick tmr",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-11T00:00"
+      }
+    }
+  },
+  {
+    "id": 75,
+    "category": "relative-dates",
+    "input": "Maya sick 2026-11-12",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-12T00:00",
+        "to": "2026-11-13T00:00"
+      }
+    }
+  },
+  {
+    "id": 76,
+    "category": "relative-dates",
+    "input": "Alex sick tomorrow afternoon",
+    "expected": {
+      "instructor": "Alex Rivera",
+      "window": {
+        "from": "2026-11-10T12:00",
+        "to": "2026-11-10T17:00"
+      }
+    }
+  },
+  {
+    "id": 77,
+    "category": "ranges",
+    "input": "Maya unavailable Monday to Wednesday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-12T00:00"
+      }
+    }
+  },
+  {
+    "id": 78,
+    "category": "ranges",
+    "input": "Maya sick Mon through Fri",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-14T00:00"
+      }
+    }
+  },
+  {
+    "id": 79,
+    "category": "ranges",
+    "input": "Alex unavailable this week",
+    "expected": {
+      "instructor": "Alex Rivera",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-16T00:00"
+      }
+    }
+  },
+  {
+    "id": 80,
+    "category": "ranges",
+    "input": "Studio closed this week",
+    "expected": {
+      "closure": true,
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-16T00:00"
+      }
+    }
+  },
+  {
+    "id": 81,
+    "category": "ranges",
+    "input": "Cycle Lab broken Tuesday through Thursday",
+    "expected": {
+      "room": "Cycle Lab",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-13T00:00"
+      }
+    }
+  },
+  {
+    "id": 82,
+    "category": "ranges",
+    "input": "Maya unavailable 2026-11-10 to 2026-11-12",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-10T00:00",
+        "to": "2026-11-13T00:00"
+      }
+    }
+  },
+  {
+    "id": 83,
+    "category": "negation",
+    "input": "Maya is not sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 84,
+    "category": "negation",
+    "input": "Maya is no longer out Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 85,
+    "category": "negation",
+    "input": "Cancel that",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 86,
+    "category": "negation",
+    "input": "Maya isn't sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 87,
+    "category": "negation",
+    "input": "Maya is never out Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 88,
+    "category": "negation",
+    "input": "Maya has no flu Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 89,
+    "category": "negation",
+    "input": "Maya is not unavailable Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 90,
+    "category": "negation",
+    "input": "Maya is not coming Monday but she is not sick",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 91,
+    "category": "negation",
+    "input": "Don't cancel Maya Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 92,
+    "category": "negation",
+    "input": "Maya isn't unavailable Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 93,
+    "category": "negation",
+    "input": "Maya is sick? No, Monday is fine",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 94,
+    "category": "negation",
+    "input": "Maya is not sick and not coming Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 95,
+    "category": "negation",
+    "input": "Maya is not not coming Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 96,
+    "category": "negation",
+    "input": "Maya not sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 97,
+    "category": "negation",
+    "input": "Maya is no longer unavailable Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 98,
+    "category": "hypothetical",
+    "input": "Maya might be sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 99,
+    "category": "hypothetical",
+    "input": "If Maya is sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 100,
+    "category": "hypothetical",
+    "input": "Maybe Alex is out Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 101,
+    "category": "hypothetical",
+    "input": "Maya may be absent Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 102,
+    "category": "hypothetical",
+    "input": "Maya could be unavailable Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 103,
+    "category": "hypothetical",
+    "input": "Maya probably out Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 104,
+    "category": "hypothetical",
+    "input": "Suppose the studio is closed Saturday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 105,
+    "category": "hypothetical",
+    "input": "What if Cycle Lab floods Wednesday?",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 106,
+    "category": "hypothetical",
+    "input": "Maya sick Monday?",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 107,
+    "category": "hypothetical",
+    "input": "Maya possibly unavailable Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 108,
+    "category": "hypothetical",
+    "input": "Can you cancel Maya Monday?",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 109,
+    "category": "hypothetical",
+    "input": "Maya is sick Monday unless she recovers",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 110,
+    "category": "corrections",
+    "input": "Maya sick Monday, actually Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 111,
+    "category": "corrections",
+    "input": "Maya sick Monday, correction Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 112,
+    "category": "corrections",
+    "input": "Scratch that Maya sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 113,
+    "category": "corrections",
+    "input": "Maya sick Monday instead of Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 114,
+    "category": "corrections",
+    "input": "Maya sick Monday, I meant Alex",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 115,
+    "category": "corrections",
+    "input": "Ignore Maya out Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 116,
+    "category": "corrections",
+    "input": "Sorry, Maya sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 117,
+    "category": "corrections",
+    "input": "Maya sick Monday except morning",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 118,
+    "category": "corrections",
+    "input": "Maya sick Monday rather than Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 119,
+    "category": "past",
+    "input": "Maya was sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 120,
+    "category": "past",
+    "input": "Maya sick yesterday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 121,
+    "category": "past",
+    "input": "Maya out last Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 122,
+    "category": "past",
+    "input": "Maya had flu Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 123,
+    "category": "past",
+    "input": "Cycle Lab was flooded Wed",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 124,
+    "category": "past",
+    "input": "Studio closed two days ago",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 125,
+    "category": "past",
+    "input": "Maya sick 2026-11-08",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 126,
+    "category": "past",
+    "input": "Maya out previously Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 127,
+    "category": "unknown",
+    "input": "Beatrice sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 128,
+    "category": "unknown",
+    "input": "Studio B flooded Wed",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 129,
+    "category": "unknown",
+    "input": "Room 7 closed Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 130,
+    "category": "unknown",
+    "input": "Maya Patel sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 131,
+    "category": "unknown",
+    "input": "Cycle Lab and Studio Z closed Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 132,
+    "category": "unknown",
+    "input": "Maya and Beatrice sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 133,
+    "category": "unknown",
+    "input": "Maya, Beatrice sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 134,
+    "category": "unknown",
+    "input": "Maya & Beatrice sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 135,
+    "category": "unknown",
+    "input": "The hall broken Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 136,
+    "category": "unknown",
+    "input": "New Studio closed Friday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 137,
+    "category": "unknown",
+    "input": "Maya says Beatrice is sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 138,
+    "category": "multiple-resources",
+    "input": "Maya and Alex sick Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 139,
+    "category": "multiple-resources",
+    "input": "Maya sick Monday and Alex sick Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 140,
+    "category": "multiple-resources",
+    "input": "Maya and Priya unavailable Tuesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 141,
+    "category": "multiple-resources",
+    "input": "Cycle Lab and Mat Studio flooded Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 142,
+    "category": "multiple-resources",
+    "input": "Maya sick Monday in Cycle Lab",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 143,
+    "category": "unsupported-ranges",
+    "input": "Alex can't do evenings this week",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 144,
+    "category": "unsupported-ranges",
+    "input": "Maya sick Monday to Wednesday mornings",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 145,
+    "category": "unsupported-ranges",
+    "input": "Maya out until Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 146,
+    "category": "unsupported-ranges",
+    "input": "Maya unavailable Monday and Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 147,
+    "category": "unsupported-ranges",
+    "input": "Maya unavailable every Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 148,
+    "category": "unsupported-ranges",
+    "input": "Maya sick next week",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 149,
+    "category": "unsupported-ranges",
+    "input": "Maya sick next Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 150,
+    "category": "unsupported-ranges",
+    "input": "Studio closed this weekend",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 151,
+    "category": "unsupported-ranges",
+    "input": "Maya sick Friday to Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 152,
+    "category": "unsupported-ranges",
+    "input": "Maya sick Monday through next Wednesday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 153,
+    "category": "unsupported-ranges",
+    "input": "Maya sick 2026-11-15 to 2026-11-20",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 154,
+    "category": "missing-day-time",
+    "input": "Maya sick",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 155,
+    "category": "missing-day-time",
+    "input": "Cycle Lab broken",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 156,
+    "category": "missing-day-time",
+    "input": "Studio closed",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 157,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday at 2pm",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 158,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 2pm",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 159,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday at noon",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 160,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 14:00",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 161,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday at 25:00",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 162,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 4pm to 2pm",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 163,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 2 to 4",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 164,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday after",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 165,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 2pm to 4pm evening",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 166,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday 2pm 4pm",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 167,
+    "category": "missing-day-time",
+    "input": "Maya sick 2026-11-31",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 168,
+    "category": "missing-day-time",
+    "input": "Maya sick Monday from 7:99am to 9am",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 169,
+    "category": "safety-regressions",
+    "input": "Maya unavailable Monday morning or afternoon",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 170,
+    "category": "safety-regressions",
+    "input": "Maya sick Monday in December",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 171,
+    "category": "safety-regressions",
+    "input": "Maya cannot cancel Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 172,
+    "category": "safety-regressions",
+    "input": "Maya not coming Monday and isn't sick",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 173,
+    "category": "safety-regressions",
+    "input": "Beatrice sick Monday at Cycle Lab",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 174,
+    "category": "safety-regressions",
+    "input": "Studio B beside Cycle Lab flooded Wed",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 175,
+    "category": "safety-regressions",
+    "input": "Maya sick starting Monday",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 176,
+    "category": "safety-regressions",
+    "input": "Maya sick Monday all day morning",
+    "expected": {
+      "clarify": true
+    }
+  },
+  {
+    "id": 177,
+    "category": "ranges",
+    "input": "Maya unavailable from Monday to Wednesday",
+    "expected": {
+      "instructor": "Maya Chen",
+      "window": {
+        "from": "2026-11-09T00:00",
+        "to": "2026-11-12T00:00"
+      }
+    }
+  }
+]

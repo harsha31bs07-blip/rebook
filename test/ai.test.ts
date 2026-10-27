@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AiUnavailable, generateJson } from "../lib/ai/gemini";
-import { InterpretationError, interpretDisruption } from "../lib/ai/interpret";
+import { interpretDisruption, interpretRules } from "../lib/ai/interpret";
 import { explainPlan } from "../lib/ai/explain";
 import { draftCustomerMessages } from "../lib/ai/messages";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
@@ -109,95 +109,105 @@ describe("disruption interpretation", () => {
     expect(body.response_format.json_schema.schema.properties.day.enum).toContain(null);
   });
   it.each([
-    ["Maya is sick Monday", "instructor_unavailable", "instructor-01", "2026-11-09T05:00:00.000Z", "2026-11-10T05:00:00.000Z"],
-    ["Maya has the flu, out until Wednesday", "instructor_unavailable", "instructor-01", "2026-11-08T05:00:00.000Z", "2026-11-11T05:00:00.000Z"],
-    ["Cycle Lab AC broken Wed afternoon", "room_unavailable", "room-03", "2026-11-11T17:00:00.000Z", "2026-11-11T22:00:00.000Z"],
-    ["studio closed Saturday for a burst pipe", "closure", null, "2026-11-14T05:00:00.000Z", "2026-11-15T05:00:00.000Z"],
-    ["Alex can't do evenings this week", "instructor_unavailable", "instructor-02", "2026-11-09T22:00:00.000Z", "2026-11-10T02:00:00.000Z"],
-  ])("resolves %s with rules when every model is unavailable", async (text, kind, id, from, to) => {
+    ["Maya has the flu and can't teach Monday", "instructor_unavailable", "2026-11-09T05:00:00.000Z", "2026-11-10T05:00:00.000Z"],
+    ["Cycle Lab AC broken Wed afternoon", "room_unavailable", "2026-11-11T17:00:00.000Z", "2026-11-11T22:00:00.000Z"],
+    ["studio closed Saturday for a burst pipe", "closure", "2026-11-14T05:00:00.000Z", "2026-11-15T05:00:00.000Z"],
+    ["Maya is sick Monday to Wednesday", "instructor_unavailable", "2026-11-09T05:00:00.000Z", "2026-11-12T05:00:00.000Z"],
+    ["Alex is unavailable this week", "instructor_unavailable", "2026-11-09T05:00:00.000Z", "2026-11-16T05:00:00.000Z"],
+  ])("preserves the complete window for %s on provider outage", async (text, kind, from, to) => {
     fetchMock.mockResolvedValue(new Response("unavailable", { status: 503 }));
-    const result = await interpretDisruption(text!, state, now, weekStart);
-    expect(result).toMatchObject({ source: "rules", disruption: { kind, from, to, reason: text } });
-    if (result.disruption.kind === "instructor_unavailable") expect(result.disruption.instructorId).toBe(id);
-    if (result.disruption.kind === "room_unavailable") expect(result.disruption.roomId).toBe(id);
-    if (text!.includes("this week")) expect(result.notes.join(" ")).toContain("first affected");
-    if (text!.includes("until")) expect(result.notes.join(" ")).toContain("availability resumes");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await interpretDisruption(text, state, now, weekStart)).toMatchObject({ source: "rules", disruption: { kind, from, to, reason: text } });
   });
-  it.each(["2026-12-03T15:00:00Z", "2026-12-06T15:00:00Z", "2026-12-07T15:00:00Z"])("keeps weekdays inside the seeded week when now is %s", async (clock) => {
+  it("preserves the hero plan's 9/16/6 outcome", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
-    const week = "2026-12-07T05:00:00.000Z";
-    const december = seedStudio(42, week);
-    for (const [text, date, minutes] of [
-      ["Maya has the flu Monday", "2026-12-07", 0],
-      ["Cycle Lab is broken Wednesday afternoon", "2026-12-09", 720],
-      ["studio closed Saturday", "2026-12-12", 0],
-    ] as const) {
-      const result = await interpretDisruption(text, december, clock, week);
-      expect(localParts(result.disruption.from, december.studio.timezone)).toMatchObject({ dateKey: date, minutesOfDay: minutes });
-    }
+    const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now, weekStart);
+    if (result.kind === "clarify") throw new Error(result.question);
+    expect(result.disruption).toEqual({ ...demoDisruption, reason: "Maya has the flu and can\'t teach Monday" });
+    expect(replan(state, result.disruption, { now }).totals).toMatchObject({ kept: 9, moved: 16, refunded: 6 });
   });
-  it("keeps today and tomorrow relative to now and notes empty windows for rules and Gemini", async () => {
-    for (const source of ["rules", "gemini"] as const) {
-      vi.stubEnv("GEMINI_API_KEY", source === "rules" ? "" : "test-key");
-      for (const [day, date] of [["today", "2026-12-03"], ["tomorrow", "2026-12-04"]] as const) {
-        fetchMock.mockResolvedValue(response(intent({ day })));
-        const result = await interpretDisruption(`Maya is sick ${day}`, state, "2026-12-03T15:00:00Z", weekStart);
-        expect(result.source).toBe(source);
-        expect(localParts(result.disruption.from, state.studio.timezone).dateKey).toBe(date);
-        expect(result.notes).toContain("No classes are scheduled then");
-      }
-    }
+  it.each([
+    "Maya is not sick Monday", "Maya is no longer out Monday", "cancel that", "Maya might be sick Monday",
+    "If Maya is sick Monday", "Maya is sick Monday, actually Tuesday", "Maya was sick Monday",
+    "Beatrice is sick Monday", "Studio B flooded Wed", "Maya and Alex are sick Monday",
+    "Maya and Beatrice are sick Monday", "Maya is sick", "Maya is sick Monday at 2pm",
+    "Alex can't do evenings this week", "Maya is out until Wednesday", "Maya is sick Monday and Wednesday",
+  ])("clarifies %s even with an overconfident provider", async (text) => {
+    fetchMock.mockResolvedValue(response(intent()));
+    const result = await interpretDisruption(text, state, now, weekStart);
+    expect(result).toMatchObject({ kind: "clarify", question: expect.any(String), suggestions: expect.any(Array) });
+    expect(result).not.toHaveProperty("disruption");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
-  it("resolves model names and local clocks itself, ignoring model-made IDs and instants", async () => {
-    fetchMock.mockImplementation(async () => response(intent({ instructorId: "attacker-id", from: "1900-01-01T00:00:00Z", to: "2099-01-01T00:00:00Z" })));
+  it.each([
+    { name: "Beatrice Unknown" }, { name: "Alex Rivera" }, { day: "tuesday" },
+    { startTime: "14:00", endTime: "16:00" }, { kind: "closure", name: null },
+    { day: "today" }, { startTime: "25:00", endTime: "26:00" },
+  ])("falls back without changing the owner's resource or window for %j", async (override) => {
+    fetchMock.mockImplementation(async () => response(intent(override)));
+    expect(await interpretDisruption("Maya is sick Monday", state, now, weekStart)).toMatchObject({ source: "rules", disruption: { instructorId: "instructor-01", from: demoDisruption.from, to: demoDisruption.to } });
+  });
+  it("accepts grounded model output, ignores invented IDs and uses deterministic notes", async () => {
+    fetchMock.mockResolvedValue(response(intent({ instructorId: "attacker", notes: ["invented detail"] })));
     const result = await interpretDisruption("Maya is sick Monday", state, now, weekStart);
-    expect(result).toMatchObject({ source: "gemini", model: "first", disruption: {
-      instructorId: "instructor-01", from: "2026-11-09T05:00:00.000Z", to: "2026-11-10T05:00:00.000Z",
-    } });
+    expect(result).toMatchObject({ source: "gemini", model: "first", disruption: { instructorId: "instructor-01" } });
+    expect(result).not.toHaveProperty("notes", ["invented detail"]);
     const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
     expect(prompt).toContain("2026-11-08, sunday");
     expect(prompt).toContain("America/New_York");
-    expect(prompt).toContain("Maya Chen");
-    expect(prompt).toContain("Cycle Lab");
-    expect(prompt).toContain("2026-11-09 monday");
   });
-  it("falls back to rules for unknown model names and rejects unknown owner names", async () => {
-    fetchMock.mockImplementation(async () => response(intent({ name: "Beatrice Unknown" })));
-    expect((await interpretDisruption("Maya is sick Monday", state, now, weekStart)).source).toBe("rules");
-    await expect(interpretDisruption("Beatrice is sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
+  it("accepts a structured model clarification and asks on low confidence", async () => {
+    fetchMock.mockResolvedValueOnce(response({ kind: "clarify", question: "Which Monday?", suggestions: ["Maya unavailable Monday all day"] }));
+    expect(await interpretDisruption("Maya sick Monday", state, now)).toMatchObject({ kind: "clarify", source: "gemini", question: "Which Monday?" });
+    fetchMock.mockResolvedValue(response(intent({ confidence: 0.1 })));
+    expect(await interpretDisruption("Maya sick Monday", state, now)).toMatchObject({ kind: "clarify" });
   });
-  it("rejects hallucinated known resources that are absent from the text", async () => {
-    fetchMock.mockImplementation(async () => response(intent()));
-    await expect(interpretDisruption("Beatrice is sick Monday", state, now, weekStart)).rejects.toThrow("Maya Chen");
+  it("accepts grounded inclusive multi-day and full-week model windows", async () => {
+    fetchMock.mockResolvedValueOnce(response(intent({ throughDay: "wednesday" })));
+    expect(await interpretDisruption("Maya unavailable Monday to Wednesday", state, now)).toMatchObject({ source: "gemini", disruption: { from: demoDisruption.from, to: "2026-11-12T05:00:00.000Z" } });
+    fetchMock.mockResolvedValueOnce(response(intent({ day: null, thisWeek: true })));
+    expect(await interpretDisruption("Maya unavailable this week", state, now)).toMatchObject({ source: "gemini", disruption: { from: demoDisruption.from, to: "2026-11-16T05:00:00.000Z" } });
   });
-  it("does not widen an instructor absence into a hallucinated studio closure", async () => {
-    fetchMock.mockImplementation(async () => response(intent({ kind: "closure", name: null })));
-    expect((await interpretDisruption("Maya is sick Monday", state, now, weekStart)).disruption.kind).toBe("instructor_unavailable");
+  it("starts this week on local today without losing later days", () => {
+    expect(interpretRules("Maya unavailable this week", state, "2026-11-11T15:00:00Z")).toMatchObject({ disruption: { from: "2026-11-11T05:00:00.000Z", to: "2026-11-16T05:00:00.000Z" } });
   });
-  it("rejects low-confidence ambiguous inputs with helpful known names", async () => {
-    fetchMock.mockImplementation(async () => response(intent({ confidence: 0.1 })));
-    await expect(interpretDisruption("Something happened", state, now, weekStart)).rejects.toThrow("Cycle Lab");
-    await expect(interpretDisruption("Maya is sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
-    await expect(interpretDisruption("Maya and Alex are sick Monday", state, now, weekStart)).rejects.toBeInstanceOf(InterpretationError);
+  it("bounds the whole provider chain including stalled bodies to 12 seconds", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("AI_MODELS", "gemini:deadline-first,groq:deadline-second,gemini:deadline-third");
+    vi.stubEnv("GROQ_API_KEY", "test-groq");
+    fetchMock.mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
+    const started = Date.now();
+    const pending = interpretDisruption("Maya is sick Monday", state, now);
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(await pending).toMatchObject({ source: "rules", aiBusy: true, disruption: { instructorId: "instructor-01" } });
+    expect(Date.now() - started).toBe(12_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([, options]) => options.signal.aborted)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it.each([
     ["Myaa is sick tomorrow morning", "2026-11-09", 420, 720],
-    ["Maya is sick today evening", "2026-11-08", 1020, 1260],
     ["Maya is sick Monday from 2pm to 4pm", "2026-11-09", 840, 960],
     ["Maya is sick Monday from 14:30 to 16:00", "2026-11-09", 870, 960],
-  ])("supports local rules for %s", async (text, dateKey, fromMinutes, toMinutes) => {
-    vi.stubEnv("GEMINI_API_KEY", "");
-    const { disruption } = await interpretDisruption(text, state, now, weekStart);
-    expect(localParts(disruption.from, state.studio.timezone)).toMatchObject({ dateKey, minutesOfDay: fromMinutes });
-    expect(localParts(disruption.to, state.studio.timezone).minutesOfDay).toBe(toMinutes);
+    ["Alex not coming tmrw", "2026-11-09", 0, 0],
+    ["Maya is down with fever, cancel her Monday classes", "2026-11-09", 0, 0],
+    ["Maya is sick Monday after 2pm", "2026-11-09", 840, 0],
+  ])("supports local rules for %s", (text, dateKey, fromMinutes, toMinutes) => {
+    const result = interpretRules(text, state, now);
+    if (result.kind === "clarify") throw new Error(result.question);
+    expect(localParts(result.disruption.from, state.studio.timezone)).toMatchObject({ dateKey, minutesOfDay: fromMinutes });
+    expect(localParts(result.disruption.to, state.studio.timezone).minutesOfDay).toBe(toMinutes);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-  it("uses the studio-local day near midnight and converts across DST locally", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "");
-    const { disruption } = await interpretDisruption("Maya is sick tomorrow all day", state, "2026-11-01T03:30:00Z", weekStart);
-    expect(disruption.from).toBe("2026-11-01T04:00:00.000Z");
-    expect(disruption.to).toBe("2026-11-02T05:00:00.000Z");
+  it("requires relative dates to stay inside the displayed week, and rejects past windows", () => {
+    for (const text of ["Maya sick today", "Maya sick tomorrow"]) expect(interpretRules(text, state, "2026-12-03T15:00:00Z")).toMatchObject({ kind: "clarify" });
+    expect(interpretRules("Maya sick Monday", state, "2026-11-11T15:00:00Z")).toMatchObject({ kind: "clarify" });
+  });
+  it("uses studio-local today at midnight and handles a DST day inside its week", () => {
+    const dstState = seedStudio(42, "2026-10-26T04:00:00Z");
+    const result = interpretRules("Maya sick tomorrow all day", dstState, "2026-11-01T03:30:00Z");
+    if (result.kind === "clarify") throw new Error(result.question);
+    expect(result.disruption.from).toBe("2026-11-01T04:00:00.000Z");
+    expect(result.disruption.to).toBe("2026-11-02T05:00:00.000Z");
   });
 });
 
@@ -293,10 +303,11 @@ describe("interpretation route", () => {
     expect(getRepository().listPlans(id)).toEqual([]);
     expect(getRepository().requireWorkspace(id).state).toEqual(state);
   });
-  it("returns 422 and helpful names for unresolvable text", async () => {
+  it("returns a structured clarification without planning for unresolvable text", async () => {
     const result = await interpret(request({ text: "Something happened" }), { params: Promise.resolve({ id }) });
-    expect(result.status).toBe(422);
-    expect((await result.json()).error).toContain("Maya Chen");
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ kind: "clarify", question: expect.stringContaining("Maya Chen"), suggestions: expect.any(Array) });
+    expect(getRepository().listPlans(id)).toEqual([]);
   });
   it("validates workspace IDs, body shape, text limits and JSON", async () => {
     for (const body of [{ text: "" }, { text: "  " }, { text: "a".repeat(501) }, { text: "Maya is sick Monday", other: true }, { text: 42 }]) {

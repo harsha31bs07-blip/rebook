@@ -115,7 +115,10 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     const info = data.details[String(eventRecord.id)];
     if (!info) return StringHelper.encodeHtml(eventRecord.name);
     renderData.iconCls = "";
-    renderData.ariaLabel = `${info.title}, ${info.time}, ${info.status}${info.badge ? `, ${info.badge}` : ""}, ${info.room}, ${info.location}, ${info.occupancy}`;
+    // The accessible name starts with exactly the visible text (WCAG 2.5.3 label in name), then adds context.
+    const visible = [info.title, info.time, ...(zoom === "day" ? [info.location, info.occupancy] : []), ...(zoom === "day" && mode === "rooms" ? [info.room] : []), ...(info.badge ? [info.badge] : [])];
+    const context = [info.status, ...(zoom === "day" && mode === "rooms" ? [] : [info.room]), ...(zoom === "day" ? [] : [info.location, info.occupancy])];
+    renderData.ariaLabel = `${visible.join(" ")}. ${context.join(", ")}`;
     return [{ tag: "div", className: "session-label", children: [
       { tag: "strong", text: info.title }, { tag: "span", text: info.time },
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),

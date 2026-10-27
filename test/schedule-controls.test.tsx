@@ -81,12 +81,13 @@ it("starts scheduler accessible names with the visible class and time before sta
     const event = props.events!.find((item) => item.id === id)!;
     const renderData = {} as { ariaLabel: string };
     const config = props.eventRenderer!({ eventRecord: event as EventModel, renderData } as Parameters<NonNullable<BryntumSchedulerProps["eventRenderer"]>>[0]);
-    expect(renderData.ariaLabel.startsWith(`${event.name}, `)).toBe(true);
-    const visible = markup(config);
     const label = renderData.ariaLabel;
-    expect(label).toMatch(new RegExp(`^${event.name}, \\d`));
-    expect(visible).toContain(label.split(", ")[1]);
-    if (id === "s1-new") expect(label).toContain("Recovery, Covered by Alex");
+    // Label in name: the accessible name starts with exactly the visible text, in order.
+    const parts = (config as { children: { tag: string; text?: string }[] }[])[0].children.filter((child) => child.tag !== "button").map((child) => child.text);
+    expect(label.startsWith(`${parts.join(" ")}. `)).toBe(true);
+    const visible = markup(config);
+    expect(visible).toContain(parts[1]!);
+    if (id === "s1-new") expect(label).toContain("Covered by Alex");
   }
 });
 

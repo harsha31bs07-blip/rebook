@@ -17,7 +17,7 @@ export async function studioModelCompletion<T>(
   const models = preferred && configured.includes(preferred) ? [preferred, ...configured.filter((model) => model !== preferred)] : configured;
   const started = Date.now();
   for (const [index, model] of models.entries()) {
-    if (signal?.aborted || Date.now() - started >= 25_000) break;
+    if (signal?.aborted || Date.now() - started >= 35_000) break;
     if ((cooldowns.get(model) ?? 0) > Date.now()) {
       console.info(JSON.stringify({ message: "ai_call", model, status: "cooldown", ms: 0 }));
       continue;
@@ -35,7 +35,7 @@ export async function studioModelCompletion<T>(
           status = "timeout";
           controller.abort();
           reject(analystUnavailable());
-        }, Math.min(index === 0 ? 4_000 : 20_000, 25_000 - (Date.now() - started)));
+        }, Math.min(index === 0 ? 10_000 : 20_000, 35_000 - (Date.now() - started)));
         onAbort = () => { status = "cancelled"; controller.abort(); reject(analystUnavailable()); };
         signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();

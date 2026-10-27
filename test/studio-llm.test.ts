@@ -161,7 +161,7 @@ describe("Studio LLM proxy", () => {
     const fetch = vi.fn().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(Response.json(completion));
     vi.stubGlobal("fetch", fetch);
     const pending = studioCompletion(body);
-    await vi.advanceTimersByTimeAsync(4_001);
+    await vi.advanceTimersByTimeAsync(10_001);
     expect((await pending).id).toBe("ok");
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
@@ -185,14 +185,14 @@ describe("Studio LLM proxy", () => {
     vi.stubGlobal("fetch", fetch);
     const pending = studioCompletion(body);
     const rejected = expect(pending).rejects.toMatchObject({ status: 503 });
-    await vi.advanceTimersByTimeAsync(25_000);
+    await vi.advanceTimersByTimeAsync(35_000);
     await rejected;
     expect(fetch.mock.calls.map((entry) => JSON.parse(entry[1].body).model)).toEqual(["slow-a", "slow-b", "slow-c"]);
     expect(fetch.mock.calls.every((entry) => entry[1].signal.aborted)).toBe(true);
     expect(log.mock.calls.map(([entry]) => JSON.parse(entry))).toEqual([
-      { message: "ai_call", model: "slow-a", status: "timeout", ms: 4000 },
+      { message: "ai_call", model: "slow-a", status: "timeout", ms: 10000 },
       { message: "ai_call", model: "slow-b", status: "timeout", ms: 20000 },
-      { message: "ai_call", model: "slow-c", status: "timeout", ms: 1000 },
+      { message: "ai_call", model: "slow-c", status: "timeout", ms: 5000 },
     ]);
     log.mockRestore();
   });

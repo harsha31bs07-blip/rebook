@@ -12,7 +12,7 @@ import { lookupRefund } from "../lib/executor/reconcileRefund";
 import { limits } from "../lib/api/limits";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
-import { applyPlan } from "../lib/solver/validate";
+import { applyPlan, validate } from "../lib/solver/validate";
 import { calculateTotals } from "../lib/solver/score";
 import { processWebhook } from "../lib/paypal/webhook";
 import { executeRefund } from "../lib/executor/refund";
@@ -123,8 +123,13 @@ describe("refund recovery via mocked SDK transport", () => {
   it("settles an already-applied legacy plan without retroactively enforcing new scheduling rules", async () => {
     const { workspace, plan } = prepared();
     const legacy = structuredClone(plan);
-    legacy.bookingActions.find((item) => item.reason.includes("overlap"))!.action = "move";
+    // Taylor's Tuesday HIIT booking clashes with the moved dance class. Recreate
+    // the old scheduling error explicitly; the hero now refunds by preference.
+    const taylor = workspace.state.customers.find((item) => item.id === "customer-020")!;
+    taylor.prefs.refundOnly = false;
+    legacy.bookingActions.find((item) => item.customerId === taylor.id)!.action = "move";
     legacy.totals = calculateTotals(legacy.sessionChanges.length, legacy.bookingActions);
+    expect(validate(workspace.state, legacy).errors.some((error) => error.includes("double booking"))).toBe(true);
     const applied = applyPlan(workspace.state, legacy);
     repository.saveState(workspace.id, applied);
     repository.savePlan({ ...legacy, status: "partially_failed", basis: workspace.state });

@@ -109,6 +109,7 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
       state.customers.push({ id: customerId, ...row.customer, prefs: { acceptsSubstitute: true,
         windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) } });
       state.bookings.push({ id: row.id, customerId, sessionId: row.sessionId, amount: row.amount, status: "confirmed",
+        bookedAt: new Date().toISOString(),
         payment: { orderId: row.orderId!, captureId: capture.id, simulated: false } });
       repository.saveState(row.workspaceId, state);
     }

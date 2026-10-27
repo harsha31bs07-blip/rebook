@@ -66,19 +66,15 @@ describe("seeded demo weeks", () => {
     expect(toCents(plan.totals.revenueKept)).toBeGreaterThanOrEqual(3 * toCents(plan.totals.refundAmount));
     const refunds = plan.bookingActions.filter(({ action }) => action === "refund");
     expect(new Set(refunds.map(({ reason }) => reason))).toEqual(new Set([
-      "Customer requests a refund after a disruption.",
-      "Replacement instructor is outside the customer's preferences.",
-      "Recovery would overlap the customer's other class; refund the booking.",
-      "New time does not fit the customer's availability.",
+      "Prefers a refund after a disruption.",
     ]));
     for (const refund of refunds) {
       const customer = state.customers.find(({ id }) => id === refund.customerId)!;
-      if (refund.reason.includes("requests a refund")) expect(customer.prefs.refundOnly).toBe(true);
-      if (refund.reason.includes("instructor")) {
-        expect(customer.prefs.acceptsSubstitute).toBe(false);
-        expect(customer.prefs.preferredInstructorIds).toEqual(["instructor-01"]);
-      }
+      expect(customer.prefs.refundOnly).toBe(true);
     }
+    expect(refunds.map(({ customerId }) => state.customers.find(({ id }) => id === customerId)!.name).sort()).toEqual([
+      "Gray Brooks", "Harper Brooks", "Indigo Brooks", "Logan Brooks", "Taylor Brooks", "Uma Brooks",
+    ]);
     const captures = realCaptureBookingIds(state).size;
     console.info(`hero ${startKey}`, JSON.stringify({ ...plan.totals,
       classes: state.sessions.length, members: state.customers.length, captures }));
@@ -100,10 +96,12 @@ describe("seeded demo weeks", () => {
       expect(occupancy).toBeLessThanOrEqual(0.85);
     }
     const flood = replan(state, floodDisruptionFor(week, tz), options);
+    expect(flood.totals).toEqual({ sessionsAffected: 1, kept: 7, moved: 0, refunded: 0, refundAmount: "0.00", revenueKept: "126.00" });
     expect(flood.totals.sessionsAffected).toBeGreaterThanOrEqual(1);
     expect(flood.sessionChanges.some(({ remedy }) => remedy === "move_room")).toBe(true);
     const saturday = addLocalDays(startKey, 5);
     const closure = replan(state, { kind: "closure", from: zonedTimeToUtc(saturday, "00:00", tz), to: zonedTimeToUtc(addLocalDays(saturday, 1), "00:00", tz) }, options);
+    expect(closure.totals).toEqual({ sessionsAffected: 4, kept: 0, moved: 18, refunded: 7, refundAmount: "126.00", revenueKept: "372.00" });
     expect(closure.totals.sessionsAffected).toBe(4);
     expect(closure.sessionChanges.some(({ remedy }) => remedy === "move_time")).toBe(true);
     expect(closure.totals.moved).toBeGreaterThan(0);

@@ -5,7 +5,7 @@ import { addMinutes, DAY, fitsPreferences, fromCents, insideOpenHours, iso, loca
 import { seedStudio, demoDisruption, floodDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { applyPlan, feasibilityErrors, validate } from "../lib/solver/validate";
-import { defaultWeights, scoreCandidate } from "../lib/solver/score";
+import { compareObjectives, defaultWeights, remedyPriority, scoreCandidate } from "../lib/solver/score";
 import { activateConstraint } from "../lib/solver/constraints";
 
 const now = "2026-11-09T00:00:00.000Z";
@@ -121,20 +121,96 @@ describe("recovery remedies", () => {
     }
   });
 
-  it("uses configured weights and never takes a non-feasible low-cost remedy", () => {
+  it("never lets configured costs override retention or the remedy policy", () => {
     const state = fixture();
     const plan = replan(state, sick, { now, weights: { cancel: 0, refund: 0, substitute: 100 } });
-    expect(plan.sessionChanges[0].remedy).toBe("cancel");
+    expect(plan.sessionChanges[0].remedy).toBe("substitute");
+    expect(plan.totals.refunded).toBe(0);
     expectValid(state, plan);
   });
 });
 
 describe("booking decisions", () => {
-  it("keeps earliest booking IDs when the replacement room overflows", () => {
+  it("astra regression: moves all three substitute-rejecting customers with their original instructor tomorrow", () => {
+    const state = fixture();
+    for (const customer of state.customers) {
+      customer.prefs.acceptsSubstitute = false;
+      customer.prefs.preferredInstructorIds = ["i1"];
+    }
+    const plan = replan(state, sick, { now, weights: { moveTime: Number.MAX_VALUE, refund: 0 } });
+    expect(plan.sessionChanges[0]).toMatchObject({ remedy: "move_time", after: { instructorId: "i1", start: "2026-11-10T10:00:00.000Z" } });
+    expect(plan.totals).toEqual({ sessionsAffected: 1, kept: 0, moved: 3, refunded: 0, refundAmount: "0.00", revenueKept: "54.00" });
+    expectValid(state, plan);
+  });
+
+  it("honours refusal of substitutes even without an explicit instructor allow-list", () => {
+    const state = fixture();
+    for (const customer of state.customers) customer.prefs.acceptsSubstitute = false;
+    const plan = replan(state, sick, { now });
+    expect(plan.sessionChanges[0]).toMatchObject({ remedy: "move_time", after: { instructorId: "i1" } });
+    expect(plan.totals.refunded).toBe(0);
+    expectValid(state, plan);
+  });
+
+  it("prioritises booking timestamps over IDs, compares offsets as instants, then ties by ID", () => {
+    const state = fixture();
+    state.rooms[1].capacity = 1;
+    state.bookings[0].bookedAt = "2026-11-08T11:00:00Z";
+    state.bookings[1].bookedAt = "2026-11-08T05:00:00-05:00";
+    state.bookings[2].bookedAt = "2026-11-08T10:00:00Z";
+    const plan = replan(state, roomDown, { now, horizonDays: 1 });
+    expect(plan.bookingActions.map(({ bookingId, action }) => [bookingId, action])).toEqual([["b1", "refund"], ["b2", "keep"], ["b3", "refund"]]);
+    expect(plan.bookingActions.filter(({ action }) => action === "refund").every(({ reason }) => reason ===
+      "Replacement capacity is full; earlier bookings take priority.")).toBe(true);
+    expectValid(state, plan);
+    state.bookings.reverse();
+    expect(replan(state, roomDown, { now, horizonDays: 1 })).toEqual(plan);
+    const forged = structuredClone(plan);
+    forged.bookingActions.find(({ bookingId }) => bookingId === "b1")!.action = "keep";
+    forged.bookingActions.find(({ bookingId }) => bookingId === "b2")!.action = "refund";
+    expect(validate(state, forged).errors).toContain("Invalid booking action: b1");
+  });
+
+  it("moves a class to keep everyone instead of overflowing a smaller room", () => {
+    const state = fixture();
+    state.rooms[1].capacity = 2;
+    const plan = replan(state, roomDown, { now });
+    expect(plan.sessionChanges[0]).toMatchObject({ remedy: "move_time", after: { roomId: "r1", start: "2026-11-10T10:00:00.000Z" } });
+    expect(plan.totals).toMatchObject({ moved: 3, refunded: 0 });
+    expectValid(state, plan);
+  });
+
+  it("prefers the same local time tomorrow over a cheaper allowed move today", () => {
+    const state = fixture();
+    state.instructors[1].skills = [];
+    const plan = replan(state, { ...sick, to: "2026-11-09T12:00:00Z" }, { now, weights: { delay: 1_000_000 } });
+    expect(plan.sessionChanges[0].after?.start).toBe("2026-11-10T10:00:00.000Z");
+    expectValid(state, plan);
+  });
+
+  it("names an exclusive instructor when that preference prevents every recovery", () => {
+    const state = fixture();
+    state.customers[0].prefs.acceptsSubstitute = false;
+    state.customers[0].prefs.preferredInstructorIds = ["i1"];
+    const plan = replan(state, { ...sick, to: "2026-11-17T00:00:00Z" }, { now });
+    expect(plan.bookingActions[0]).toMatchObject({ action: "refund", reason: "Only books with One; the replacement instructor is not accepted." });
+    expectValid(state, plan);
+  });
+
+  it("explains refunds even when no feasible class exists, preserving explicit refund requests", () => {
+    const state = fixture();
+    state.customers[0].prefs.refundOnly = true;
+    const plan = replan(state, { ...closure, to: "2026-11-17T00:00:00Z" }, { now });
+    expect(plan.bookingActions[0].reason).toBe("Prefers a refund after a disruption.");
+    expect(plan.bookingActions.slice(1).every(({ reason }) => reason === "No feasible instructor, room and time within the recovery horizon.")).toBe(true);
+    expectValid(state, plan);
+  });
+
+  it("uses IDs as the legacy tie-break when capacity is limited and timestamps are missing", () => {
     const state = fixture();
     state.rooms[1].capacity = 2;
     state.bookings.reverse();
-    const plan = replan(state, roomDown, { now });
+    const plan = replan(state, roomDown, { now, horizonDays: 1 });
     expect(plan.sessionChanges[0].remedy).toBe("move_room");
     expect(plan.bookingActions.map(({ bookingId, action }) => [bookingId, action])).toEqual([["b1", "keep"], ["b2", "keep"], ["b3", "refund"]]);
     expect(applyPlan(state, plan).sessions[0].capacity).toBe(2);
@@ -150,7 +226,7 @@ describe("booking decisions", () => {
     expectValid(state, plan);
   });
 
-  it("refunds refundOnly customers and customers who refuse the substitute", () => {
+  it("moves customers who refuse the substitute when the original instructor can retain them", () => {
     const state = fixture();
     state.customers[0].prefs.refundOnly = true;
     state.customers[1].prefs.acceptsSubstitute = false;
@@ -158,7 +234,8 @@ describe("booking decisions", () => {
     state.customers[2].prefs.acceptsSubstitute = false;
     state.customers[2].prefs.preferredInstructorIds = ["i1", "i2"];
     const plan = replan(state, sick, { now });
-    expect(plan.bookingActions.map((action) => action.action)).toEqual(["refund", "refund", "keep"]);
+    expect(plan.bookingActions.map((action) => action.action)).toEqual(["refund", "move", "move"]);
+    expect(plan.sessionChanges[0]).toMatchObject({ remedy: "move_time", after: { instructorId: "i1", start: "2026-11-10T10:00:00.000Z" } });
     expectValid(state, plan);
   });
 
@@ -240,8 +317,8 @@ describe("seed and determinism", () => {
     const state = seedStudio();
     expect(StateSchema.safeParse(state).success).toBe(true);
     expect([state.sessions.length, state.customers.length, state.instructors.length, state.rooms.length]).toEqual([42, 120, 6, 4]);
-    expect(state.customers.filter((customer) => !customer.prefs.acceptsSubstitute)).toHaveLength(6);
-    expect(state.customers.filter((customer) => customer.prefs.refundOnly)).toHaveLength(3);
+    expect(state.customers.filter((customer) => !customer.prefs.acceptsSubstitute)).toHaveLength(5);
+    expect(state.customers.filter((customer) => customer.prefs.refundOnly)).toHaveLength(6);
     expect(state.customers.every((customer) => customer.prefs.windows.length >= 2 && customer.prefs.windows.length <= 4)).toBe(true);
     const tz = state.studio.timezone;
     expect(localParts(state.sessions[0].start, tz)).toEqual({ weekday: 1, minutesOfDay: 420, dateKey: "2026-11-09" });
@@ -260,6 +337,9 @@ describe("seed and determinism", () => {
       expect(bookings.every((booking) => fitsPreferences(state.customers.find((customer) => customer.id === booking.customerId)!, session.start, session.end, tz))).toBe(true);
     }
     expect(state.bookings.every((booking) => booking.payment?.orderId.startsWith("SEED-ORDER-") && booking.payment.captureId.startsWith("SEED-CAP-"))).toBe(true);
+    expect(state.bookings.every((booking, index) => booking.bookedAt &&
+      Date.parse(booking.bookedAt) < Date.parse(state.sessions[0].start) &&
+      (index === 0 || Date.parse(state.bookings[index - 1].bookedAt!) < Date.parse(booking.bookedAt)))).toBe(true);
     expect(state.sessions.flatMap((session) => feasibilityErrors(state, session))).toEqual([]);
     expect(seedStudio(42)).toEqual(state);
     expect(seedStudio(43)).not.toEqual(state);
@@ -277,8 +357,8 @@ describe("seed and determinism", () => {
     expect(plan.totals).toEqual({ sessionsAffected: 3, kept: 9, moved: 16, refunded: 6, refundAmount: "135.00", revenueKept: "577.00" });
     const refunds = plan.bookingActions.filter((action) => action.action === "refund");
     expect(refunds.length).toBeGreaterThan(0);
-    expect(refunds.every((action) => /requests a refund|instructor is outside|New time does not fit|overlap/.test(action.reason))).toBe(true);
-    expect(new Set(refunds.map((action) => action.reason)).size).toBe(4);
+    expect(refunds.every((action) => action.reason === "Prefers a refund after a disruption." &&
+      state.customers.find((customer) => customer.id === action.customerId)!.prefs.refundOnly)).toBe(true);
     expect(demoDisruption.from).toBe("2026-11-09T05:00:00.000Z");
     expect(demoDisruption.to).toBe("2026-11-10T05:00:00.000Z");
     expectValid(state, plan);
@@ -322,6 +402,16 @@ describe("seed and determinism", () => {
 
 describe("time and money boundaries", () => {
   const tz = "America/New_York";
+
+  it("orders refund counts and remedy tiers before costs of any size", () => {
+    const before = fixture().sessions[0];
+    const after = { ...before, start: "2026-11-10T10:00:00Z", end: "2026-11-10T11:00:00Z" };
+    expect(remedyPriority("move_time", before, after, "UTC")).toBe(2);
+    const first = { refunds: 0, priority: 3, cost: Number.MAX_VALUE, key: "z" };
+    expect(compareObjectives(first, { ...first, refunds: 1, priority: 0, cost: 0 })).toBeLessThan(0);
+    expect(compareObjectives({ ...first, priority: 2 }, { ...first, cost: 0 })).toBeLessThan(0);
+    expect(compareObjectives({ ...first, key: "a" }, first)).toBeLessThan(0);
+  });
 
   it("converts local clocks across the November 1 DST fallback", () => {
     expect(zonedTimeToUtc("2026-10-31", "07:00", tz)).toBe("2026-10-31T11:00:00.000Z");

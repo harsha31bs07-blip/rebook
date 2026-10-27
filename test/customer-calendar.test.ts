@@ -27,7 +27,7 @@ it("refunds a conflicting moved booking while preserving the customer's unaffect
 
 it("scores alternative placements against the customer's actual calendar", () => {
   const state = fixture();
-  const plan = replan(state, { kind: "closure", from: now, to: "2026-11-10T00:00:00Z" }, { now, weights: { refund: 1_000 } });
+  const plan = replan(state, { kind: "closure", from: now, to: "2026-11-10T00:00:00Z" }, { now, weights: { refund: 0 } });
   const after = plan.sessionChanges[0].after!;
   expect(Date.parse(after.start) >= Date.parse(end) || Date.parse(after.end) <= Date.parse(start)).toBe(true);
   expect(plan.bookingActions.find((item) => item.bookingId === "b2")?.action).toBe("move");

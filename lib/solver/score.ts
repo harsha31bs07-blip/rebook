@@ -1,5 +1,5 @@
 import type { Booking, BookingAction, Customer, Plan, Remedy, Session, State, Weights } from "../domain/types";
-import { byId, DAY, fitsPreferences, fromCents, localParts, MINUTE, overlaps, toCents } from "../domain/time";
+import { addLocalDays, byId, DAY, fitsPreferences, fromCents, localParts, MINUTE, overlaps, toCents } from "../domain/time";
 
 export const defaultWeights: Weights = {
   substitute: 0, moveRoom: 1_000_000, moveTime: 2_000_000, cancel: 1_000_000_000,
@@ -9,7 +9,11 @@ export const defaultWeights: Weights = {
 export const isActiveBooking = (booking: Booking): boolean =>
   booking.status === "confirmed" || booking.status === "moved";
 
-type BookingCalendar = Pick<State, "sessions" | "bookings"> & { originalSessions: Session[] };
+/** Legacy bookings with unknown creation times precede timestamped bookings. */
+export const byBookingTime = (a: Booking, b: Booking): number =>
+  (a.bookedAt ? Date.parse(a.bookedAt) : -Infinity) - (b.bookedAt ? Date.parse(b.bookedAt) : -Infinity) || byId(a, b);
+
+type BookingCalendar = Pick<State, "sessions" | "bookings"> & { originalSessions: Session[]; instructors?: State["instructors"] };
 const changedTime = (before: Session, after: Session) => Date.parse(before.start) !== Date.parse(after.start) || Date.parse(before.end) !== Date.parse(after.end);
 
 export function hasCustomerConflict(booking: Booking, before: Session, after: Session, calendar: BookingCalendar): boolean {
@@ -28,23 +32,25 @@ export function actionsFor(
 ): BookingAction[] {
   const people = new Map(customers.map((customer) => [customer.id, customer]));
   let retained = 0;
-  return [...bookings].filter(isActiveBooking).sort(byId).map((booking) => {
+  return [...bookings].filter(isActiveBooking).sort(byBookingTime).map((booking) => {
     const customer = people.get(booking.customerId);
     const moved = after !== undefined && (Date.parse(after.start) !== Date.parse(before.start) ||
       Date.parse(after.end) !== Date.parse(before.end));
     let reason: string | undefined;
-    if (!after) reason = "Session cancelled; refund the booking.";
-    else if (!customer) reason = "Customer preferences unavailable; refund the booking.";
-    else if (customer.prefs.refundOnly) reason = "Customer requests a refund after a disruption.";
+    if (!customer) reason = "Customer preferences unavailable; refund the booking.";
+    else if (customer.prefs.refundOnly) reason = "Prefers a refund after a disruption.";
+    else if (!after) reason = "No feasible instructor, room and time within the recovery horizon.";
     else if (after.instructorId !== before.instructorId && !customer.prefs.acceptsSubstitute &&
-      customer.prefs.preferredInstructorIds !== undefined &&
-      !customer.prefs.preferredInstructorIds.includes(after.instructorId)) {
-      reason = "Replacement instructor is outside the customer's preferences.";
+      !customer.prefs.preferredInstructorIds?.includes(after.instructorId)) {
+      const preferred = customer.prefs.preferredInstructorIds ?? [before.instructorId];
+      const name = calendar?.instructors?.find((item) => item.id === preferred[0])?.name;
+      reason = preferred.length === 1 && name ? `Only books with ${name}; the replacement instructor is not accepted.` :
+        "Replacement instructor is outside the customer's preferences.";
     } else if (moved && !fitsPreferences(customer, after.start, after.end, tz)) {
       reason = "New time does not fit the customer's availability.";
     } else if (calendar && hasCustomerConflict(booking, before, after, calendar)) {
       reason = "Recovery would overlap the customer's other class; refund the booking.";
-    } else if (retained >= after.capacity) reason = "Replacement capacity is full; earlier booking IDs take priority.";
+    } else if (retained >= after.capacity) reason = "Replacement capacity is full; earlier bookings take priority.";
 
     if (reason) return { bookingId: booking.id, customerId: booking.customerId, action: "refund", amount: booking.amount, reason };
     retained += 1;
@@ -58,7 +64,7 @@ export function actionsFor(
 /** Unaffected classes reserve customers first, followed by recoveries in session-ID order. */
 export function recoveryActions(state: State, changes: Plan["sessionChanges"]): BookingAction[] {
   const affected = new Set(changes.map((item) => item.sessionId));
-  const calendar: BookingCalendar = { originalSessions: state.sessions,
+  const calendar: BookingCalendar = { originalSessions: state.sessions, instructors: state.instructors,
     sessions: state.sessions.filter((item) => !affected.has(item.id)),
     bookings: state.bookings.filter((item) => !affected.has(item.sessionId)) };
   const actions: BookingAction[] = [];
@@ -78,6 +84,7 @@ export function recoveryActions(state: State, changes: Plan["sessionChanges"]): 
   return actions.sort((a, b) => byId({ id: a.bookingId }, { id: b.bookingId }));
 }
 
+/** Secondary cost only: refund count and remedy priority are compared first. */
 export function scoreCandidate(
   remedy: Remedy, before: Session, after: Session | undefined,
   actions: BookingAction[], weights: Weights, tz: string,
@@ -93,6 +100,22 @@ export function scoreCandidate(
     score += Math.abs(Date.parse(replacement.dateKey) - Date.parse(original.dateKey)) / DAY * weights.delay;
   }
   return score;
+}
+
+/** These priorities are hard policy; configurable costs only break ties within a tier. */
+export function remedyPriority(remedy: Remedy, before: Session, after: Session | undefined, tz: string): number {
+  if (remedy === "substitute") return 0;
+  if (remedy === "move_room") return 1;
+  if (remedy === "cancel" || !after) return 4;
+  const original = localParts(before.start, tz);
+  const replacement = localParts(after.start, tz);
+  return replacement.dateKey === addLocalDays(original.dateKey, 1) && replacement.minutesOfDay === original.minutesOfDay ? 2 : 3;
+}
+
+export type CandidateObjective = { refunds: number; priority: number; cost: number; key: string };
+export function compareObjectives(a: CandidateObjective, b: CandidateObjective): number {
+  return a.refunds - b.refunds || a.priority - b.priority || a.cost - b.cost ||
+    (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 }
 
 export function calculateTotals(sessionCount: number, actions: BookingAction[]): Plan["totals"] {

@@ -46,6 +46,8 @@ export const CustomerSchema = z.object({
 });
 export const BookingSchema = z.object({
   id: z.string().min(1), sessionId: z.string().min(1), customerId: z.string().min(1),
+  // Older persisted workspaces have no timestamp; those bookings tie-break by ID.
+  bookedAt: IsoSchema.optional(),
   status: z.enum(["confirmed", "moved", "refund_pending", "refunded", "cancelled"]),
   amount: MoneySchema,
   payment: z.object({ orderId: z.string(), captureId: z.string(), simulated: z.boolean().optional(), unknown: z.boolean().optional() }).optional(),

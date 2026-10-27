@@ -192,11 +192,19 @@ describe("Studio LLM proxy", () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     expect((await POST(post(), context(workspace.id))).status).toBe(503);
   });
-  it("carries all-model 503 failures through the route and adapter to Studio's terminal chat error", async () => {
+  it("tells the browser when to retry once every model is briefly overloaded (503)", async () => {
     const workspace = getRepository().createWorkspace(seedStudio());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("upstream-secret", { status: 503 })));
+    const response = await POST(post(), context(workspace.id));
+    expect(response.status).toBe(503);
+    expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+  it("carries a hard all-model failure through the route and adapter to Studio's terminal chat error", async () => {
+    const workspace = getRepository().createWorkspace(seedStudio());
+    // A hard failure carries no retry hint, so the browser does not wait and the chat ends at once.
     const fetch = vi.fn().mockImplementation((url, options) => url === "/llm"
       ? POST(new Request("http://localhost/llm", options), context(workspace.id))
-      : Promise.resolve(new Response("upstream-secret", { status: 503 })));
+      : Promise.resolve(new Response("upstream-secret", { status: 500 })));
     vi.stubGlobal("fetch", fetch);
     const runner = recoveryRunGuard()(directLlmRunner({ id: "page", adapter: geminiAdapter("/llm", "page") }));
     const events: AgAiEvent[] = [];

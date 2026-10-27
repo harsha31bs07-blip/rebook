@@ -157,11 +157,19 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
       const suffix = String(state.bookings.length + 1).padStart(4, "0");
       state.bookings.push({
         id: `booking-${suffix}`, sessionId: session.id, customerId: customer.id, status: "confirmed", amount: session.price,
+        bookedAt: addMinutes(state.studio.weekStart, -7 * 24 * 60 + state.bookings.length),
         payment: { orderId: `SEED-ORDER-${suffix}`, captureId: `SEED-CAP-${suffix}` },
       });
       bookingCounts.set(customer.id, (bookingCounts.get(customer.id) ?? 0) + 1);
     }
   }
+  // Recovery choices recorded after the ordinary week was booked: Avery now accepts
+  // cover, while Logan, Taylor and Uma prefer refunds after any disruption.
+  // Along with Gray, Harper and Indigo, these are the six genuine Monday refunds.
+  state.customers[0].prefs.acceptsSubstitute = true;
+  for (const index of [11, 19, 20]) state.customers[index].prefs.refundOnly = true;
+  // Devon can make Tuesday lunch, so availability no longer forces a demo refund.
+  state.customers[39].prefs.windows.push({ weekday: 2, from: "12:15", to: "13:15" });
   return state;
 }
 

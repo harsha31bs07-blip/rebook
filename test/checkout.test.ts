@@ -148,6 +148,7 @@ describe("customer checkout", () => {
     expect(new Headers(captureRequest.init.headers).get("PayPal-Request-Id")).toBe(`capture:${first.bookingId}`);
     const { state } = repository.requireWorkspace(workspaceId);
     expect(state.bookings[0].payment).toEqual({ orderId, captureId: first.captureId, simulated: false });
+    expect(state.bookings[0].bookedAt).toBe("2026-11-05T12:00:00.000Z");
     expect(state.customers[0].prefs.windows).toHaveLength(7);
     expect(repository.listLedger(workspaceId)).toHaveLength(1);
     const plan = repository.createPlan(workspaceId, replan(state, { kind: "closure", from: state.studio.weekStart, to: "2026-11-23T05:00:00Z" }));

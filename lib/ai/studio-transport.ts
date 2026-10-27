@@ -46,7 +46,17 @@ function normalizeGroq(value: unknown): unknown {
     }) } };
   }) };
 }
-export const analystUnavailable = () => new StoreError(503, "The analyst is busy right now — try again in a moment.");
+export const analystUnavailable = (retryAfterSeconds?: number) => new StoreError(503, "The analyst is busy right now — try again in a moment.", undefined, retryAfterSeconds);
+// When every model is cooling down and one frees up within 20 s (typically Groq's per-minute token budget),
+// tell the browser so it can wait and retry the turn instead of abandoning a delegated run.
+const SHORT_RETRY_MS = 20_000;
+function shortRetryAfter(targets: { provider: string; model: string }[]): number | undefined {
+  const now = Date.now();
+  const waits = targets.map(({ provider, model }) => (cooldowns.get(`${provider}:${model}`) ?? 0) - now).filter((ms) => ms > 0);
+  if (!targets.length || waits.length < targets.length) return undefined;
+  const soonest = Math.min(...waits);
+  return soonest <= SHORT_RETRY_MS ? Math.max(1, Math.ceil(soonest / 1000)) : undefined;
+}
 
 /** Shared by legacy chat and every Studio agent. Quotas still count each upstream attempt. */
 export async function studioModelCompletion<T>(
@@ -59,6 +69,8 @@ export async function studioModelCompletion<T>(
   const selected = configured.find(({ provider, model }) => preferred === model || preferred === `${provider}:${model}`);
   const models = selected ? [selected, ...configured.filter((target) => target !== selected)] : configured;
   const unavailable = new Set<AiProvider>();
+  const considered: AiModel[] = []; // models that are cooling down or were tried and rate-limited
+  let hardFailure = false; // a model failed in a way a short wait will not fix
   const started = Date.now();
   const budget = Math.min(options.budgetMs ?? 35_000, 35_000);
   for (const [index, target] of models.entries()) {
@@ -67,6 +79,7 @@ export async function studioModelCompletion<T>(
     if (signal?.aborted || Date.now() - started >= budget) break;
     if (unavailable.has(provider)) continue;
     if ((cooldowns.get(cooldownKey) ?? 0) > Date.now()) {
+      considered.push(target);
       console.info(JSON.stringify({ message: "ai_call", provider, model, status: "cooldown", ms: 0 }));
       continue;
     }
@@ -120,12 +133,13 @@ export async function studioModelCompletion<T>(
       if (status === "network_error") status = "invalid_response_or_transport";
       // Do not log bodies, request URLs, credentials, or upstream error text.
     } finally {
-      if (status === 429 || status === 503 || status === "timeout") cooldowns.set(cooldownKey, Date.now() + cooldownMs);
+      if (status === 429 || status === 503 || status === "timeout") { cooldowns.set(cooldownKey, Date.now() + cooldownMs); considered.push(target); }
+      else if (status !== "too_large" && status !== "cancelled") hardFailure = true;
       console.info(JSON.stringify({ message: "ai_call", provider, model, status, ms: Date.now() - attemptStarted }));
       release();
       if (timer !== undefined) clearTimeout(timer);
       if (onAbort) signal?.removeEventListener("abort", onAbort);
     }
   }
-  throw analystUnavailable();
+  throw analystUnavailable(hardFailure ? undefined : shortRetryAfter(considered));
 }

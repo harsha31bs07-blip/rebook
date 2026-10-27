@@ -125,3 +125,23 @@ describe("provider chain", () => {
     expect(body.tools[0]).toEqual({ type: "function", function: request.harness.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))[0] });
   });
 });
+
+describe("busy retry hint", () => {
+  it("tells the browser when every model is briefly rate-limited", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:a,groq:b");
+    fetchMock.mockImplementation(async (url: string) => new Response(null, { status: 429, headers: url.includes("groq") ? { "retry-after": "4" } : {} }));
+    await expect(complete()).rejects.toMatchObject({ status: 503, retryAfter: 4 });
+  });
+  it("gives no hint when a model fails in a way a short wait will not fix", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:a,groq:b");
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 500 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 429, headers: { "retry-after": "4" } }));
+    await expect(complete()).rejects.toMatchObject({ status: 503, retryAfter: undefined });
+  });
+  it("ignores Groq entries skipped for size when deciding the hint", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:a,groq:b"); vi.stubEnv("GROQ_MAX_INPUT_TOKENS", "1");
+    fetchMock.mockImplementation(async () => new Response(null, { status: 429 }));
+    await expect(complete("a longer prompt")).rejects.toMatchObject({ status: 503 });
+    expect(sent()).toEqual([{ provider: "gemini", model: "a" }]);
+  });
+});

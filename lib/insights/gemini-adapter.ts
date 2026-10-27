@@ -73,25 +73,52 @@ export function fromChatCompletion(completion: StudioCompletion, remembered: Map
 
 class AnalystInputError extends Error {}
 
+/** Free-tier providers refuse bursts for seconds at a time; a delegated chart request fires several turns quickly. */
+export const ANALYST_BUSY_RETRIES = 2;
+const retryDelayMs = (header: string | null) => {
+  const seconds = header === null ? NaN : Number(header);
+  return Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, 20_000);
+};
+
 export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmAdapter {
   // Studio has no provider-metadata slot. Keep exact wire calls by callId as well as on output
   // items, so the opaque Google signature survives even if Studio clones its conversation items.
   const remembered = new Map<string, RememberedCall>();
   return {
     executeTurn(request, options) {
-      const controller = new AbortController();
+      let controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
+      let rejectCancelled: (reason: unknown) => void = () => {};
       const cancelled = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error(ANALYST_UNAVAILABLE)); }, ANALYST_CALL_TIMEOUT_MS);
+        rejectCancelled = reject;
         onAbort = () => { controller.abort(); reject(options?.signal?.reason ?? new DOMException("Cancelled", "AbortError")); };
         options?.signal?.addEventListener("abort", onAbort, { once: true });
         if (options?.signal?.aborted) onAbort();
       });
+      // Each attempt gets its own deadline; manual cancellation and the run guard still end everything.
+      const armTimeout = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        controller = new AbortController();
+        timer = setTimeout(() => { controller.abort(); rejectCancelled(new Error(ANALYST_UNAVAILABLE)); }, ANALYST_CALL_TIMEOUT_MS);
+      };
+      const body = JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools ?? [], toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) });
       const pending = Promise.race([(async () => {
-        options?.signal?.throwIfAborted();
-        const response = await fetch(endpoint, { method: "POST", signal: controller.signal,
-          headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools ?? [], toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
+        for (let attempt = 0; ; attempt += 1) {
+          options?.signal?.throwIfAborted();
+          armTimeout();
+          const response = await fetch(endpoint, { method: "POST", signal: controller.signal,
+            headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body });
+          // Retry only when the server reports that a model frees up shortly; real outages fail fast.
+          if ((response.status === 503 || response.status === 429) && response.headers.has("retry-after") && attempt < ANALYST_BUSY_RETRIES) {
+            if (timer !== undefined) clearTimeout(timer);
+            await response.body?.cancel();
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs(response.headers.get("retry-after"))));
+            continue;
+          }
+          return response;
+        }
+      })().then(async (response) => {
         if (!response.ok) {
           if ([400, 404, 409, 413].includes(response.status)) {
             const error = await response.json().catch(() => ({}));
@@ -101,7 +128,7 @@ export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmA
           throw new Error(ANALYST_UNAVAILABLE);
         }
         return fromChatCompletion(await response.json(), remembered);
-      })(), cancelled]).catch((error: unknown) => {
+      }), cancelled]).catch((error: unknown) => {
         options?.signal?.throwIfAborted();
         if (error instanceof AnalystInputError) throw error;
         // Reject both channels: successful text makes delegated runners retry complete_task.

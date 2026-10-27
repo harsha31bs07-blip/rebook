@@ -114,3 +114,22 @@ describe("Studio Gemini adapter", () => {
     expect(transport.mock.calls[0][1].signal.aborted).toBe(true);
   });
 });
+
+describe("busy retries", () => {
+  it("waits for the server's Retry-After hint and retries the same turn", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: "busy" }, { status: 503, headers: { "Retry-After": "0.01" } }))
+      .mockResolvedValueOnce(Response.json(toolResponse));
+    vi.stubGlobal("fetch", fetch);
+    const handler = geminiAdapter("/llm", "page").executeTurn(request);
+    await expect(handler.complete).resolves.toMatchObject({ status: "completed" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][1].body).toBe(fetch.mock.calls[0][1].body);
+  });
+  it("gives up after two retries", async () => {
+    const fetch = vi.fn().mockImplementation(async () => Response.json({ error: "busy" }, { status: 503, headers: { "Retry-After": "0.01" } }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(geminiAdapter("/llm").executeTurn(request).complete).rejects.toThrow(ANALYST_UNAVAILABLE);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});

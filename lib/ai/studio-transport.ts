@@ -47,9 +47,9 @@ function normalizeGroq(value: unknown): unknown {
   }) };
 }
 export const analystUnavailable = (retryAfterSeconds?: number) => new StoreError(503, "The analyst is busy right now — try again in a moment.", undefined, retryAfterSeconds);
-// When every model is cooling down and one frees up within 20 s (typically Groq's per-minute token budget),
+// When every model is cooling down and one frees up within 35 s (Groq per-minute budgets, Gemini 30 s cooldowns),
 // tell the browser so it can wait and retry the turn instead of abandoning a delegated run.
-const SHORT_RETRY_MS = 20_000;
+const SHORT_RETRY_MS = 35_000;
 function shortRetryAfter(targets: { provider: string; model: string }[]): number | undefined {
   const now = Date.now();
   const waits = targets.map(({ provider, model }) => (cooldowns.get(`${provider}:${model}`) ?? 0) - now).filter((ms) => ms > 0);

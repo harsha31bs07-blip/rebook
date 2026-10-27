@@ -77,7 +77,7 @@ class AnalystInputError extends Error {}
 export const ANALYST_BUSY_RETRIES = 2;
 const retryDelayMs = (header: string | null) => {
   const seconds = header === null ? NaN : Number(header);
-  return Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, 20_000);
+  return Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, 35_000);
 };
 
 export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmAdapter {

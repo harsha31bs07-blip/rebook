@@ -118,9 +118,10 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     // The accessible name starts with exactly the visible text (WCAG 2.5.3 label in name), then adds context.
     const visible = [info.title, info.time, ...(zoom === "day" ? [info.location, info.occupancy] : []), ...(zoom === "day" && mode === "rooms" ? [info.room] : []), ...(info.badge ? [info.badge] : [])];
     const context = [info.status, ...(zoom === "day" && mode === "rooms" ? [] : [info.room]), ...(zoom === "day" ? [] : [info.location, info.occupancy])];
-    renderData.ariaLabel = `${visible.join(" ")}. ${context.join(", ")}`;
+    renderData.ariaLabel = `${visible.join(" ")}. ${[...new Set(context)].join(", ")}`;
     return [{ tag: "div", className: "session-label", children: [
-      { tag: "strong", text: info.title }, { tag: "span", text: info.time },
+      // Trailing space keeps the computed text "Title Time" (the two parts are stacked visually).
+      { tag: "strong", text: `${info.title} ` }, { tag: "span", text: info.time },
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),
       ...(zoom === "day" && mode === "rooms" ? [{ tag: "span", text: info.room }] : []),
       ...(info.badge ? [{ tag: "span", className: "session-badge", text: info.badge }] : []),

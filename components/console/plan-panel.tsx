@@ -1,8 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect, useRef } from "react";
 import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api";
-import type { State } from "@/lib/domain/types";
+import type { Placement, State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
 import { formatMoney, toCents } from "@/lib/domain/time";
 import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
@@ -21,22 +22,30 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, approvalRequested, onUndo, onMove, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   outcomes?: RecoveryOutcome[];
-  approving?: boolean; approvalRequested?: boolean; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
+  approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
   const money = (value: string) => formatMoney(value, state.studio.currency);
   const label = disruptionLabel(plan, state);
   const proposed = plan.status === "proposed";
+  const resultHeading = useRef<HTMLHeadingElement>(null);
+  const wasProposed = useRef(proposed);
+  useEffect(() => {
+    if (wasProposed.current && !proposed) resultHeading.current?.focus();
+    wasProposed.current = proposed;
+  }, [proposed]);
   const recovery = summarizeRecovery(outcomes ?? recoveryOutcomes(state, [{ ...plan, results }], []));
   const previous = plan.lastAdjustmentTotals;
   const refunds = previous ? totals.refunded - previous.refunded : 0;
   const revenue = previous ? toCents(totals.revenueKept) - toCents(previous.revenueKept) : 0;
+  const placementLabel = (placement: Placement) => `${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(placement.start))} · ${state.instructors.find((item) => item.id === placement.instructorId)?.name ?? "Instructor"}`;
   return <>
+    <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
-    <h2>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
+    <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
     {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
     <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
@@ -47,20 +56,21 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
         <div><span>Refunds planned</span><strong className="danger-text">{totals.refunded}</strong><small>bookings</small></div>
         <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
       </> : <>
-        <div><span>Kept or moved</span><strong className="success">{recovery.saved}</strong><small>confirmed - {recovery.kept} kept / {recovery.moved} moved</small></div>
+        <div><span>Kept or moved</span><strong className="success">{recovery.saved}</strong><small>in the new schedule - {recovery.kept} kept / {recovery.moved} moved</small></div>
         <div><span>Refunded</span><strong className="danger-text">{recovery.refunded}</strong><small>completed - {recovery.simulatedRefunded} simulated separately</small></div>
         <div><span>Pending</span><strong>{recovery.pending}</strong><small>refund requested / awaiting PayPal</small></div>
         <div><span>No reply yet</span><strong>{recovery.noReply}</strong><small>customer confirmation outstanding</small></div>
         <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small></div>
       </>}
     </div>
-    {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul>{plan.sessionChanges.map((change) => {
+    {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul role="list">{plan.sessionChanges.map((change) => {
       const session = state.sessions.find((item) => item.id === change.sessionId);
       const placement = change.after;
-      return <li key={change.sessionId}><strong>{session?.title ?? "Class"}</strong>{placement ? <>
-        <span>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(placement.start))} · {state.instructors.find((item) => item.id === placement.instructorId)?.name}</span>
+      const affected = new Set(state.bookings.filter((booking) => booking.sessionId === change.sessionId && plan.bookingActions.some((action) => action.bookingId === booking.id)).map((booking) => booking.customerId)).size;
+      return <li key={change.sessionId}><strong>{session?.title ?? "Class"}</strong><span className="phone-change-detail">Originally: {placementLabel(change.before)}</span>{placement ? <>
+        <span><span className="phone-change-detail">New: </span>{placementLabel(placement)}</span>
         {onMove && <button className="move-session-link" data-move-session={change.sessionId} disabled={busy} onClick={() => onMove(change.sessionId)} aria-label={`Move ${session?.title ?? "class"} to…`}>Move...</button>}
-      </> : <span>Cancelled · refunds planned</span>}</li>;
+      </> : <span>Cancelled · refunds planned</span>}<span className="phone-change-detail">{affected} affected customer{affected === 1 ? "" : "s"}</span></li>;
     })}</ul>
       {(previous || onUndo) && <div className="adjustment-change">
         {previous && <p role="status">Your change: {refunds === 0 ? "no change in refunds" : `${Math.abs(refunds)} ${refunds > 0 ? "more" : "fewer"} refund${Math.abs(refunds) === 1 ? "" : "s"}`}, {revenue < 0 ? "−" : revenue > 0 ? "+" : ""}{money((Math.abs(revenue) / 100).toFixed(2))} revenue kept (vs previous version).</p>}
@@ -73,8 +83,8 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.status === "executing" && <><p className="notice" role="status">Applying recovery and processing sandbox refunds…</p>{!busy && <button className="primary full-width" onClick={onApprove}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={onApprove}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={onApprove}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
-    <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <RefundResults results={results} state={state} />
+    <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <BookingGrid plan={plan} state={state} />
   </>;
 }

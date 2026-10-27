@@ -75,6 +75,21 @@ it("renders a native Move control for preview recovery blocks in Week and Day vi
   expect(eventMarkup(schedule({ busy: true }).props, "s1-new")).toContain('disabled=""');
 });
 
+it("starts scheduler accessible names with the visible class and time before status and badges", () => {
+  for (const id of ["s1-original", "s1-new", "s2"]) {
+    const { props } = schedule({ zoom: "day" });
+    const event = props.events!.find((item) => item.id === id)!;
+    const renderData = {} as { ariaLabel: string };
+    const config = props.eventRenderer!({ eventRecord: event as EventModel, renderData } as Parameters<NonNullable<BryntumSchedulerProps["eventRenderer"]>>[0]);
+    expect(renderData.ariaLabel.startsWith(`${event.name}, `)).toBe(true);
+    const visible = markup(config);
+    const label = renderData.ariaLabel;
+    expect(label).toMatch(new RegExp(`^${event.name}, \\d`));
+    expect(visible).toContain(label.split(", ")[1]);
+    if (id === "s1-new") expect(label).toContain("Recovery, Covered by Alex");
+  }
+});
+
 it("opens Move from Enter, Space and the button before Bryntum handles the event", () => {
   for (const zoom of ["week", "day"] as const) {
     const onMove = vi.fn();
@@ -190,7 +205,7 @@ it("lists changed sessions with Move links in preview and says Recovery applied 
   expect(preview).toContain("Yoga");
   expect(preview).toContain("Move...</button>");
   const executed = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, status: "executed" } }));
-  expect(executed).toContain("<h2>Recovery applied</h2>");
+  expect(executed).toContain('<h2 tabindex="-1">Recovery applied</h2>');
   expect(executed).toContain("haven&#x27;t replied");
   expect(executed).not.toContain("move-session-link");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true }))).not.toContain("Processing refunds");

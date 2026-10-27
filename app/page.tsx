@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export default function Home() {
   return <main id="main-content" tabIndex={-1} className="landing">
-    <header className="landing-header"><Link href="/" className="wordmark" aria-label="Rebook home"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span></Link><span className="pill">Built for studio owners</span></header>
+    <header className="landing-header"><Link href="/" className="wordmark" aria-label="rebook. home"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span></Link><span className="pill">Built for studio owners</span></header>
     <section className="landing-hero">
       <div className="landing-copy"><p className="eyebrow">Keep your people. Keep your week.</p><h1>When your schedule breaks, rebook everyone in one click.</h1><p className="landing-description">Life happens. Keep your studio moving with a recovery plan that puts your customers first.</p><OpenDemoButton /><p className="sandbox-note">Each visit gets its own studio. The disruption scenarios use PayPal sandbox payments; the rest of the week is simulated and labelled.</p><div className="value-lines"><div><span>01</span><p>Describe the disruption in your own words.</p></div><div><span>02</span><p>See a better week before you approve it.</p></div><div><span>03</span><p>Rebook customers. Refund the rest with PayPal.</p></div></div></div>
       <div className="landing-preview" aria-label="Illustration of a schedule recovery">

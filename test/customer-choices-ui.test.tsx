@@ -32,16 +32,24 @@ import MessagesDrawer from "../components/console/messages-drawer";
 
 type Element = ReactElement<Record<string, unknown>>;
 let tree: ReactNode, data: CustomerChoiceView, send: ReturnType<typeof vi.fn>;
+let focusHeading: ReturnType<typeof vi.fn<(heading: string) => void>>;
 function elements(node: ReactNode): Element[] {
   if (Array.isArray(node)) return node.flatMap(elements);
   if (!node || typeof node !== "object" || !("props" in node)) return [];
   const element = node as Element; return [element, ...elements(element.props.children as ReactNode)];
 }
-function render() { hooks.cursor = 0; tree = CustomerChoicePage({ token: "a".repeat(43) }); hooks.pending.splice(0).forEach((effect) => effect()); }
+function render() {
+  hooks.cursor = 0; tree = CustomerChoicePage({ token: "a".repeat(43) });
+  for (const element of elements(tree)) {
+    if (element.type === "h2" && element.props.ref) (element.props.ref as { current: unknown }).current = { focus: () => focusHeading(renderToStaticMarkup(element)) };
+  }
+  hooks.pending.splice(0).forEach((effect) => effect());
+}
 async function settle() { for (let index = 0; index < 20; index++) { await Promise.resolve(); render(); } }
 function button(label: string) { return elements(tree).find((element) => element.type === "button" && renderToStaticMarkup(element).includes(label))!; }
 beforeEach(() => {
   vi.useFakeTimers(); hooks.cursor = 0; hooks.slots = []; hooks.pending = []; hooks.cleanups.clear();
+  focusHeading = vi.fn();
   const session = { id: "current", classType: "yoga" as const, title: "Yoga Flow", start: "2026-11-10T15:00:00Z", end: "2026-11-10T16:00:00Z", instructorId: "teacher", roomId: "room", instructor: "Alex Rivera", price: "22.00", capacity: 10 };
   data = { studio: { name: "Northstar", timezone: "America/New_York" }, before: { ...session, start: "2026-11-09T15:00:00Z", instructor: "Maya Chen" }, after: session,
     message: { subject: "Your class changed", body: "Hi Avery,\n\nA new time for your class." }, kind: "choice", canChoose: true, expiresAt: Date.now() + 60_000,
@@ -82,6 +90,18 @@ it("suppresses double taps, shows pending status, then polls the receipt to comp
   hooks.slots = []; hooks.cleanups.clear(); render(); await settle();
   expect(elements(tree).find((element) => element.type === "details")?.props.open).toBe(false);
   expect(renderToStaticMarkup(tree)).toContain("Original message from your studio");
+});
+
+it("focuses the result heading after a selected alternative disappears and does not refocus on polling", async () => {
+  render(); await settle();
+  (button("Pick another class").props.onClick as () => void)(); render();
+  data = { ...data, reply: { action: "move", at: new Date().toISOString() }, after: data.alternatives[0] };
+  (button("Gentle Yoga").props.onClick as () => void)(); await settle();
+  expect(renderToStaticMarkup(tree)).not.toContain('class="choice-option"');
+  expect(focusHeading).toHaveBeenCalledOnce();
+  expect(focusHeading.mock.calls[0][0]).toContain('tabindex="-1">You’re all set.');
+  await vi.advanceTimersByTimeAsync(5000); await settle();
+  expect(focusHeading).toHaveBeenCalledOnce();
 });
 
 it("labels simulation and gives receipt-only customers no choice controls", async () => {

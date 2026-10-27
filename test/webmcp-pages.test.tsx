@@ -18,6 +18,7 @@ vi.mock("react", async (original) => ({
   },
   useEffect: () => {},
   useCallback: (callback: unknown) => callback,
+  useSyncExternalStore: (_subscribe: unknown, _snapshot: unknown, serverSnapshot: () => unknown) => serverSnapshot(),
 }));
 vi.mock("next/dynamic", () => ({ default: () => "dynamic-view" }));
 vi.mock("next/link", () => ({ default: "a" }));

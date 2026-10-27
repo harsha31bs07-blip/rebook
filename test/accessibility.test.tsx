@@ -76,3 +76,14 @@ it("renders the global skip link and retains reduced-motion and universal focus 
   expect(css).toMatch(/prefers-reduced-motion:\s*reduce/);
   expect(css).toMatch(/\.move-to-popover\s*\{[^}]*inset:\s*0;[^}]*margin:\s*auto;/);
 });
+
+it("keeps the visible rebook. text at the start of wordmark accessible names on every page", () => {
+  for (const page of [<Home key="home" />, <AgentReadyPage key="agent" />, <OwnerConsole key="console" id="workspace" />, <Dashboard key="dashboard" id="workspace" />, <BookingPage key="book" id="workspace" clientId="" sandbox />]) {
+    const html = renderToStaticMarkup(page);
+    const link = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find((match) => match[1].includes('class="wordmark"'))!;
+    expect(link).toBeDefined();
+    const label = link[1].match(/aria-label="([^"]+)"/)?.[1] ?? link[2].replace(/<[^>]+>/g, "");
+    expect(label.startsWith("rebook.")).toBe(true);
+  }
+  expect(readFileSync("app/built-with/page.tsx", "utf8")).toContain('aria-label="rebook. home"');
+});

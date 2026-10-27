@@ -10,6 +10,8 @@ export default function CustomerChoicePage({ token }: { token: string }) {
   const [picking, setPicking] = useState(false);
   const inFlight = useRef(false);
   const revision = useRef(0);
+  const resultHeading = useRef<HTMLHeadingElement>(null);
+  const focusResult = useRef(false);
   const endpoint = `/api/choices/${encodeURIComponent(token)}`;
   const request = useCallback(async (input?: ChoiceInput, signal?: AbortSignal) => {
     const current = ++revision.current;
@@ -36,7 +38,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
   async function choose(input: ChoiceInput) {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError("");
-    try { await request(input); setPicking(false); }
+    try { await request(input); focusResult.current = true; setPicking(false); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Please try again shortly."); }
     finally { inFlight.current = false; setBusy(false); }
   }
@@ -44,6 +46,11 @@ export default function CustomerChoicePage({ token }: { token: string }) {
     weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
   const receipt = data?.receipt;
   const completed = receipt && ["COMPLETED", "SIMULATED"].includes(receipt.status);
+  useEffect(() => {
+    if (!busy && focusResult.current && resultHeading.current) {
+      resultHeading.current.focus(); focusResult.current = false;
+    }
+  }, [busy, data]);
   return <main id="main-content" tabIndex={-1} className="customer-booking customer-choice">
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A little change. A choice for you.</span></header>
     <section className="choice-intro"><p className="eyebrow">{data?.studio.name ?? "Your studio"}</p><h1>{data?.kind === "receipt" ? "Your refund receipt." : "Your class. Your call."}</h1><p className="muted">{data?.kind === "receipt" ? "Your studio has arranged a refund to your original payment." : "Plans change. Let’s find what works for you."}</p></section>
@@ -58,8 +65,8 @@ export default function CustomerChoicePage({ token }: { token: string }) {
       </section>
       <details key={data.reply?.action === "refund" ? "original" : "current"} className="choice-message" open={data.reply?.action !== "refund"}><summary>{data.reply?.action === "refund" ? "Original message from your studio" : "A note from your studio"}</summary><p>{data.message.body}</p></details>
       <div aria-live="polite" aria-atomic="true" role="status" className="choice-status">
-        {busy ? <p>Saving your choice…</p> : receipt ? <><h2>{completed ? "Refund completed" : receipt.status === "FAILED" ? "Refund needs attention" : "Refund pending"}</h2><p>${receipt.amount} {data.reply?.action === "move" ? "price difference" : "to your original payment"}{receipt.status === "SIMULATED" ? " · simulated" : " · PayPal"}</p>{receipt.paypalId && <p className="choice-receipt-id">Refund ID: <strong>{receipt.paypalId}</strong></p>}<p className="muted">{completed ? "Your receipt is saved here." : "This page updates automatically as your refund is confirmed."}</p></>
-          : data.reply && <><h2>You’re all set.</h2><p>{data.reply.action === "keep" ? "Your new time is confirmed. See you in class." : "Your place in your chosen class is confirmed."}</p></>}
+        {busy ? <p>Saving your choice…</p> : receipt ? <><h2 ref={resultHeading} tabIndex={-1}>{completed ? "Refund completed" : receipt.status === "FAILED" ? "Refund needs attention" : "Refund pending"}</h2><p>${receipt.amount} {data.reply?.action === "move" ? "price difference" : "to your original payment"}{receipt.status === "SIMULATED" ? " · simulated" : " · PayPal"}</p>{receipt.paypalId && <p className="choice-receipt-id">Refund ID: <strong>{receipt.paypalId}</strong></p>}<p className="muted">{completed ? "Your receipt is saved here." : "This page updates automatically as your refund is confirmed."}</p></>
+          : data.reply && <><h2 ref={resultHeading} tabIndex={-1}>You’re all set.</h2><p>{data.reply.action === "keep" ? "Your new time is confirmed. See you in class." : "Your place in your chosen class is confirmed."}</p></>}
       </div>
       {data.canChoose && <section className="choice-actions" aria-label="Choose what works for you" aria-busy={busy}>
         <button className="primary" disabled={busy} onClick={() => void choose({ action: "keep" })}>Keep my new time <span aria-hidden="true">↗</span></button>

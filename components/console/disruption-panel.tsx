@@ -14,9 +14,11 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const question = useRef<HTMLHeadingElement>(null);
+  const understoodHeading = useRef<HTMLHeadingElement>(null);
   const clarification = interpretation?.kind === "clarify" ? interpretation : undefined;
   const understood = interpretation?.kind !== "clarify" ? interpretation : undefined;
   useEffect(() => { if (clarification) question.current?.focus(); }, [clarification]);
+  useEffect(() => { if (understood) understoodHeading.current?.focus(); }, [understood]);
   const label = understood && disruptionLabel(understood, state);
   const affected = understood ? state.sessions.filter((session) => {
     const disruption = understood.disruption;
@@ -26,8 +28,8 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
   const allDay = understood && localParts(understood.disruption.from, state.studio.timezone).minutesOfDay === 0 && localParts(understood.disruption.to, state.studio.timezone).minutesOfDay === 0;
   const severalDays = understood && localParts(understood.disruption.from, state.studio.timezone).dateKey !== localParts(new Date(Date.parse(understood.disruption.to) - 1).toISOString(), state.studio.timezone).dateKey;
   return <>
-    <p className="eyebrow">A little change of plans</p><h2>Let’s get your week<br />back on track.</h2>
-    <p className="muted">Tell us what changed. We’ll find the best way to take care of everyone.</p>
+    <p className="eyebrow disruption-intro">A little change of plans</p><h2><span className="desktop-disruption-title">Let’s get your week<br />back on track.</span><span className="phone-disruption-title">What happened?</span></h2>
+    <p className="muted disruption-intro">Tell us what changed. We’ll find the best way to take care of everyone.</p>
     {clarification && <div className="understood-card">
       <h3 ref={question} id="clarification-question" tabIndex={-1}>{clarification.question}</h3>
       <div role="group" aria-labelledby="clarification-question" className="examples">
@@ -52,7 +54,7 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
       <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={understood.aiBusy ? 0 : undefined} title={understood.aiBusy ? "AI is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{understood.aiBusy ? "Rules (AI busy)" : interpretationSource(understood.source, understood.model)}</span></div>
-      <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone}</p>
+      <h3 ref={understoodHeading} tabIndex={-1}>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone}</p>
       <p><strong>Classes affected:</strong> {affected.length ? affected.map((session) => `${session.title} at ${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start))}`).join("; ") : "None scheduled in this window"}.</p>
       {allDay && !/\ball day\b/i.test(text) && <p className="muted">{severalDays ? "Assumed all day throughout this window." : `Assumed all day ${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "long" }).format(new Date(understood.disruption.from))}.`}</p>}
       {understood.notes.length > 0 && <ul>{understood.notes.map((note) => <li key={note}>{note}</li>)}</ul>}

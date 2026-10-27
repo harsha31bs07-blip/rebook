@@ -267,7 +267,7 @@ it("shows applied recovery, reply counts, settled refunds and the manual sharing
   expect(panel(replied.map((item, index) => index ? item : { ...item, pending: 1, final: false }))).not.toContain("Recovery complete");
   const data = buildInsights(workspace.state, [{ ...plan, results }], []);
   const dashboard = renderToStaticMarkup(RecoverySummary({ data }));
-  for (const text of ["Kept or moved", "confirmed", "Refunded", "completed", "Pending", "No reply yet"]) expect(dashboard).toContain(text);
+  for (const text of ["Kept or moved", "in the new schedule", "Refunded", "completed", "Pending", "No reply yet"]) expect(dashboard).toContain(text);
 });
 
 it("replaces confidence with understood facts, affected classes and the all-day assumption", () => {

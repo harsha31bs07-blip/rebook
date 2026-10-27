@@ -59,7 +59,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
     ["PayPal Server SDK · APIMatic", "The APIMatic-generated TypeScript SDK calls Orders, Payments and Transaction Search on the server. Credentials stay server-side.", "console", "See it: recovery desk", "lib/paypal/client.ts#L27-L69"],
   ];
   return <main id="main-content" tabIndex={-1} className="agent-ready-page built-with-page">
-    <header className="landing-header"><Link href="/" className="wordmark" aria-label="Rebook home"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span></Link>{id ? <Link href={`/w/${id}`}>Back to your studio →</Link> : <Link href="/">Back to Rebook →</Link>}</header>
+    <header className="landing-header"><Link href="/" className="wordmark" aria-label="rebook. home"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span></Link>{id ? <Link href={`/w/${id}`}>Back to your studio →</Link> : <Link href="/">Back to Rebook →</Link>}</header>
     <article>
       <p className="eyebrow">The tools behind a calmer week</p><h1>How Rebook is built</h1>
       <p>From a broken schedule to a reviewed recovery, a sandbox refund and an auditable receipt. Each integration has a job you can try.</p>

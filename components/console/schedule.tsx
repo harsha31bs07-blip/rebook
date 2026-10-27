@@ -115,7 +115,7 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     const info = data.details[String(eventRecord.id)];
     if (!info) return StringHelper.encodeHtml(eventRecord.name);
     renderData.iconCls = "";
-    renderData.ariaLabel = `${info.status}: ${info.title}, ${info.time}, ${info.room}, ${info.location}, ${info.occupancy}`;
+    renderData.ariaLabel = `${info.title}, ${info.time}, ${info.status}${info.badge ? `, ${info.badge}` : ""}, ${info.room}, ${info.location}, ${info.occupancy}`;
     return [{ tag: "div", className: "session-label", children: [
       { tag: "strong", text: info.title }, { tag: "span", text: info.time },
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),

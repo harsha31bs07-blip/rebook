@@ -70,3 +70,14 @@ it("describes a multi-day all-day window without narrowing its assumption to Mon
   expect(html).toContain("Assumed all day throughout this window.");
   expect(html).not.toContain("Assumed all day Monday.");
 });
+
+it("moves focus to the understood heading after interpretation", () => {
+  const { props } = panel();
+  hooks.refs = []; hooks.effects = [];
+  const tree = DisruptionPanel({ ...props, interpretation: { disruption: demoDisruption, confidence: 1, source: "rules", notes: [] } });
+  const heading = elements(tree).find((element) => element.type === "h3" && element.props.tabIndex === -1)!;
+  const focus = vi.fn();
+  (heading.props.ref as { current: unknown }).current = { focus };
+  hooks.effects.forEach((effect) => effect());
+  expect(focus).toHaveBeenCalledOnce();
+});

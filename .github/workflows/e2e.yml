@@ -1,0 +1,22 @@
+name: Judge path end-to-end
+
+on:
+  workflow_dispatch:
+  # enable on Nov 16 together with the judge smoke
+  # schedule:
+  #   - cron: '47 6 * * *'
+
+permissions: {}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: node scripts/e2e-judge-path.mjs

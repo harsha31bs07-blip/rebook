@@ -127,6 +127,8 @@ Vitest unit/integration suites mock PayPal, Gemini and Groq; they cover solver c
 
 The functional judge smoke wakes the host, creates one demo workspace, requires a real completed scenario capture and checks the console, booking and dashboard pages: `node scripts/judge-smoke.mjs [base-url]` (or set `JUDGE_SMOKE_BASE`; defaults to the live demo). It creates sandbox captures during preparation and never approves a plan or issues refunds. Its workflow is manual until the commented daily schedule is enabled on Nov 16.
 
+A browser end-to-end check walks the whole judge path on a deployment (interpret, plan, approve with real sandbox refunds, outbox, a customer refund from a phone, the dashboard and a public card checkout) and audits accessibility on each page: `npx playwright-core install chromium` once, then `node scripts/e2e-judge-path.mjs [base-url]`. Before freezing the code, `node scripts/check-permalinks.mjs` lists every code link in this README and on /built-with.
+
 ## Honest limits
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.

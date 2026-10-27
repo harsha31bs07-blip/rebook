@@ -2,7 +2,7 @@
 //   node scripts/e2e-judge-path.mjs [base-url]      (needs Chromium: npx playwright install chromium)
 // Owner (desktop): interpret -> plan -> approve (refunds) -> outbox. Customer (phone): private link -> refund ->
 // receipt. Dashboard reflects the customer's refund. Public booking page: card checkout. Every page: axe audit of
-// our own markup (Bryntum grid and AG Charts internals are reported but not fatal). Exits non-zero on any failure.
+// our own markup (Bryntum grid and AG Charts internals are reported but not fatal; AG Studio's trial watermark is excluded). Exits non-zero on any failure.
 import { chromium, devices } from "playwright-core";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -25,7 +25,7 @@ const api = async (method, path) => {
 async function audit(page, name) {
   await sleep(2500); // let entry animations settle; mid-fade text briefly fails contrast
   await page.addScriptTag({ content: AXE });
-  const found = await page.evaluate(async () => (await window.axe.run(document, { resultTypes: ["violations"] })).violations.map((v) => ({ id: v.id, html: v.nodes[0]?.html.slice(0, 160) })));
+  const found = await page.evaluate(async () => (await window.axe.run({ exclude: [[".ag-studio-watermark-text"]] }, { resultTypes: ["violations"] })).violations.map((v) => ({ id: v.id, html: v.nodes[0]?.html.slice(0, 160) })));
   const violations = found.map((v) => v.id);
   const ours = found.filter((v) => !LIBRARY_RULES.has(v.id)).map((v) => `${v.id} at ${v.html}`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

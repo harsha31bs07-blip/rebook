@@ -31,7 +31,7 @@ const responseSchema = {
 };
 
 export type Interpretation = {
-  disruption: Disruption; confidence: number; source: "gemini" | "rules"; model?: string; notes: string[]; aiBusy?: boolean;
+  disruption: Disruption; confidence: number; source: "gemini" | "groq" | "rules"; model?: string; notes: string[]; aiBusy?: boolean;
 };
 export class InterpretationError extends Error {
   constructor(state: State) {
@@ -184,7 +184,7 @@ export async function interpretDisruption(text: string, state: State, nowIso: st
   if (result.data.confidence < 0.7) throw new InterpretationError(state);
   try {
     const disruption = resolve(result.data, text, state, nowIso, weekStart);
-    return { disruption, confidence: result.data.confidence, source: "gemini", model: result.model, notes: result.data.notes };
+    return { disruption, confidence: result.data.confidence, source: result.provider, model: result.model, notes: result.data.notes };
   } catch (error) {
     if (!(error instanceof InterpretationError)) throw error;
     return fallback();

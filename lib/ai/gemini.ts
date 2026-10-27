@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { limits } from "../api/limits";
+import { studioModelCompletion, type AiProvider } from "./studio-transport";
 export type AiIdentity = { client: string; workspace: string };
 
 export class AiUnavailable extends Error {
@@ -17,67 +17,41 @@ export type GenerateOptions = {
   identity?: AiIdentity;
 };
 
-const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-3.5-flash,gemini-flash-latest";
 const EnvelopeSchema = z.object({
-  candidates: z.array(z.object({ content: z.object({ parts: z.array(z.object({ text: z.string().optional() })) }) })).min(1),
+  choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1),
 });
 
-/** The deadline covers fetching and reading the body, including fetch implementations that ignore abort. */
+// Existing callers use Gemini's uppercase types/nullable flag; Chat Completions takes JSON Schema.
+function jsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const result = Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "nullable").map(([key, value]) => {
+    if (key === "type" && typeof value === "string") return [key, value.toLowerCase()];
+    if (key === "properties" && value && typeof value === "object") return [key, Object.fromEntries(Object.entries(value).map(([name, field]) => [name, jsonSchema(field as Record<string, unknown>)]))];
+    if (key === "items" && value && typeof value === "object") return [key, jsonSchema(value as Record<string, unknown>)];
+    return [key, value];
+  }));
+  if (schema.nullable) {
+    result.type = [result.type, "null"];
+    if (Array.isArray(result.enum)) result.enum = [...result.enum, null];
+  }
+  return result;
+}
+
+/** Shared provider deadlines cover fetching and reading the body, even if fetch ignores abort. */
 export async function generateJson<T>(
   prompt: string, schema: Record<string, unknown>, zodSchema: z.ZodType<T>, opts: GenerateOptions = {},
-): Promise<{ data: T; model: string; latencyMs: number }> {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) throw new AiUnavailable();
-  const models = opts.models ?? (process.env.GEMINI_MODELS || DEFAULT_MODELS).split(",").map((model) => model.trim()).filter(Boolean);
+): Promise<{ data: T; provider: AiProvider; model: string; latencyMs: number }> {
   const started = Date.now();
-  const budget = Math.min(opts.budgetMs ?? 25_000, 25_000);
-  for (const model of models) {
-    const remaining = budget - (Date.now() - started);
-    if (remaining <= 0) break;
-    const controller = new AbortController();
-    let release: () => void;
-    try { release = limits.aiCall(opts.identity?.client ?? "unknown", opts.identity?.workspace ?? "unknown"); }
-    catch { throw new AiUnavailable(true); }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new AiUnavailable());
-        }, Math.min(opts.timeoutMs ?? 12_000, 12_000, remaining));
-      });
-      const result = await Promise.race([
-        (async () => {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
-            {
-              method: "POST", signal: controller.signal, cache: "no-store",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                ...(opts.systemInstruction ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } } : {}),
-                generationConfig: { responseMimeType: "application/json", responseSchema: schema },
-              }),
-            },
-          );
-          if (!response.ok) {
-            // A bad key fails every model; a retired or unknown model (400/404) only fails this one.
-            return { ok: false, permanent: response.status === 401 || response.status === 403 } as const;
-          }
-          const envelope = EnvelopeSchema.parse(await response.json());
-          const value = envelope.candidates[0].content.parts.filter((part) => part.text !== undefined).map((part) => part.text).join("");
-          return { ok: true, data: zodSchema.parse(JSON.parse(value)) } as const;
-        })(),
-        timeout,
-      ]);
-      if (result.ok) return { data: result.data, model, latencyMs: Date.now() - started };
-      if (result.permanent) break;
-    } catch {
-      // Do not expose request URLs, API keys, upstream bodies, or unvalidated model output.
-    } finally {
-      release();
-      if (timer !== undefined) clearTimeout(timer);
-    }
+  try {
+    return await studioModelCompletion(undefined, undefined, opts.identity,
+      ({ model }) => ({
+        model, stream: false, max_tokens: 4096,
+        messages: [...(opts.systemInstruction ? [{ role: "system", content: opts.systemInstruction }] : []), { role: "user", content: prompt }],
+        response_format: { type: "json_schema", json_schema: { name: "rebook_response", schema: jsonSchema(schema) } },
+      }),
+      (value, { provider, model }) => ({ data: zodSchema.parse(JSON.parse(EnvelopeSchema.parse(value).choices[0].message.content)), provider, model, latencyMs: Date.now() - started }),
+      { models: opts.models?.map((model) => ({ provider: "gemini", model })), timeoutMs: opts.timeoutMs, budgetMs: opts.budgetMs });
+  } catch {
+    // The interpreter retains its deterministic rules fallback, including local quota rejection.
+    throw new AiUnavailable(true);
   }
-  throw new AiUnavailable();
 }

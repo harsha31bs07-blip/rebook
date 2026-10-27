@@ -17,6 +17,7 @@ let directory: string;
 let epoch = Date.now();
 beforeEach(() => {
   limits.reset();
+  vi.stubEnv("AI_MODELS", undefined); vi.stubEnv("GROQ_API_KEY", "");
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(epoch += 120_000);
   directory = mkdtempSync(join(tmpdir(), "rebook-studio-llm-"));
@@ -30,6 +31,54 @@ const context = (id: string) => ({ params: Promise.resolve({ id }) });
 const post = (value: unknown = body) => new Request("http://localhost/llm", { method: "POST", body: JSON.stringify(value) });
 
 describe("Studio LLM proxy", () => {
+  it("falls back from Gemini 429 to Groq through the route and normalizes tool calls", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:gemini-flash-lite-latest,groq:llama-3.3-70b-versatile");
+    vi.stubEnv("GROQ_API_KEY", "groq-secret");
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status: 429 })).mockResolvedValueOnce(Response.json({
+      id: "groq", choices: [{ message: { role: "assistant", content: null, tool_calls: [{ type: "function", index: 0, extra_content: { private: true }, function: { name: "get_disruptions", arguments: "{}", extra: true } }] } }],
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const call = { id: "previous", type: "function", function: { name: "get_disruptions", arguments: "{}" }, extra_content: { google: { thought_signature: "exact-signature" } } };
+    const response = await POST(post({ messages: [...body.messages, { role: "assistant", content: null, tool_calls: [call] }, { role: "tool", tool_call_id: call.id, content: "[]" }] }), context(workspace.id));
+    expect(response.status).toBe(200);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(["https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "https://api.groq.com/openai/v1/chat/completions"]);
+    const gemini = JSON.parse(fetch.mock.calls[0][1].body), groq = JSON.parse(fetch.mock.calls[1][1].body);
+    expect(gemini.messages[2].tool_calls[0].extra_content.google.thought_signature).toBe("exact-signature");
+    expect(JSON.stringify(groq)).not.toContain("extra_content");
+    expect(groq).toMatchObject({ model: "llama-3.3-70b-versatile", stream: false, max_tokens: 4096 });
+    expect(groq.tools).toEqual(gemini.tools);
+    expect(fetch.mock.calls[1][1].headers.Authorization).toBe("Bearer groq-secret");
+    const returned = (await response.json()).choices[0].message.tool_calls[0];
+    expect(returned.id).toMatch(/^call_/);
+    expect(returned).toEqual({ id: returned.id, type: "function", function: { name: "get_disruptions", arguments: "{}" } });
+  });
+  it("skips Groq for a delegated turn above the size gate and logs the size skip", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:first,groq:llama-3.3-70b-versatile,groq:openai/gpt-oss-120b,gemini:last");
+    vi.stubEnv("GROQ_API_KEY", "groq-secret");
+    vi.stubEnv("GROQ_MAX_INPUT_TOKENS", "5000"); // the ~50 KB fixture estimates ~6,300 tokens
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(Response.json(completion));
+    vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const response = await POST(new Request("http://localhost/llm", { method: "POST", headers: { "X-Rebook-Studio": "harness" }, body: JSON.stringify(delegatedTurn()) }), context(workspace.id));
+    expect(response.status).toBe(200);
+    expect(fetch.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual(["first", "last"]);
+    expect(log.mock.calls.map(([entry]) => JSON.parse(entry)).filter((entry) => entry.provider === "groq")).toEqual([
+      { message: "ai_call", provider: "groq", model: "llama-3.3-70b-versatile", status: "too_large", ms: 0 },
+      { message: "ai_call", provider: "groq", model: "openai/gpt-oss-120b", status: "too_large", ms: 0 },
+    ]);
+    log.mockRestore();
+  });
+  it("still validates Groq tool names after normalization", async () => {
+    vi.stubEnv("AI_MODELS", "groq:llama-3.3-70b-versatile");
+    vi.stubEnv("GROQ_API_KEY", "groq-secret");
+    const fetch = vi.fn().mockResolvedValue(Response.json({ id: "bad", choices: [{ message: { role: "assistant", tool_calls: [{ function: { name: "external_tool", arguments: "{}" } }] } }] }));
+    vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    expect((await POST(post(), context(workspace.id))).status).toBe(503);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("accepts live built-in agent tools and the completion tool injected into delegated runs", async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ id: "configured", choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "done", type: "function", function: { name: "complete_task", arguments: '{"summary":"Applied Maya filter","artifacts":[]}' } }] } }] }));
     vi.stubGlobal("fetch", fetch);
@@ -190,9 +239,9 @@ describe("Studio LLM proxy", () => {
     expect(fetch.mock.calls.map((entry) => JSON.parse(entry[1].body).model)).toEqual(["slow-a", "slow-b", "slow-c"]);
     expect(fetch.mock.calls.every((entry) => entry[1].signal.aborted)).toBe(true);
     expect(log.mock.calls.map(([entry]) => JSON.parse(entry))).toEqual([
-      { message: "ai_call", model: "slow-a", status: "timeout", ms: 10000 },
-      { message: "ai_call", model: "slow-b", status: "timeout", ms: 20000 },
-      { message: "ai_call", model: "slow-c", status: "timeout", ms: 5000 },
+      { message: "ai_call", provider: "gemini", model: "slow-a", status: "timeout", ms: 10000 },
+      { message: "ai_call", provider: "gemini", model: "slow-b", status: "timeout", ms: 20000 },
+      { message: "ai_call", provider: "gemini", model: "slow-c", status: "timeout", ms: 5000 },
     ]);
     log.mockRestore();
   });

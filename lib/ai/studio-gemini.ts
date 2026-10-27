@@ -3,7 +3,7 @@ import type { AiIdentity } from "./gemini";
 import type { State } from "../domain/types";
 import { studioInstructions, studioToolNames, studioTools } from "./studio-policy";
 import { studioModelCompletion } from "./studio-transport";
-import { studioRequestFits, STUDIO_REQUEST_TOO_LARGE, withThoughtSignatures } from "./studio-request";
+import { studioRequestFits, STUDIO_REQUEST_TOO_LARGE, providerMessages } from "./studio-request";
 
 const ToolCallSchema = z.object({
   id: z.string(), type: z.literal("function"),
@@ -30,7 +30,7 @@ export type StudioCompletion = z.infer<typeof StudioCompletionSchema>;
 export async function studioCompletion(body: StudioChatRequest, signal?: AbortSignal, identity?: AiIdentity, state?: State): Promise<StudioCompletion> {
   body = StudioChatSchema.parse(body);
   return studioModelCompletion(body.model, signal, identity,
-    (model) => ({ messages: [{ role: "system", content: studioInstructions(state) }, ...withThoughtSignatures(body.messages)], tools: studioTools, model, stream: false, max_tokens: 4096 }),
+    ({ provider, model }) => ({ messages: [{ role: "system", content: studioInstructions(state) }, ...providerMessages(body.messages, provider)], tools: studioTools, model, stream: false, max_tokens: 4096 }),
     (value) => {
       const completion = StudioCompletionSchema.parse(value);
       const message = completion.choices[0].message;

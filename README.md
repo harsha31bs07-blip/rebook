@@ -99,12 +99,14 @@ flowchart LR
 
 ## Run locally
 
-Requires Node.js 24+ and a PayPal sandbox REST app. Gemini is optional: without its key, interpretation uses rules and the analyst explains its unavailability.
+Requires Node.js 24+ and a PayPal sandbox REST app. AI is optional: without either provider key, interpretation uses rules and the analyst explains its unavailability.
+
+Gemini first; Groq takes small requests when Gemini is busy. Set server-only `GEMINI_API_KEY` and optionally `GROQ_API_KEY`. `AI_MODELS` controls the ordered `provider:model` chain; when it is unset, an existing `GEMINI_MODELS` setting keeps the legacy all-Gemini chain. Groq skips input estimated above `GROQ_MAX_INPUT_TOKENS` (default 7000); large delegated Studio turns stay on Gemini. See [AI configuration](docs/studio-insights.md#ai-proxy-and-configuration).
 
 ```sh
 npm install
 cp .env.example .env.local
-# Set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV=sandbox; optionally GEMINI_API_KEY.
+# Set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV=sandbox; optionally GEMINI_API_KEY and GROQ_API_KEY.
 npm run build
 npm start
 # http://localhost:3000
@@ -121,7 +123,7 @@ npx tsc --noEmit
 npm run lint
 ```
 
-Vitest unit/integration suites mock PayPal and Gemini; they cover solver constraints, owner adjustments, version checks, payment idempotency/reconciliation, webhooks, checkout, customer choices, Studio and WebMCP. Live sandbox, browser geometry and trial behaviour need manual verification.
+Vitest unit/integration suites mock PayPal, Gemini and Groq; they cover solver constraints, owner adjustments, version checks, payment idempotency/reconciliation, webhooks, checkout, customer choices, Studio and WebMCP. Live sandbox, browser geometry and trial behaviour need manual verification.
 
 The functional judge smoke wakes the host, creates one demo workspace, requires a real completed scenario capture and checks the console, booking and dashboard pages: `node scripts/judge-smoke.mjs [base-url]` (or set `JUDGE_SMOKE_BASE`; defaults to the live demo). It creates sandbox captures during preparation and never approves a plan or issues refunds. Its workflow is manual until the commented daily schedule is enabled on Nov 16.
 

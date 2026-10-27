@@ -64,6 +64,7 @@ export function formatDisruptionWindow(from: string, to: string, timezone: strin
 }
 
 export function interpretationSource(source: string, model?: string) {
+  if (source === "groq") return "Groq";
   if (source !== "gemini") return "Rules";
   if (model?.includes("flash-lite")) return "Gemini Flash-Lite";
   if (model?.includes("flash")) return "Gemini Flash";

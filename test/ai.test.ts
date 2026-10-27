@@ -20,14 +20,18 @@ const state = seedStudio();
 const weekStart = "2026-11-09T05:00:00.000Z";
 const objectSchema = { type: "OBJECT", properties: { ok: { type: "BOOLEAN" } }, required: ["ok"] };
 const OkSchema = z.object({ ok: z.boolean() });
-const response = (data: unknown) => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(data) }] } }] });
+const response = (data: unknown) => Response.json({ choices: [{ message: { role: "assistant", content: JSON.stringify(data) } }] });
 const intent = (overrides: Record<string, unknown> = {}) => ({
   kind: "instructor_unavailable", name: "Maya Chen", day: "monday", untilDay: null,
   startTime: null, endTime: null, period: "all_day", thisWeek: false, confidence: 0.95, notes: [], ...overrides,
 });
+let epoch = Date.now();
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   limits.reset();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(epoch += 120_000);
+  vi.stubEnv("AI_MODELS", undefined); vi.stubEnv("GROQ_API_KEY", "");
   vi.stubEnv("GEMINI_API_KEY", "test-key-never-real");
   vi.stubEnv("GEMINI_MODELS", "first,second,third");
   fetchMock = vi.fn();
@@ -37,7 +41,7 @@ afterEach(() => {
   vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
-describe("Gemini JSON generation", () => {
+describe("provider JSON generation", () => {
   it("tries models in env order after 503 and sends JSON schema without logging secrets", async () => {
     const log = vi.spyOn(console, "error");
     fetchMock.mockResolvedValueOnce(new Response("high demand", { status: 503 })).mockResolvedValueOnce(response({ ok: true }));
@@ -45,33 +49,34 @@ describe("Gemini JSON generation", () => {
     expect(result).toMatchObject({ data: { ok: true }, model: "second" });
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
     expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
-      "/v1beta/models/first:generateContent", "/v1beta/models/second:generateContent",
+      "/v1beta/openai/chat/completions", "/v1beta/openai/chat/completions",
     ]);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.generationConfig).toEqual({ responseMimeType: "application/json", responseSchema: objectSchema });
+    expect(body.response_format).toEqual({ type: "json_schema", json_schema: { name: "rebook_response", schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] } } });
+    expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual(["first", "second"]);
     expect(log).not.toHaveBeenCalled();
   });
-  it("aborts a hung request after 12 seconds and tries the next model", async () => {
+  it("aborts a hung request after 10 seconds and tries the next model", async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(response({ ok: true }));
     const pending = generateJson("test", objectSchema, OkSchema);
-    await vi.advanceTimersByTimeAsync(12_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect((await pending).model).toBe("second");
     expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it("limits all models and stalled response bodies to a shared 25 second budget", async () => {
+  it("limits all models and stalled response bodies to a shared 35 second budget", async () => {
     vi.useFakeTimers();
     fetchMock.mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
     const outcome = generateJson("test", objectSchema, OkSchema).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(25_000);
+    await vi.advanceTimersByTimeAsync(35_000);
     expect(await outcome).toBeInstanceOf(AiUnavailable);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls.every(([, opts]) => opts.signal.aborted)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
   it("rejects malformed JSON and zod-invalid output before accepting a valid model", async () => {
-    fetchMock.mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ text: "not json" }] } }] }))
+    fetchMock.mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "not json" } }] }))
       .mockResolvedValueOnce(response({ ok: "yes" })).mockResolvedValueOnce(response({ ok: true }));
     expect((await generateJson("test", objectSchema, OkSchema)).model).toBe("third");
   });
@@ -93,6 +98,16 @@ describe("Gemini JSON generation", () => {
 });
 
 describe("disruption interpretation", () => {
+  it("uses Groq after Gemini overload and reports the actual provider", async () => {
+    vi.stubEnv("AI_MODELS", "gemini:first,groq:llama-3.3-70b-versatile");
+    vi.stubEnv("GROQ_API_KEY", "groq-test-key");
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(response(intent()));
+    expect(await interpretDisruption("Maya is sick Monday", state, now, weekStart)).toMatchObject({ source: "groq", model: "llama-3.3-70b-versatile", disruption: { instructorId: "instructor-01" } });
+    expect(fetchMock.mock.calls[1][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(body.response_format.json_schema.schema.properties.name.type).toEqual(["string", "null"]);
+    expect(body.response_format.json_schema.schema.properties.day.enum).toContain(null);
+  });
   it.each([
     ["Maya is sick Monday", "instructor_unavailable", "instructor-01", "2026-11-09T05:00:00.000Z", "2026-11-10T05:00:00.000Z"],
     ["Maya has the flu, out until Wednesday", "instructor_unavailable", "instructor-01", "2026-11-08T05:00:00.000Z", "2026-11-11T05:00:00.000Z"],
@@ -140,7 +155,7 @@ describe("disruption interpretation", () => {
     expect(result).toMatchObject({ source: "gemini", model: "first", disruption: {
       instructorId: "instructor-01", from: "2026-11-09T05:00:00.000Z", to: "2026-11-10T05:00:00.000Z",
     } });
-    const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).contents[0].parts[0].text;
+    const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
     expect(prompt).toContain("2026-11-08, sunday");
     expect(prompt).toContain("America/New_York");
     expect(prompt).toContain("Maya Chen");

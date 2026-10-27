@@ -136,6 +136,7 @@ describe("scheduler presentation mapping", () => {
     expect(formatDisruptionWindow("2026-10-26T04:00:00Z", "2026-10-29T04:00:00Z", tz)).toBe("Mon, Oct 26 - Wed, Oct 28 (all day)");
     expect(formatDisruptionWindow("2026-10-28T16:00:00Z", "2026-10-28T21:00:00Z", tz)).toBe("Wed, Oct 28, 12:00 PM - 5:00 PM");
     expect(formatDisruptionWindow("2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z", tz)).toBe("All day Sun, Nov 1");
+    expect(interpretationSource("groq", "llama-3.3-70b-versatile")).toBe("Groq");
     expect(interpretationSource("gemini", "gemini-2.5-flash-lite")).toBe("Gemini Flash-Lite");
     expect(interpretationSource("gemini", "gemini-2.5-flash")).toBe("Gemini Flash");
     expect(interpretationSource("rules")).toBe("Rules");

@@ -72,11 +72,12 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
       <section id="bryntum"><h2>Bryntum Scheduler</h2><p>Rebook&apos;s solver does the re-planning. Bryntum Scheduler is the interactive review surface: the owner checks and adjusts the proposed recovery before approval.</p>{flow("console", "See it: recovery timeline")}<FeatureTable rows={bryntum} /></section>
       <section id="ag-studio"><h2>AG Studio</h2><p>A working report and analyst over the same bookings, captures, refunds and applied recoveries as the console.</p>{flow("dashboard", "See it: Dashboard and Recovery analyst")}<FeatureTable rows={studio} /></section>
       <section id="ai"><h2>AI</h2><FeatureTable rows={[
-        ["Gemini interpretation", "Turns owner text into a structured disruption, with a model fallback chain. Our code resolves names and local times against studio data.", "lib/ai/interpret.ts#L170-L192"],
-        ["Rules fallback", "If Gemini is busy or unavailable, the local parser takes over and the card says Rules (AI busy).", "lib/ai/interpret.ts#L170-L192"],
+        ["AI providers", "Gemini first; Groq takes small requests when Gemini is busy", "lib/ai/studio-transport.ts#L7-L13"],
+        ["Disruption interpretation", "Turns owner text into a structured disruption. Our code resolves names and local times against studio data.", "lib/ai/interpret.ts#L170-L192"],
+        ["Rules fallback", "If AI is busy or unavailable, the local parser takes over and the card says Rules (AI busy).", "lib/ai/interpret.ts#L170-L192"],
         ["Deterministic solver", "Finds qualified cover and valid moves, checks availability, capacity and conflicts, then calculates every booking action and amount.", "lib/solver/replan.ts#L28-L90"],
         ["Why money never depends on the model", "AI cannot approve or execute payments. The owner approves a versioned plan; server validation, the ledger and PayPal determine refunds.", "lib/executor/executePlan.ts#L10-L41"],
-        ["Analyst availability", "Chat explains a Gemini outage in plain language. The dashboard, reports and recovery workflow keep working.", "lib/insights/gemini-adapter.ts#L11-L101"],
+        ["Analyst availability", "Chat explains a provider outage in plain language. The dashboard, reports and recovery workflow keep working.", "lib/insights/gemini-adapter.ts#L11-L101"],
       ]} /></section>
       <section id="webmcp"><h2>WebMCP</h2><p>Page-scoped tools let a compatible browser assistant inspect the schedule, prepare a recovery preview, select a booking or query Studio. Owner approval and payment confirmation remain human actions.</p><Link className="built-flow" href="/agent-ready">Explore the agent-ready flow →</Link><br /><CodeLink source="lib/webmcp/studio.ts#L5-L21" /></section>
     </article>

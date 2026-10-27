@@ -43,6 +43,15 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     };
   });
   return {
+    as_of: new Date().toISOString(),
+    recovery_outcomes: outcomes,
+    covers: plans.flatMap((plan) => plan.sessionChanges.filter((change) => change.remedy === "substitute" && change.after).map((change) => ({
+      plan_id: plan.id, status: plan.status, class: sessions.get(change.sessionId)?.title ?? "Class unavailable",
+      local_day: localParts(change.before.start, state.studio.timezone).dateKey,
+      local_start: localParts(change.before.start, state.studio.timezone).minutesOfDay,
+      original_instructor: state.instructors.find((item) => item.id === change.before.instructorId)?.name ?? "Unknown instructor",
+      covering_instructor: state.instructors.find((item) => item.id === change.after!.instructorId)?.name ?? "Unknown instructor",
+    }))),
     studio: { name: state.studio.name, timezone: state.studio.timezone, currency: state.studio.currency,
       week_start: state.studio.weekStart, week_label: weekBounds(state).label },
     sessions: [...sessions.values()].map((session) => {
@@ -64,6 +73,8 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     bookings: state.bookings.map((booking) => ({
       id: booking.id, session_id: booking.sessionId, customer_id: booking.customerId,
       status: booking.status, amount: dollars(booking.amount),
+      revenue_kept: outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
+        (["confirmed", "moved"].includes(booking.status) ? Math.max(0, toCents(booking.amount) - moneyEvents.filter((event) => event.booking_id === booking.id).reduce((sum, event) => sum + Math.round(event.issued_refund * 100), 0)) / 100 : 0),
       payment_mode: booking.payment?.simulated ? "simulated" : "real",
       capture_id: booking.payment?.captureId ?? "",
     })),
@@ -81,7 +92,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       const refunds = [...latest.values()].filter((event) => event.kind === "refund" && originatingPlan(event)?.id === plan.id);
       const amountFor = (statuses: string[]) => refunds.filter((event) => statuses.includes(event.status)).reduce((sum, event) => sum + toCents(event.amount), 0) / 100;
       return {
-        id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window,
+        id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window, label: `${label.subject}, ${label.window}`,
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
         kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
@@ -94,6 +105,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         affected: plan.totals.kept + plan.totals.moved + plan.totals.refunded,
         applied_affected: recovery.affected,
         applied_saved: recovery.saved,
+        applied_kept: recovery.kept,
+        applied_moved: recovery.moved,
+        applied_refunded: recovery.refunded,
         applied_revenue_kept: recovery.revenueKept,
         created_at: plan.createdAt,
         covers: plan.sessionChanges.filter((change) => change.remedy === "substitute").map((change) => {

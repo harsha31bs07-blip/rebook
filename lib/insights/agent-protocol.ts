@@ -1,6 +1,6 @@
 /** Only local Studio report operations may cross the provider boundary. */
 export const agentTools = {
-  "recovery-analyst": ["get_disruptions", "get_refund_receipts", "view_schema", "execute_query", "view_page", "view_widget", "delegate_to"],
+  "recovery-analyst": ["get_recovery_summary", "get_refund_breakdown", "get_revenue_breakdown", "get_cover_summary", "add_preset_chart", "get_disruptions", "get_refund_receipts", "delegate_to"],
   lead: ["view_schema", "view_report", "view_page", "view_plan", "update_plan", "clear_plan", "rename_thread", "delegate_to", "complete_task"],
   planning: ["view_schema", "view_report", "view_page", "view_plan", "create_plan", "complete_task"],
   data: ["view_schema", "execute_query", "create_expression", "update_expression", "delete_expression", "complete_task"],

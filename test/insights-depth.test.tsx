@@ -131,7 +131,7 @@ describe("C4 Studio depth", () => {
     expect(disruptionHtml).toContain("$47.00 in completed refunds");
   });
 
-  it("registers the built-in specialists and delegates chart placement/configuration and real filters", () => {
+  it("registers specialists for custom edits and direct tools for common questions and charts", () => {
     const tools = Object.fromEntries(["viewSchema", "executeQuery", "viewPage", "viewWidget"].map((name) => [name, () => ({ name })]));
     const setup = buildRecoveryAi("workspace123", buildInsights(seedStudio(), [], []));
     if (typeof setup !== "function") throw new Error("Expected a harness setup function");
@@ -144,6 +144,9 @@ describe("C4 Studio depth", () => {
     expect(analyst.tools!().find((tool) => tool.name === "delegate_to")?.targets).toEqual(recoveryDelegates);
     expect(analyst.instructions!()).toMatch(/first delegate to page.*then delegate to widget/);
     expect(analyst.instructions!()).toContain("apply add_page_filter on sessions.instructor");
+    expect(analyst.instructions!()).toContain("never delegate a common data question");
+    expect(analyst.instructions!()).toContain("Do not delegate presets");
+    expect(analyst.tools!().map((tool) => tool.name)).toEqual(agentTools["recovery-analyst"]);
     for (const id of recoveryDelegates) expect(agentTools[id]).toContain("complete_task");
   });
 

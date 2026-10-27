@@ -1,0 +1,20 @@
+name: Judge smoke
+
+on:
+  workflow_dispatch:
+  # enable on Nov 16
+  # schedule:
+  #   - cron: '17 6 * * *'
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/judge-smoke.mjs

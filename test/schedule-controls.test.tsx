@@ -198,7 +198,7 @@ it("lists changed sessions with Move links in preview and says Recovery complete
   expect(renderToStaticMarkup(createElement(PlanPanel, pending))).toContain("Check refund status</button>");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...pending, busy: true }))).toContain("Checking refund status");
   expect(executed).not.toContain("Check refund status");
-  expect(renderToStaticMarkup(createElement(PlanPanel, { ...pending, plan: { ...pending.plan, status: "partially_failed" } }))).toContain("Retry refunds</button>");
+  expect(renderToStaticMarkup(createElement(PlanPanel, { ...pending, plan: { ...pending.plan, status: "partially_failed" } }))).toContain("Retry</button>");
 });
 
 it("compares an owner's adjustment with the previous version's totals beside Undo", () => {
@@ -223,7 +223,7 @@ it("derives owner work estimates from the current plan and displays API planning
   const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Recovery preview", bullets: [], source: "template" } };
   const props = { details, plan: publicPlan, state, busy: false, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
   const html = renderToStaticMarkup(createElement(PlanPanel, props));
-  expect(html).toContain("Owner time saved");
+  expect(html).toContain("Owner time saved (estimate)");
   expect(html).toContain("Prepared in 2.8 s · replaces about 31 calls or messages and 6 manual refunds");
   const changed = { ...publicPlan, planningDurationMs: undefined, bookingActions: publicPlan.bookingActions.slice(0, 2), totals: { ...publicPlan.totals, refunded: 1 } };
   const adjusted = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: changed }));

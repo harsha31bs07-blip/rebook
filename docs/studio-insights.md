@@ -6,6 +6,8 @@ Edit report opens Studio's layout and widget builder. Rebook's menu contains Rec
 
 Ask Recovery analyst opens Studio chat. “Show refunds by reason as a chart” delegates placement to Studio's built-in Page agent and configuration to its Widget agent. “Filter to Maya's classes” delegates a real page filter. Data and Planning specialists are also available. The proxy forwards Studio's live, narrowed schemas, including `delegate_to` and the `complete_task` tool injected into child runs. Friendly expandable tool cards say “Looked up 1 disruption” and “Read 5 refund receipts”.
 
+Records refresh when the window regains focus or becomes visible; these events share a debounce and cooldown. Refresh in the page header reloads them on demand. A report rendering failure offers Try again.
+
 Report state is stored in `localStorage` under `rebook:studio:<workspace-id>` with application version 3. Older saved layouts fall back to the three-page report. Restore default report resets this workspace's layout. A viewport-height flex shell and `ResizeObserver` fit the default 30-track layouts to the available canvas with explicit page padding. Tables, receipts and heatmap content scroll internally when needed. User-added widgets or larger edited layouts may require canvas scrolling.
 
 ## AG Studio features used
@@ -28,7 +30,7 @@ Report state is stored in `localStorage` under `rebook:studio:<workspace-id>` wi
 | Custom tool components | `defineAiTool`, `ctx.success(response, data)`, `aiToolDisplay` with `label` and React `detail` | Recovery lookups and receipt cards in `components/insights/tool-cards.tsx` |
 | Provider adapter | `AgLlmAdapter.executeTurn`, chunk events, response `stream` / `complete` | `lib/insights/gemini-adapter.ts`; live instructions/schemas, cancellation and Google signature preservation |
 
-Studio 3.0.0 supports CSV on grids/charts and image download on charts. It exposes no built-in PNG action for tables or these custom widgets. The supplied reference folder has no `exporting.md`; support was confirmed in `widget-configuration.md` (Toolbar Actions) and installed source. Explicit toolbar buttons retain the built-in handlers.
+Studio 3.0.0 supports CSV on grids/charts and image download on charts. It exposes no built-in PNG action for tables or these custom widgets. Explicit toolbar buttons retain the built-in handlers.
 
 ## Data semantics
 
@@ -48,16 +50,17 @@ The heatmap queries session-level rows, including session ID, so equal-valued cl
 
 `POST /api/workspaces/[id]/llm` validates workspace and request. Harness turns identify themselves with `X-Rebook-Studio: harness`; the body is capped at 262,144 bytes and accepts only known agents and their local Studio tool names. Live per-widget schemas/instructions sit beneath a server-owned workspace policy. Unknown tools, provider-hosted tools and cross-agent tool rosters are rejected. Older clients retain the narrow server-defined tool contract and 65,536-byte body cap.
 
-The fixed provider URL is Google's OpenAI-compatible Chat Completions endpoint. Non-streaming output is capped at 4,096 tokens, with a 12-second per-model deadline and 25-second overall budget. Failures fall back across configured models and expose a friendly 503. The shared process-local limiter defaults to 10 calls/minute for each client and workspace, 30/minute globally, 1,200/day and 4 concurrent calls; each completion in a delegation loop counts. Larger deployments need shared limit storage. Credentials never reach the browser.
+The fixed provider URL is Google's OpenAI-compatible Chat Completions endpoint. Non-streaming output is capped at 4,096 tokens. The first configured model gets 4 seconds; fallbacks get up to 20 seconds within a 25-second overall request budget. Models returning 429/503 or timing out cool down for 30 seconds across Studio agents. Structured `ai_call` logs contain only model, status and elapsed milliseconds. The shared process-local limiter defaults to 24 attempts/minute for each client and workspace, 30/minute globally, 1,200/day and 4 concurrent calls; each model fallback counts. Larger deployments need shared limit storage. Credentials never reach the browser.
+
+Both chat contracts accept at most 256 KiB of UTF-8 JSON, with readable 413/400 errors above the limit. Delegated turns include live schemas, report state and tool results; the regression fixture measures 50,381 bytes. The browser aborts each call after 45 seconds. Provider failures reject the adapter's stream and completion, and child failures propagate to the owning chat as a terminal error. A 55-second deadline covers the entire run, including parallel delegates, so an outage ends with “The analyst is busy right now — try again in a moment.” Manual cancellation remains cancellation.
 
 The adapter retains Google's complete `extra_content`, including thought signatures, on call items and in a call-ID sidecar. It regroups Studio's interleaved call/result pairs into Chat Completions assistant turns. Chat history is in memory; only report state is persisted.
 
-## Verification and API limits
+## API limits
 
-No dependencies were added and no external requests were made for implementation or tests. Tests mock provider transport. Coverage includes structural report mappings/layouts, heatmap aggregation, empty KPI values, formatters, tool cards, delegation configuration, child completion-tool acceptance and adapter schema forwarding, alongside workspace/ledger/proxy tests.
+The custom `formatShape` uses the public `defineAiCommand(...).shape` bridge because Studio exports no standalone shape-builder constructor. Studio 3.0.0's `overrides` generic resolves to `never` for a registry with custom widget types, so export buttons use the returned widget definitions' public `toolbar` property and retain the built-in action handlers.
 
-APIs were checked against supplied offline 3.0.0 guides and installed declarations/source. The custom `formatShape` uses the public `defineAiCommand(...).shape` bridge because Studio exports no standalone shape-builder constructor. This is the least conventional integration point. Browser checks of forms, exports, cross-filter repaint and the 1526×674 / 1280×720 layouts, plus live Gemini chart/filter delegation, remain necessary if this environment cannot run the application. Automated layout-bound checks do not substitute for visual QA.
+## Verified (2026-10-27)
 
-The 3.0.0 `overrides` generic resolves to `never` when a registry contains custom widget types. Export buttons therefore use the public returned widget definitions' `toolbar` property, retaining the built-in action handlers. Public icon names are `csv` and `download`; internal names such as `widgetToolbarExport` are not accepted by that property.
-
-C4 verification: `npx vitest run --pool=threads --maxWorkers=2` initially passed 222/223 tests; an existing workspace-creation API test exceeded its 5-second timeout. Repeating with `--testTimeout=15000` passed all 224 tests (including the subsequently added widget/export configuration test). `npx tsc --noEmit`, `npx eslint` and `git diff --check` passed. The single `npx next build` attempt, with a 1,536 MB Node heap cap, two Rust threads and telemetry disabled, compiled successfully in 45 seconds, then failed starting the TypeScript worker with `spawn EPERM`. There was no second build attempt. Visual/browser, actual file-download and live Gemini verification remain outstanding; the task prohibited external network calls.
+- Offline tests cover report mappings/layout bounds, heatmap aggregation, formatting, tool cards, delegation configuration and provider schema forwarding.
+- Offline refresh tests cover focus/visibility debounce, one request at a time, manual refresh, cleanup, expiry and recoverable errors. The report has a retry boundary; a failed data refresh retains the last loaded records.

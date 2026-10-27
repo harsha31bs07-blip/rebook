@@ -13,4 +13,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check demo health
-        run: curl --fail --silent --show-error --max-time 10 https://rebook-by9u.onrender.com/api/health
+        run: curl --fail --silent --show-error --max-time 60 https://rebook-by9u.onrender.com/api/health

@@ -238,4 +238,9 @@ it("renders every built-with section with feature tables and live-flow links", a
   for (const section of ["paypal", "bryntum", "ag-studio", "ai", "webmcp"]) expect(html).toContain(`id="${section}"`);
   for (const href of ["/w/workspace1/book", "/w/workspace1", "/w/workspace1/dashboard#recovery-analyst", "/agent-ready"]) expect(html).toContain(`href="${href}"`);
   expect(html.match(/<table>/g)).toHaveLength(4);
+  const rows = [...html.matchAll(/<tr>(.*?)<\/tr>/g)].map((match) => match[1]).filter((row) => !row.includes('scope="col"'));
+  for (const row of rows) {
+    expect(row).toMatch(/href="https:\/\/github.com\/harsha31bs07-blip\/rebook\/blob\/main\/[^"#]+#L\d+-L\d+" target="_blank" rel="noreferrer"/);
+    expect(row).toMatch(/View code: [^<]+\.(tsx|ts)/);
+  }
 });

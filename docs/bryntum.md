@@ -22,4 +22,7 @@ The owner reviews the original schedule as ghosts alongside highlighted recovery
 
 `POST /api/workspaces/[id]/plans/[planId]/adjust` takes `{ sessionId, start, instructorId?, roomId?, version }`, or `{ undo: true, version }`. Versions begin at 1 (omission is accepted only as version 1 for existing clients). The server holds the workspace lock while comparing the version, deriving actions and totals, and validating the whole schedule. Invalid placements return 422 with a reason; stale versions return 409. Approval sends the displayed version and compares it under the same lock before applying the persisted adjusted plan and starting refunds. Adjusting a preview never changes the live schedule or starts refunds.
 
-The local unit tests cover route adjustment, preferences, capacity, constraints, undo, stale versions and approval, mapping and the pre-check, plus the boundary's fallback render. Browser verification of drag geometry, trial behavior and keyboard focus remains part of integration review.
+## Verified (2026-10-27)
+
+- Offline tests cover adjustment preferences, capacity, constraints, undo, stale versions and approval; mapping and drag pre-checks; keyboard Move controls and the fallback render.
+- The Monday scenario remains 9 kept / 16 moved / 6 refunded, with $577.00 kept and $135.00 refunds.

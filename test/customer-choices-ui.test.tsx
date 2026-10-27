@@ -103,6 +103,8 @@ it("includes demo customer links and copy controls in approved messages", () => 
   const html = renderToStaticMarkup(MessagesDrawer({ messages: [{ bookingId: "booking", customerId: "customer", subject: "Your class", body: "Use your link below." }],
     links: [{ bookingId: "booking", planId: "plan", kind: "choice", path: "/c/private-token", expiresAt: Date.now() + 60_000 }], onClose: () => {} }));
   expect(html).toContain("Open as customer"); expect(html).toContain("Copy link"); expect(html).toContain("/c/private-token");
+  expect(html).toContain("Share each private link with its customer.");
+  expect(html).toContain("The demo does not send email or SMS.");
 });
 
 it("labels receipt and choice cards and lists kept/moved choice links first", () => {

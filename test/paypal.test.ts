@@ -115,14 +115,24 @@ describe("PayPal client", () => {
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ payment_source: { paypal: { experience_context: { user_action: "PAY_NOW", return_url: "https://example.com/return" } } } });
   });
 
-  it("refuses unknown environments and live demo cards", async () => {
+  it.each(["production", "live", "", "SANDBOX"])("refuses %s for every payment path before transport", async (environment) => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch); setSdkTransport(fetch);
-    vi.stubEnv("PAYPAL_ENV", "production");
-    await expect(getCapture("capture")).rejects.toThrow("sandbox or live");
-    vi.stubEnv("PAYPAL_ENV", "live");
+    vi.stubEnv("PAYPAL_ENV", environment);
+    await expect(getCapture("capture")).rejects.toThrow("PAYPAL_ENV must be sandbox");
+    await expect(refundCapture("capture", "18.00", "Refund", "key")).rejects.toThrow("PAYPAL_ENV must be sandbox");
+    await expect(createCheckoutOrder("18.00", { workspaceId: "w", bookingId: "b" }, "https://example.com", "https://example.com")).rejects.toThrow("PAYPAL_ENV must be sandbox");
     await expect(createCardCapture("18.00", { workspaceId: "w", bookingId: "b" })).rejects.toThrow("sandbox");
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("defaults an unset environment to sandbox", async () => {
+    vi.stubEnv("PAYPAL_ENV", undefined);
+    const fetch = vi.fn().mockResolvedValueOnce(reply({ access_token: "token", token_type: "Bearer", expires_in: 3600 }))
+      .mockResolvedValueOnce(reply({ id: "capture", status: "COMPLETED" }));
+    setSdkTransport(fetch);
+    expect(await getCapture("capture")).toMatchObject({ id: "capture" });
+    expect(fetch.mock.calls.every(([url]) => new URL(String(url)).hostname === "api-m.sandbox.paypal.com")).toBe(true);
   });
 
   it("does not send verification when required signature headers are missing", async () => {

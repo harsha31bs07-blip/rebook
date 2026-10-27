@@ -82,6 +82,12 @@ async function load() {
   (find(tree, (element) => element.type === "sdk-script").props.onReady as () => void)();
   await settle();
 }
+
+it("loads only the sandbox JS SDK even if a caller supplies a non-sandbox presentation flag", () => {
+  props = { ...props, sandbox: false };
+  render();
+  expect(find(tree, (element) => element.type === "sdk-script").props.src).toBe("https://www.sandbox.paypal.com/web-sdk/v6/core");
+});
 function clickPay() {
   (find(tree, (element) => element.type === "button" && element.props.className === "primary full-width").props.onClick as () => void)();
 }

@@ -30,7 +30,7 @@ function sdk(): Client {
     let pending: Promise<OAuthToken> | undefined;
     const authFailure: { error?: unknown } = {};
     const client = new Client({
-      environment: settings.baseUrl.includes("sandbox") ? Environment.Sandbox : Environment.Production,
+      environment: Environment.Sandbox,
       timeout: 20_000,
       clientCredentialsAuthCredentials: {
         oAuthClientId: settings.clientId, oAuthClientSecret: settings.secret, oAuthClockSkew: 60,
@@ -107,17 +107,18 @@ function orderResult(response: ApiResponse<Order>): PayPalOrder {
 }
 
 function config(): Config {
-  const environment = process.env.PAYPAL_ENV || "sandbox";
-  if (environment !== "sandbox" && environment !== "live") throw new Error("PAYPAL_ENV must be sandbox or live");
+  const environment = process.env.PAYPAL_ENV ?? "sandbox";
+  if (environment !== "sandbox") throw new Error("PAYPAL_ENV must be sandbox; this demo cannot use live PayPal");
   const clientId = process.env.PAYPAL_CLIENT_ID;
   const secret = process.env.PAYPAL_CLIENT_SECRET;
   if (!clientId || !secret) throw new Error("PayPal credentials are not configured");
-  const baseUrl = environment === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
+  const baseUrl = "https://api-m.sandbox.paypal.com";
   return { baseUrl, clientId, secret, key: `${baseUrl}:${clientId}:${secret}` };
 }
 
 async function send(url: string, init: RequestInit): Promise<Response> {
-  // Three attempts total. Every retry reuses the exact request body and idempotency key.
+  // The fetch-only webhook verification endpoint and its OAuth exchange need their own
+  // retry policy. Three attempts total reuse the exact request body and idempotency key.
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(20_000) });
     if ((response.status !== 429 && response.status < 500) || attempt === 2) return response;
@@ -185,7 +186,7 @@ const purchaseUnits = (amount: string, refs: PaymentRefs) => [{
 
 export async function createCardCapture(amount: string, refs: PaymentRefs): Promise<{ orderId: string; captureId: string; status: string; debugId?: string }> {
   // These test card details must never be sent to a live account.
-  if ((process.env.PAYPAL_ENV || "sandbox") !== "sandbox") throw new Error("Demo card captures require PayPal sandbox");
+  config();
   const order = orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
     paypalRequestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`, prefer: "return=representation",
     body: { intent: CheckoutPaymentIntent.Capture, purchaseUnits: purchaseUnits(amount, refs), paymentSource: { card: {

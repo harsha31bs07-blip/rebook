@@ -15,12 +15,13 @@ function body(response: ApiResponse<CapturedPayment | Refund>): Record<string, u
 
 /** Read-only SDK reconciliation, isolated from the refund writer and its retry policy. */
 export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> {
-  const environment = process.env.PAYPAL_ENV || "sandbox";
+  const environment = process.env.PAYPAL_ENV ?? "sandbox";
+  if (environment !== "sandbox") throw new Error("PAYPAL_ENV must be sandbox; this demo cannot use live PayPal");
   const clientId = process.env.PAYPAL_CLIENT_ID, secret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!["sandbox", "live"].includes(environment) || !clientId || !secret) return { kind: "unknown" };
+  if (!clientId || !secret) return { kind: "unknown" };
   // A short-lived read client also avoids retaining a rejected SDK OAuth promise across retries.
   const controller = new PaymentsController(new Client({
-    environment: environment === "live" ? Environment.Production : Environment.Sandbox, timeout: 20_000,
+    environment: Environment.Sandbox, timeout: 20_000,
     clientCredentialsAuthCredentials: { oAuthClientId: clientId, oAuthClientSecret: secret },
     httpClientOptions: { retryConfig: { maxNumberOfRetries: 0, retryOnTimeout: false } },
   }));

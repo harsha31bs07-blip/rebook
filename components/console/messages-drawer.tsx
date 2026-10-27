@@ -15,7 +15,7 @@ export default function MessagesDrawer({ messages, links = [], onClose }: { mess
   }, []);
   return <dialog ref={dialog} className="messages-drawer" aria-labelledby="messages-title" onCancel={onClose}>
     <div className="drawer-header"><div><p className="eyebrow">Customer care</p><h2 id="messages-title">{links.length ? "Customer messages" : "Message drafts"}</h2></div><button autoFocus onClick={onClose} aria-label="Close customer messages">Close</button></div>
-    <p className="muted">{links.length ? "Private links are ready to share. Open as customer to try the reply flow." : `${messages.length} drafts ready to review. Approve the recovery to create private customer links.`}</p>
+    <p className="muted">{links.length ? "Share each private link with its customer. The demo does not send email or SMS. Open as customer to try the reply flow." : `${messages.length} drafts ready to review. Approve the recovery to create private customer links for you to share; the demo does not send email or SMS.`}</p>
     {notice && <p role="status">{notice}</p>}
     {messages.length === 0 && <p>No affected bookings need a message.</p>}
     {messages.toSorted((a, b) => Number(links.find((link) => link.bookingId === b.bookingId)?.kind === "choice") - Number(links.find((link) => link.bookingId === a.bookingId)?.kind === "choice")).map((message) => {

@@ -7,5 +7,5 @@ export default async function CustomerBookingPage({ params }: { params: Promise<
   await connection();
   const { id } = await params;
   if (!getRepository().getWorkspace(id)) return <ExpiredDemo />;
-  return <BookingPage id={id} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} sandbox={(process.env.PAYPAL_ENV || "sandbox") === "sandbox"} />;
+  return <BookingPage id={id} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} sandbox />;
 }

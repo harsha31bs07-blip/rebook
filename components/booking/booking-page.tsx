@@ -157,7 +157,7 @@ export function Payments({ id, session, customer, validate, clientId, sandbox, o
     finally { inFlight.current = false; setBusy(false); }
   }
   return <div ref={root} className="payment-methods" aria-busy={busy}>
-    {clientId ? <Script async src={`https://www.${sandbox ? "sandbox." : ""}paypal.com/web-sdk/v6/core`} strategy="afterInteractive" onReady={() => setLoaded(true)} onError={() => setError("PayPal could not load. Refresh this page to try again.")} /> : <p className="error">PayPal checkout is not configured for this studio.</p>}
+    {clientId ? <Script async src="https://www.sandbox.paypal.com/web-sdk/v6/core" strategy="afterInteractive" onReady={() => setLoaded(true)} onError={() => setError("PayPal could not load. Refresh this page to try again.")} /> : <p className="error">PayPal checkout is not configured for this studio.</p>}
     <h3>Pay with</h3>
     <div className="wallet-buttons" inert={busy || retryCapture} />
     {!ready && clientId && !error && <p role="status" className="muted">Checking available payment methods…</p>}

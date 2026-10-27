@@ -7,12 +7,14 @@ import { PlanSchema, StateSchema } from "../domain/schemas";
 import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "../domain/time";
 import { nextWeekStart } from "../seed/seed";
 import { activateConstraint, activeConstraints, preserveConstraints } from "../solver/constraints";
+import type { CoverConfirmation } from "../recovery/covers";
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
   id: string; workspaceId: string; status: "proposed" | "executing" | "executed" | "partially_failed";
   createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
   lastAdjustmentTotals?: Plan["totals"];
+  coverConfirmations?: CoverConfirmation[];
 };
 export type Workspace = {
   id: string; state: State; createdAt: string; updatedAt: string;
@@ -33,6 +35,10 @@ export type CustomerLink = {
   sentAt?: string;
   reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
+/** Choice deadlines do not erase the customer's lasting outcome or refund receipt. */
+export function customerLinkReadableUntil(link: CustomerLink): number {
+  return Date.parse(link.createdAt) + 30 * 86_400_000;
+}
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
 export type CheckoutReservation = {
@@ -370,7 +376,7 @@ export class Repository {
         .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
       for (const { id } of candidates) {
         // A private recovery link must remain usable for its advertised lifetime.
-        if (this.listCustomerLinks(id).some((link) => link.expiresAt > Date.now())) continue;
+        if (this.listCustomerLinks(id).some((link) => customerLinkReadableUntil(link) > Date.now())) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
         if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;

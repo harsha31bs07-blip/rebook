@@ -399,6 +399,13 @@ textarea { resize: vertical; min-height: 120px; }
 .move-to-popover { position: fixed; inset: 0; margin: auto; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; padding: 24px; color: var(--foreground); background: white; }
 .move-to-popover h2 { font-size: 20px; }
 .move-to-popover::backdrop { background: #0f172a66; }
+.approval-dialog { position: fixed; inset: 0; margin: auto; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; padding: 24px; color: var(--foreground); background: white; }
+.approval-dialog::backdrop { background: #0f172a66; }
+.approval-dialog h2 { font-size: 20px; }
+.approval-dialog .button-row { flex-wrap: wrap; margin-top: 16px; }
+.cover-confirmations { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 16px 0; }
+.cover-confirmations label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.cover-confirmations input { width: 18px; height: 18px; flex-shrink: 0; }
 .move-to-popover fieldset { border: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
 .move-to-popover label { display: flex; flex-direction: column; gap: 4px; }
 .move-to-popover select { min-width: 0; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: white; color: #0f172a; }

@@ -98,7 +98,7 @@ const receipt = { orderId: "ORDER-1", captureId: "CAPTURE-1", status: "confirmed
 beforeEach(() => {
   hooks.cursor = 0; hooks.slots = []; hooks.pending = []; hooks.cleanups.clear();
   props = {
-    id: "studio", session: { id: "class-1", classType: "pilates", title: "Pilates Flow", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", instructorId: "teacher", roomId: "room", capacity: 10, price: "18.00", seatsLeft: 1, instructor: "Teacher", room: "Studio" },
+    id: "studio", session: { id: "class-1", classType: "pilates", title: "Pilates Flow", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", instructorId: "teacher", roomId: "room", capacity: 10, price: "18.00", seatsLeft: 1, bookingPaused: false, instructor: "Teacher", room: "Studio" },
     customer: { name: "Jamie", email: "jamie@example.com" }, validate: () => true,
     clientId: "sandbox-client", sandbox: true, onSuccess: vi.fn(), onLockChange: vi.fn(),
   };
@@ -128,7 +128,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   hooks.cleanups.forEach((cleanup) => cleanup?.());
-  vi.unstubAllGlobals(); vi.restoreAllMocks();
+  vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers();
 });
 
 describe("card checkout lifecycle", () => {
@@ -248,4 +248,25 @@ it("renders singular seats and HIIT titles in the booking catalog", async () => 
   const text = elements(tree).flatMap((element) => typeof element.props.children === "string" ? [element.props.children] : []);
   expect(text).toContain("HIIT Flow");
   expect(text).toContain("1 seat left");
+});
+
+it("shows paused classes disabled, then allows selection when a refreshed catalog resumes bookings", async () => {
+  vi.useFakeTimers();
+  let bookingPaused = true;
+  fetchMock.mockImplementation(async () => Response.json({ studio: { name: "Studio", timezone: "UTC" }, sessions: [{ ...props.session, bookingPaused }] }));
+  const renderPage = () => {
+    hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true });
+    hooks.pending.splice(0).forEach((effect) => effect());
+  };
+  const flush = async () => { for (let index = 0; index < 10; index++) { await Promise.resolve(); renderPage(); } };
+  const classButton = () => find(tree, (element) => element.type === "button" && String(element.props.className).startsWith("bookable-class"));
+  renderPage(); await flush();
+  expect(classButton().props.disabled).toBe(true);
+  expect(elements(tree).some((element) => element.props.children === "Schedule change in progress — booking paused")).toBe(true);
+  expect(() => (classButton().props.onClick as () => void)()).toThrow("Checkout is unavailable");
+  bookingPaused = false;
+  await vi.advanceTimersByTimeAsync(15_000); await flush();
+  expect(classButton().props.disabled).toBe(false);
+  (classButton().props.onClick as () => void)(); renderPage();
+  expect(elements(tree).some((element) => element.type === Payments)).toBe(true);
 });

@@ -40,6 +40,35 @@ function post(body: unknown = {}, ip = randomUUID()) {
 }
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 describe("workspace API", () => {
+  it("approves unconfirmed covers and persists only the owner's matching cover attestations", async () => {
+    const repository = getRepository();
+    const state = seedStudio();
+    state.bookings.forEach((booking) => { booking.payment!.simulated = true; });
+    const createPlan = () => {
+      const { id } = repository.createWorkspace(state);
+      for (const booking of state.bookings) repository.appendLedger({ workspaceId: id, bookingId: booking.id, kind: "capture", amount: booking.amount,
+        paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId, requestId: booking.id, status: "SIMULATED" });
+      const plan = repository.createPlan(id, replan(state, demoDisruption));
+      return { id, plan, params: { params: Promise.resolve({ id, planId: plan.id }) } };
+    };
+    const unconfirmed = createPlan();
+    const response = await approve(post(), unconfirmed.params);
+    expect(response.status).toBe(200);
+    expect((await response.json()).plan.coverConfirmations).toEqual([]);
+    const confirmed = createPlan();
+    const cover = confirmed.plan.sessionChanges.find((change) => change.after && change.after.instructorId !== change.before.instructorId)!;
+    expect((await approve(post({ confirmedCoverSessionIds: ["unknown-class"] }), confirmed.params)).status).toBe(400);
+    expect(repository.getPlan(confirmed.id, confirmed.plan.id)?.status).toBe("proposed");
+    const approved = await approve(post({ version: 1, confirmedCoverSessionIds: [cover.sessionId] }), confirmed.params);
+    expect(approved.status).toBe(200);
+    const confirmations = [{ sessionId: cover.sessionId, instructorId: cover.after!.instructorId, confirmedBy: "Workspace owner", confirmedAt: new Date().toISOString() }];
+    expect((await approved.json()).plan.coverConfirmations).toEqual(confirmations);
+    expect(repository.getPlan(confirmed.id, confirmed.plan.id)?.coverConfirmations).toEqual(confirmations);
+    const history = await (await read(new Request("http://localhost"), context(confirmed.id))).json();
+    expect(history.plans[0].coverConfirmations).toEqual(confirmations);
+    expect((await approve(post(), confirmed.params)).status).toBe(200);
+    expect(repository.getPlan(confirmed.id, confirmed.plan.id)?.coverConfirmations).toEqual(confirmations);
+  });
   it("projects webhook settlement into GET plan and workspace results", async () => {
     const repository = getRepository();
     const workspace = repository.createWorkspace(seedStudio());

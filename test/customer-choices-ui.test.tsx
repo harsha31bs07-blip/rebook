@@ -52,7 +52,7 @@ beforeEach(() => {
   focusHeading = vi.fn();
   const session = { id: "current", classType: "yoga" as const, title: "Yoga Flow", start: "2026-11-10T15:00:00Z", end: "2026-11-10T16:00:00Z", instructorId: "teacher", roomId: "room", instructor: "Alex Rivera", price: "22.00", capacity: 10 };
   data = { studio: { name: "Northstar", timezone: "America/New_York" }, before: { ...session, start: "2026-11-09T15:00:00Z", instructor: "Maya Chen" }, after: session,
-    message: { subject: "Your class changed", body: "Hi Avery,\n\nA new time for your class." }, kind: "choice", canChoose: true, expiresAt: Date.now() + 60_000,
+    message: { subject: "Your class changed", body: "Hi Avery,\n\nA new time for your class." }, kind: "choice", canChoose: true, choicesClosed: false, expiresAt: Date.now() + 60_000,
     simulated: false, refundable: "22.00", receipt: undefined, reply: undefined,
     alternatives: [{ ...session, id: "other", title: "Gentle Yoga", seatsLeft: 1, difference: "4.00", price: "18.00" }] };
   send = vi.fn(async () => Response.json(data)); vi.stubGlobal("fetch", send);
@@ -108,6 +108,22 @@ it("labels simulation and gives receipt-only customers no choice controls", asyn
   data = { ...data, simulated: true, kind: "receipt", canChoose: false, receipt: { amount: "22.00", status: "SIMULATED", paypalId: "SIM-REFUND", error: undefined } };
   render(); await settle(); const html = renderToStaticMarkup(tree);
   expect(html).toContain("Simulated payment"); expect(html).toContain("Your refund receipt"); expect(html).not.toContain("Keep my new time");
+});
+
+it("shows a lasting outcome after class start and suppresses choice controls", async () => {
+  data = { ...data, canChoose: false, choicesClosed: true, expiresAt: Date.now() - 60_000, reply: { action: "keep", at: new Date().toISOString() }, alternatives: [] };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("You’re all set."); expect(html).toContain("Your new time is confirmed.");
+  expect(html).not.toContain("Keep my new time"); expect(html).not.toContain("Refund me");
+});
+
+it("keeps the class update readable with a clear closed-choice message after the deadline", async () => {
+  data = { ...data, canChoose: false, choicesClosed: true, expiresAt: Date.now() - 60_000, alternatives: [] };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Choices are closed. Your class update remains available here.");
+  expect(html).toContain("Yoga Flow"); expect(html).not.toContain("Refund me");
 });
 
 it("removes stale choice controls when polling discovers an expired link", async () => {

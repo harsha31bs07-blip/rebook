@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bookingCatalog, cancelCheckout, captureCheckout, CheckoutInputSchema, confirmOrder, createOrder, receipt, seatsLeft } from "../lib/checkout/service";
 import { Repository, closeRepository, getRepository } from "../lib/store";
 import { limits } from "../lib/api/limits";
-import { seedStudio } from "../lib/seed/seed";
+import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { executePlan } from "../lib/executor/executePlan";
 import { replan } from "../lib/solver/replan";
 import { processWebhook } from "../lib/paypal/webhook";
@@ -76,6 +76,59 @@ afterEach(() => {
 });
 
 describe("customer checkout", () => {
+  it("pauses affected sessions in the catalog and order API until discard or approval", async () => {
+    const ctx = () => ({ params: Promise.resolve({ id: workspaceId }) });
+    const post = (value: unknown) => new Request(`http://localhost/api/workspaces/${workspaceId}/checkout/orders`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() }, body: JSON.stringify(value) });
+    const { state } = repository.requireWorkspace(workspaceId);
+    const plan = repository.createPlan(workspaceId, replan(state, demoDisruption));
+    const affected = plan.sessionChanges.map((change) => change.sessionId);
+    expect(bookingCatalog(workspaceId, repository).sessions.filter((session) => session.bookingPaused).map((session) => session.id).sort()).toEqual(affected.sort());
+    sessionId = affected[0];
+    const response = await postOrder(post(input()), ctx());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "Schedule change in progress — booking paused", code: "BOOKING_PAUSED" });
+    expect(orders.size).toBe(0); expect(repository.listCheckout(workspaceId)).toHaveLength(0);
+    repository.discardPlan(workspaceId, plan.id);
+    expect(bookingCatalog(workspaceId, repository).sessions.some((session) => session.bookingPaused)).toBe(false);
+    expect((await postOrder(post(input()), ctx())).status).toBe(200);
+    const next = repository.createPlan(workspaceId, replan(state, demoDisruption));
+    await executePlan(workspaceId, next.id, repository);
+    const catalog = bookingCatalog(workspaceId, repository);
+    for (const change of next.sessionChanges) {
+      const session = catalog.sessions.find((item) => item.id === change.sessionId);
+      if (change.after) {
+        expect(session).toMatchObject({ ...change.after, bookingPaused: false });
+        sessionId = change.sessionId;
+        expect((await postOrder(post(input()), ctx())).status).toBe(200);
+      } else {
+        expect(session).toBeUndefined();
+        sessionId = change.sessionId;
+        expect((await postOrder(post(input()), ctx())).status).toBe(409);
+      }
+    }
+  });
+  it("keeps cancelled classes unavailable after approval", async () => {
+    const { state } = repository.requireWorkspace(workspaceId);
+    state.sessions = state.sessions.slice(0, 1); repository.saveState(workspaceId, state);
+    const plan = repository.createPlan(workspaceId, replan(state, { kind: "closure", from: "2026-11-09T05:00:00Z", to: "2026-11-16T05:00:00Z" }));
+    expect(bookingCatalog(workspaceId, repository).sessions[0].bookingPaused).toBe(true);
+    expect(plan.sessionChanges[0].remedy).toBe("cancel");
+    await executePlan(workspaceId, plan.id, repository);
+    expect(bookingCatalog(workspaceId, repository).sessions).toEqual([]);
+    await expect(createOrder(workspaceId, input(), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
+  });
+  it("blocks an existing pending capture while a proposal is open and resumes after discard", async () => {
+    const { state } = repository.requireWorkspace(workspaceId);
+    if (demoDisruption.kind !== "instructor_unavailable") throw new Error("Expected the instructor disruption fixture");
+    const instructorId = demoDisruption.instructorId;
+    sessionId = state.sessions.find((session) => session.instructorId === instructorId && session.start >= demoDisruption.from && session.start < demoDisruption.to)!.id;
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    const plan = repository.createPlan(workspaceId, replan(state, demoDisruption));
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ status: 409, code: "BOOKING_PAUSED" });
+    expect(orders.get(orderId)?.status).toBe("CREATED");
+    repository.discardPlan(workspaceId, plan.id);
+    expect((await captureCheckout(workspaceId, orderId, repository)).status).toBe("confirmed");
+  });
   it("uses the server price, durable reference IDs and description; replays order creation", async () => {
     const key = randomUUID();
     const first = await createOrder(workspaceId, input(), key, repository);

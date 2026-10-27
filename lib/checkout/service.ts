@@ -12,8 +12,13 @@ export const CheckoutInputSchema = z.strictObject({
   customer: z.strictObject({ name: z.string().trim().min(1).max(100), email: z.string().trim().pipe(z.email().max(254)) }),
 });
 export type CheckoutInput = z.infer<typeof CheckoutInputSchema>;
-export function sessionAvailable(state: State, session: Session): boolean {
-  return Date.parse(session.start) > Date.now() && !activeConstraints(state).some((constraint) =>
+export const BOOKING_PAUSED_MESSAGE = "Schedule change in progress — booking paused";
+export function pausedSessionIds(workspaceId: string, repository = getRepository()): Set<string> {
+  return new Set(repository.listPlans(workspaceId).filter((plan) => plan.status === "proposed")
+    .flatMap((plan) => plan.sessionChanges.map((change) => change.sessionId)));
+}
+export function sessionAvailable(state: State, session: Session, paused: ReadonlySet<string> = new Set()): boolean {
+  return !paused.has(session.id) && Date.parse(session.start) > Date.now() && !activeConstraints(state).some((constraint) =>
     overlaps(session.start, session.end, constraint.from, constraint.to) && (constraint.kind === "closure" ||
       (constraint.kind === "instructor_unavailable" ? constraint.instructorId === session.instructorId : constraint.roomId === session.roomId)));
 }
@@ -25,8 +30,9 @@ export function seatsLeft(state: State, session: Session, reservations: Checkout
 export function bookingCatalog(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireReadyWorkspace(workspaceId);
   const reservations = repository.listCheckout(workspaceId);
+  const paused = pausedSessionIds(workspaceId, repository);
   return { studio: state.studio, sessions: state.sessions.filter((session) => sessionAvailable(state, session)).sort((a, b) => a.start.localeCompare(b.start)).map((session) => ({
-    ...session, seatsLeft: seatsLeft(state, session, reservations),
+    ...session, bookingPaused: paused.has(session.id), seatsLeft: seatsLeft(state, session, reservations),
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team",
     room: state.rooms.find((item) => item.id === session.roomId)?.name ?? "Studio",
   })) };
@@ -39,6 +45,7 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
     if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer))) throw new StoreError(409, "This checkout key belongs to another booking");
     if (row?.status === "failed" || (row?.status === "pending" && row.expiresAt <= Date.now())) throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
     if (row?.orderId) return { orderId: row.orderId };
+    if (pausedSessionIds(workspaceId, repository).has(input.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
     if (!row) {
       const unresolved = repository.listCheckout(workspaceId).find((item) => item.status === "capturing" &&
         item.sessionId === input.sessionId && item.customer.email.toLowerCase() === input.customer.email.toLowerCase());
@@ -157,6 +164,7 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
     }
     const { state } = repository.requireReadyWorkspace(workspaceId);
     const session = state.sessions.find((item) => item.id === row!.sessionId);
+    if (row.status === "pending" && pausedSessionIds(workspaceId, repository).has(row.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
     if (!session || !sessionAvailable(state, session) || session.start !== row.session.start || session.end !== row.session.end
       || session.roomId !== row.session.roomId || session.instructorId !== row.session.instructorId
       || !seatsLeft(state, session, repository.listCheckout(workspaceId), row.id)) {

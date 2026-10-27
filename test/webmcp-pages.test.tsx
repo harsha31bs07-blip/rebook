@@ -104,7 +104,7 @@ describe("WebMCP page handlers and human payment boundary", () => {
     expect(harness.api.approve).not.toHaveBeenCalled();
     (find(tree, (element) => element.type === "plan-panel").props.onApprove as () => void)();
     for (let index = 0; index < 8; index++) await Promise.resolve();
-    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 1);
+    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 1, []);
   });
 
   it("keeps the adjusted version through an older workspace poll and approves that version", async () => {
@@ -120,7 +120,7 @@ describe("WebMCP page handlers and human payment boundary", () => {
     harness.api.approve.mockResolvedValue({ plan: { ...adjusted, status: "executed" }, results: [] });
     (find(tree, (element) => element.type === "plan-panel").props.onApprove as () => void)();
     for (let index = 0; index < 8; index++) await Promise.resolve();
-    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 2);
+    expect(harness.api.approve).toHaveBeenCalledExactlyOnceWith("workspace", "plan-1", 2, []);
   });
 
   it("shows an honest PayPal outage banner and retries the same approval route", async () => {
@@ -136,7 +136,7 @@ describe("WebMCP page handlers and human payment boundary", () => {
     harness.api.approve.mockResolvedValueOnce({ plan: { ...details.plan, status: "executed" }, results: [] });
     (retry.props.onClick as () => void)();
     for (let index = 0; index < 8; index++) await Promise.resolve();
-    expect(harness.api.approve.mock.calls).toEqual([["workspace", "plan-1", 1], ["workspace", "plan-1", 1]]);
+    expect(harness.api.approve.mock.calls).toEqual([["workspace", "plan-1", 1, []], ["workspace", "plan-1", 1, []]]);
     expect(harness.api.plan).not.toHaveBeenCalled();
   });
 

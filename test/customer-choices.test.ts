@@ -100,17 +100,51 @@ describe("private customer links", () => {
     const { token, links } = fixture();
     expect(links[0].expiresAt).toBe(Date.parse("2026-11-09T14:00:00Z"));
     vi.setSystemTime(links[0].expiresAt);
+    expect((await customerChoice(token, repository)).canChoose).toBe(false);
     await expect(submitChoice(token, { action: "keep" }, repository)).rejects.toMatchObject({ status: 410 });
     vi.setSystemTime(new Date("2026-11-01T00:00:00Z"));
     const second = fixture();
     expect(second.links[0].expiresAt).toBe(Date.now() + 7 * 86_400_000);
   });
-  it("retains a workspace until its private links expire", () => {
+  it("retains a workspace for the private links' 30-day readable lifetime", () => {
     const { workspaceId } = fixture();
     vi.setSystemTime(Date.now() + 25 * 3_600_000); repository.pruneOlderThan();
     expect(repository.getWorkspace(workspaceId)).toBeDefined();
     vi.setSystemTime(new Date("2026-11-10T15:00:00Z")); repository.pruneOlderThan();
+    expect(repository.getWorkspace(workspaceId)).toBeDefined();
+    vi.setSystemTime(new Date("2026-12-05T12:00:00Z")); repository.pruneOlderThan();
     expect(repository.getWorkspace(workspaceId)).toBeUndefined();
+  });
+  it("keeps refund receipts and choice outcomes readable after class start, with choices closed", async () => {
+    const { token, otherToken, links } = fixture();
+    await submitChoice(token, { action: "keep" }, repository);
+    const refunded = await submitChoice(otherToken, { action: "refund" }, repository);
+    const receiptToken = repository.customerToken(links.find((link) => link.kind === "receipt")!);
+    const originalReceipt = await customerChoice(receiptToken, repository);
+    vi.setSystemTime(new Date("2026-11-10T15:00:00Z"));
+    closeRepository(); repository = getRepository();
+    const get = async (value: string) => GET(new Request("http://localhost"), { params: Promise.resolve({ token: value }) });
+    const kept = await get(token); expect(kept.status).toBe(200);
+    expect(await kept.json()).toMatchObject({ canChoose: false, reply: { action: "keep" }, alternatives: [] });
+    const paid = await get(otherToken); expect(paid.status).toBe(200);
+    expect((await paid.json()).receipt).toEqual(refunded.receipt);
+    expect((await customerChoice(receiptToken, repository)).receipt).toEqual(originalReceipt.receipt);
+    await expect(submitChoice(token, { action: "refund" }, repository)).rejects.toMatchObject({ status: 410 });
+    vi.setSystemTime(new Date("2026-12-05T11:59:59Z"));
+    expect((await get(receiptToken)).status).toBe(200);
+    vi.setSystemTime(new Date("2026-12-05T12:00:00Z"));
+    expect((await get(receiptToken)).status).toBe(410);
+  });
+  it("does not offer a class awaiting recovery approval as an alternative booking", async () => {
+    const { token, workspaceId } = fixture();
+    const state = repository.requireWorkspace(workspaceId).state;
+    const target = state.sessions.find((session) => session.id === "alternative")!;
+    const plan = repository.createPlan(workspaceId, { ...repository.listPlans(workspaceId)[0],
+      sessionChanges: [{ sessionId: target.id, remedy: "cancel", before: target, reason: "Recovery pending" }] });
+    expect((await customerChoice(token, repository)).alternatives.some((session) => session.id === target.id)).toBe(false);
+    await expect(submitChoice(token, { action: "move", sessionId: target.id }, repository)).rejects.toMatchObject({ status: 409 });
+    repository.discardPlan(workspaceId, plan.id);
+    expect((await customerChoice(token, repository)).alternatives.some((session) => session.id === target.id)).toBe(true);
   });
   it("gives refunded bookings receipt-only links and no choice tokens", async () => {
     const { links, workspaceId } = fixture();

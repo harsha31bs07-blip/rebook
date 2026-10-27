@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { draftCustomerMessages } from "../ai/messages";
-import { seatsLeft, sessionAvailable } from "../checkout/service";
+import { pausedSessionIds, seatsLeft, sessionAvailable } from "../checkout/service";
 import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc } from "../domain/time";
 import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
 import { type OutboxCustomer } from "./outbox";
-import { getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
+import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const ChoiceInputSchema = z.discriminatedUnion("action", [
@@ -35,7 +35,7 @@ export function createCustomerLinks(plan: StoredPlan, before: State, after: Stat
 function requireLink(token: string, repository: Repository): CustomerLink {
   const link = repository.customerLinkByToken(ChoiceTokenSchema.parse(token));
   if (!link) throw new StoreError(404, "This private link is unavailable.");
-  if (link.expiresAt <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
+  if (customerLinkReadableUntil(link) <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
   repository.requireReadyWorkspace(link.workspaceId);
   return link;
 }
@@ -56,7 +56,8 @@ function alternatives(link: CustomerLink, repository: Repository) {
   const week = localParts(state.studio.weekStart, state.studio.timezone).dateKey;
   const end = Date.parse(zonedTimeToUtc(addLocalDays(week, 7), "00:00", state.studio.timezone));
   const maxPrice = Math.min(toCents(booking.amount), remainingCaptured(link, repository));
-  return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session)
+  const paused = pausedSessionIds(link.workspaceId, repository);
+  return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session, paused)
     && Date.parse(session.start) >= Date.parse(state.studio.weekStart) && Date.parse(session.start) < end
     && toCents(session.price) <= maxPrice && seatsLeft(state, session, repository.listCheckout(link.workspaceId)) > 0
     && !state.bookings.some((other) => other.id !== booking.id && other.customerId === booking.customerId && ["confirmed", "moved"].includes(other.status)
@@ -81,12 +82,12 @@ function view(link: CustomerLink, repository: Repository) {
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team" });
   const current = state.sessions.find((item) => item.id === booking.sessionId);
   const newest = repository.listCustomerLinks(link.workspaceId).filter((item) => item.bookingId === link.bookingId).at(-1);
-  const canChoose = link.kind === "choice" && !link.reply?.requestId && newest?.id === link.id
+  const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
   return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
-    kind: link.kind, canChoose, expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
+    kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
     refundable: fromCents(remainingCaptured(link, repository)), receipt: receiptFor(link, repository),
     alternatives: canChoose ? alternatives(link, repository) : [] };
 }
@@ -128,6 +129,7 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
       await finishRefund(link, repository, owner);
       return view(link, repository);
     }
+    if (link.expiresAt <= Date.now()) throw new StoreError(410, "Choices closed at the class deadline. Your booking outcome and receipt remain available here.");
     if (!view(link, repository).canChoose) throw new StoreError(409, "This booking has changed. Please use the studio's latest message.");
     repository.transaction(() => {
       const { state } = repository.requireReadyWorkspace(link.workspaceId);

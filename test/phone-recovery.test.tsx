@@ -34,7 +34,7 @@ vi.mock("../components/console/use-workspace", () => ({ useWorkspace: () => ({ w
   state: adjustmentFixture(), plans: [], status: "ready", progress: { done: 1, total: 1 },
 }, refresh: vi.fn() }) }));
 import ScheduleAgenda from "../components/console/schedule-agenda";
-import PlanPanel from "../components/console/plan-panel";
+import PlanPanel, { ApprovalDialog, CoverRecord } from "../components/console/plan-panel";
 import OwnerConsole from "../components/console/owner-console";
 import { PHONE_QUERY, useScheduleView } from "../components/console/use-schedule-view";
 
@@ -114,6 +114,47 @@ it("shows original/new placement and affected customers and focuses the result w
   const focus = vi.fn(); (heading.props.ref as { current: unknown }).current = { focus };
   hooks.effects.splice(0).forEach((effect) => effect()); expect(focus).toHaveBeenCalledOnce();
   expect(renderToStaticMarkup(result)).toContain("in the new schedule");
+});
+
+it("reviews unconfirmed covers before approval and sends only checked owner attestations", () => {
+  const covered = plan.sessionChanges.find((change) => change.after && change.after.instructorId !== change.before.instructorId)!;
+  const publicPlan: PublicPlan = { ...plan, sessionChanges: [covered, { ...covered, sessionId: "second-covered" }], id: "plan", workspaceId: "workspace", version: 1, status: "proposed", createdAt: plan.now, results: [] };
+  const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Recovery ready", source: "template", bullets: [] } };
+  const onApprove = vi.fn();
+  const props = { details, plan: publicPlan, state, busy: false, results: [], onApprove, onDiscard: vi.fn(), onMessages: vi.fn() };
+  const approveButton = (tree: ReactNode) => elements(tree).find((element) => element.props.id === "judge-approve")!;
+  let tree = render(() => PlanPanel(props));
+  expect(renderToStaticMarkup(tree)).toContain("Confirmed with Alex?");
+  (approveButton(tree).props.onClick as () => void)();
+  tree = render(() => PlanPanel(props));
+  let dialog = elements(tree).find((element) => element.type === ApprovalDialog)!;
+  expect(renderToStaticMarkup(dialog)).toContain("2 covers not yet confirmed");
+  expect(renderToStaticMarkup(dialog)).toContain("Alex covers Yoga Mon 10:00 AM");
+  expect(onApprove).not.toHaveBeenCalled();
+  const checkbox = elements(tree).find((element) => element.type === "input" && element.props.type === "checkbox")!;
+  (checkbox.props.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  tree = render(() => PlanPanel(props)); dialog = elements(tree).find((element) => element.type === ApprovalDialog)!;
+  expect(renderToStaticMarkup(dialog)).toContain("1 cover not yet confirmed");
+  (dialog.props.onApprove as () => void)(); expect(onApprove).toHaveBeenCalledWith([covered.sessionId]);
+  tree = render(() => PlanPanel(props));
+  (approveButton(tree).props.onClick as () => void)();
+  tree = render(() => PlanPanel({ ...props, plan: { ...publicPlan, version: 2 } }));
+  expect(elements(tree).some((element) => element.type === ApprovalDialog)).toBe(false);
+  expect(elements(tree).filter((element) => element.type === "input").every((element) => !element.props.checked)).toBe(true);
+});
+
+it("allows approval with no cover checks and shows who confirmed each cover in the recovery record", () => {
+  const publicPlan: PublicPlan = { ...plan, id: "plan", workspaceId: "workspace", status: "proposed", createdAt: plan.now, results: [] };
+  const props = { details: { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Ready", source: "template" as const, bullets: [] } }, plan: publicPlan, state, busy: false, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
+  let tree = render(() => PlanPanel(props));
+  (elements(tree).find((element) => element.props.id === "judge-approve")!.props.onClick as () => void)();
+  tree = render(() => PlanPanel(props));
+  (elements(tree).find((element) => element.type === ApprovalDialog)!.props.onApprove as () => void)();
+  expect(props.onApprove).toHaveBeenCalledWith([]);
+  const cover = plan.sessionChanges.find((change) => change.after && change.after.instructorId !== change.before.instructorId)!;
+  const applied: PublicPlan = { ...publicPlan, status: "executed", coverConfirmations: [{ sessionId: cover.sessionId, instructorId: cover.after!.instructorId, confirmedBy: "Workspace owner", confirmedAt: plan.now }] };
+  expect(renderToStaticMarkup(<CoverRecord plan={applied} state={state} />)).toContain("Confirmed by Workspace owner");
+  expect(renderToStaticMarkup(<CoverRecord plan={{ ...applied, coverConfirmations: [] }} state={state} />)).toContain("Not yet confirmed");
 });
 
 it("scopes phone recovery flow, 44px targets and the persistent approve bar to <=760px", () => {

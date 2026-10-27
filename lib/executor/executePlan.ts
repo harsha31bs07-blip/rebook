@@ -3,10 +3,11 @@ import { activateConstraint } from "../solver/constraints";
 import { executeRefund } from "./refund";
 import { reconcileRefund } from "./reconcileRefund";
 import { createCustomerLinks } from "../choices/service";
+import { planCovers } from "../recovery/covers";
 import { getRepository, StoreError, withWorkspaceLock, type ExecutionResult, type Repository, type StoredPlan } from "../store";
 
 /** A durable REQUESTED event precedes every refund. Crash recovery uses the same PayPal request ID. */
-export async function executePlan(workspaceId: string, planId: string, repository: Repository = getRepository(), expectedVersion?: number): Promise<{ plan: StoredPlan; results: ExecutionResult[] }> {
+export async function executePlan(workspaceId: string, planId: string, repository: Repository = getRepository(), expectedVersion?: number, confirmedCoverSessionIds: string[] = []): Promise<{ plan: StoredPlan; results: ExecutionResult[] }> {
   repository.requireReadyWorkspace(workspaceId);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let plan = repository.getPlan(workspaceId, planId);
@@ -40,7 +41,12 @@ export async function executePlan(workspaceId: string, planId: string, repositor
         const previous = workspace.state.bookings.find((item) => item.id === booking.id)!;
         if (["refunded", "refund_pending", "cancelled"].includes(previous.status)) booking.status = previous.status;
       }
-      plan = { ...plan, status: "executing", basis };
+      const covers = planCovers(plan, basis);
+      if (confirmedCoverSessionIds.some((id) => !covers.some((cover) => cover.sessionId === id))) throw new StoreError(400, "A cover confirmation does not match this recovery preview.");
+      const coverConfirmations = covers.filter((cover) => confirmedCoverSessionIds.includes(cover.sessionId)).map((cover) => ({
+        sessionId: cover.sessionId, instructorId: cover.instructorId, confirmedBy: "Workspace owner", confirmedAt: new Date().toISOString(),
+      }));
+      plan = { ...plan, status: "executing", basis, coverConfirmations };
       repository.transaction(() => { repository.saveState(workspaceId, next); repository.savePlan(plan!); createCustomerLinks(plan!, basis, next, repository); });
     } else {
       // Scheduling rules apply at approval; retries settle the already-approved money actions.

@@ -120,9 +120,8 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     const visible = [info.title, info.time, ...(zoom === "day" ? [info.location, info.occupancy] : []), ...(zoom === "day" && mode === "rooms" ? [info.room] : []), ...(info.badge ? [info.badge] : []), ...(canMove ? ["Move"] : [])];
     const context = [info.status, ...(zoom === "day" && mode === "rooms" ? [] : [info.room]), ...(zoom === "day" ? [] : [info.location, info.occupancy])];
     renderData.ariaLabel = `${visible.join(" ")}. ${[...new Set(context)].join(", ")}`;
-    return [{ tag: "div", className: "session-label", children: [
-      // Trailing space keeps the computed text "Title Time" (the two parts are stacked visually).
-      { tag: "strong", text: `${info.title} ` }, { tag: "span", text: info.time },
+    const parts: { tag: string; text: string; className?: string; [key: string]: unknown }[] = [
+      { tag: "strong", text: info.title }, { tag: "span", text: info.time },
       ...(zoom === "day" ? [{ tag: "span", text: info.location }, { tag: "span", text: info.occupancy }] : []),
       ...(zoom === "day" && mode === "rooms" ? [{ tag: "span", text: info.room }] : []),
       ...(info.badge ? [{ tag: "span", className: "session-badge", text: info.badge }] : []),
@@ -131,7 +130,10 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
         "aria-label": `Move ${info.title} to…`, "aria-haspopup": "dialog",
         "data-move-session": String(eventRecord.id).replace(/-new$/, ""),
       }] : []),
-    ] }];
+    ];
+    // Adjacent elements have no whitespace between them; a trailing space keeps the computed text equal to the
+    // spoken label ("Title Time Badge Move") while the parts stay stacked visually.
+    return [{ tag: "div", className: "session-label", children: parts.map((part, index) => index < parts.length - 1 ? { ...part, text: `${part.text} ` } : part) }];
   }, [data.details, zoom, mode, plan, onMove, busy]);
   const tooltip = useMemo(() => ({ template: ({ eventRecord }: { eventRecord: { id: string | number } }) => {
     const info = data.details[String(eventRecord.id)];

@@ -44,9 +44,9 @@ export class Limits {
     return () => { if (!released) { released = true; if (pooled) this.poolPreparations--; else this.preparations--; } };
   }
   aiCall(client: string, workspace: string): () => void {
-    if (this.ai >= envLimit("AI_MAX_CONCURRENT", 4)) throw new StoreError(503, "The analyst is busy. Please try again shortly.", undefined, 30);
+    if (this.ai >= envLimit("AI_MAX_CONCURRENT", 6)) throw new StoreError(503, "The analyst is busy. Please try again shortly.", undefined, 30);
     this.take([
-      { key: "ai-minute", max: envLimit("AI_CALLS_PER_MIN", 30), ms: 60_000 },
+      { key: "ai-minute", max: envLimit("AI_CALLS_PER_MIN", 60), ms: 60_000 },
       { key: "ai-day", max: envLimit("AI_CALLS_PER_DAY", 1200), ms: 86_400_000 },
       { key: `ai-client:${client}`, max: envLimit("AI_CLIENT_CALLS_PER_MIN", 24), ms: 60_000 },
       { key: `ai-workspace:${workspace}`, max: envLimit("AI_WORKSPACE_CALLS_PER_MIN", 24), ms: 60_000 },

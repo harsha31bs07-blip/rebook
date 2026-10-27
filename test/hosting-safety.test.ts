@@ -136,10 +136,10 @@ describe("public hosting guards", () => {
   });
   it("caps AI concurrency and daily, per-client and per-workspace calls", () => {
     const concurrent = new Limits();
-    const releases = Array.from({ length: 4 }, (_, i) => concurrent.aiCall(`c${i}`, `w${i}`));
-    expect(() => concurrent.aiCall("fifth", "fifth")).toThrow("busy");
+    const releases = Array.from({ length: 6 }, (_, i) => concurrent.aiCall(`c${i}`, `w${i}`));
+    expect(() => concurrent.aiCall("seventh", "seventh")).toThrow("busy");
     releases.forEach((release) => release());
-    const release = concurrent.aiCall("fifth", "fifth"); release();
+    const release = concurrent.aiCall("seventh", "seventh"); release();
     vi.stubEnv("AI_CLIENT_CALLS_PER_MIN", "1");
     const clients = new Limits(); clients.aiCall("same", "first")();
     expect(() => clients.aiCall("same", "second")).toThrow("busy");

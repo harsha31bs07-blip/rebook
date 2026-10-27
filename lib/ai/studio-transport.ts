@@ -78,7 +78,13 @@ export async function studioModelCompletion<T>(
       console.info(JSON.stringify({ message: "ai_call", provider, model, status: "too_large", ms: 0 }));
       continue;
     }
-    const release = limits.aiCall(identity?.client ?? "unknown", identity?.workspace ?? "unknown");
+    let release: () => void;
+    try {
+      release = limits.aiCall(identity?.client ?? "unknown", identity?.workspace ?? "unknown");
+    } catch (error) {
+      console.info(JSON.stringify({ message: "ai_call", provider, model, status: "local_limit", ms: 0 }));
+      throw error;
+    }
     const controller = new AbortController();
     const attemptStarted = Date.now();
     let status: number | string = "network_error";

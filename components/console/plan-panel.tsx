@@ -15,10 +15,10 @@ const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loadin
 export function CoverRecord({ plan, state }: { plan: PublicPlan; state: State }) {
   const covers = planCovers(plan, state);
   if (!covers.length) return null;
-  return <section aria-label="Substitute confirmations"><h3>Substitute confirmations</h3><ul>{covers.map((cover) => {
+  return <div className="cover-confirmations"><h3>Substitute confirmations</h3><ul>{covers.map((cover) => {
     const confirmation = plan.coverConfirmations?.find((item) => item.sessionId === cover.sessionId && item.instructorId === cover.instructorId);
     return <li key={cover.sessionId}>{cover.label} — {confirmation ? <>Confirmed by {confirmation.confirmedBy} at <time dateTime={confirmation.confirmedAt}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(confirmation.confirmedAt))}</time></> : "Not yet confirmed"}</li>;
-  })}</ul></section>;
+  })}</ul></div>;
 }
 
 export function ApprovalDialog({ unconfirmed, busy, onApprove, onClose }: { unconfirmed: ReturnType<typeof planCovers>; busy: boolean; onApprove: () => void; onClose: () => void }) {

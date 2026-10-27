@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { directLlmRunner, type AgAiEvent, type AgAiTool, type AgAiRunInput } from "ag-studio";
 import { geminiAdapter, ANALYST_UNAVAILABLE } from "../lib/insights/gemini-adapter";
-import { recoveryRunGuard } from "../lib/insights/run-guard";
+import { ANALYST_RUN_TIMEOUT_MS, recoveryRunGuard } from "../lib/insights/run-guard";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 const input: AgAiRunInput = { threadId: "thread", runId: "parent", messages: [{ id: "user", role: "user", content: "Add a bar chart of revenue by class type to this page" }], tools: [], state: {}, context: [], forwardedProps: {} };
@@ -39,7 +39,7 @@ describe("Recovery chat run guard", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(events.filter((event) => event.type === "RUN_FINISHED")).toEqual([]);
   });
-  it("ends an overall run at 55 seconds and aborts tools that never settle", async () => {
+  it("ends an overall run at the run deadline and aborts tools that never settle", async () => {
     vi.useFakeTimers();
     let signal: AbortSignal | undefined;
     const guard = recoveryRunGuard();
@@ -49,7 +49,7 @@ describe("Recovery chat run guard", () => {
       await new Promise(() => {});
     } });
     const pending = collect(runner.run(input, context));
-    await vi.advanceTimersByTimeAsync(55_000);
+    await vi.advanceTimersByTimeAsync(ANALYST_RUN_TIMEOUT_MS);
     expect((await pending).at(-1)).toEqual({ type: "RUN_ERROR", message: ANALYST_UNAVAILABLE });
     expect(signal?.aborted).toBe(true);
   });

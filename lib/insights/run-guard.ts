@@ -1,7 +1,9 @@
 import type { AgAnyAiAgentRunner } from "ag-studio";
 import { ANALYST_UNAVAILABLE } from "./gemini-adapter";
 
-export const ANALYST_RUN_TIMEOUT_MS = 55_000;
+// A chart request runs ~8 model steps across the analyst, Page and Widget agents (~60-90 s on free Gemini);
+// each call still aborts at 45 s, so a dead provider surfaces quickly.
+export const ANALYST_RUN_TIMEOUT_MS = 150_000;
 
 /** Studio's delegate tool discards child RUN_ERRORs. Carry them to the owning chat run. */
 export function recoveryRunGuard() {

@@ -2,12 +2,14 @@ import type { State } from "../domain/types";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
 import type { CustomerLink, LedgerEvent, StoredPlan } from "../store";
+import { recoveryOutcomes, summarizeRecovery } from "../recovery/outcomes";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
 export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
+  const outcomes = recoveryOutcomes(state, plans, ledger, links);
   const sessions = new Map(state.sessions.map((session) => [session.id, session]));
   // Execution removes cancellations from the live schedule. Their original records still join bookings.
   for (const plan of applied) for (const session of plan.basis?.sessions ?? []) {
@@ -75,22 +77,24 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     disruptions: plans.map((plan) => {
       const label = disruptionLabel(plan, state);
       const active = plan.status !== "proposed";
+      const recovery = summarizeRecovery(outcomes.filter((item) => item.plan_id === plan.id));
       const refunds = [...latest.values()].filter((event) => event.kind === "refund" && originatingPlan(event)?.id === plan.id);
       const amountFor = (statuses: string[]) => refunds.filter((event) => statuses.includes(event.status)).reduce((sum, event) => sum + toCents(event.amount), 0) / 100;
       return {
         id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window,
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
-        kept: plan.totals.kept, moved: plan.totals.moved, refunded: plan.totals.refunded,
-        refund_amount: dollars(plan.totals.refundAmount), revenue_kept: dollars(plan.totals.revenueKept),
+        kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
+        pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
+        refund_amount: dollars(plan.totals.refundAmount), revenue_kept: active ? recovery.revenueKept : dollars(plan.totals.revenueKept),
         planned_refund_amount: dollars(plan.totals.refundAmount),
-        pending_refund_amount: amountFor(["REQUESTED", "PENDING"]),
+        pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN"]),
         completed_refund_amount: amountFor(["COMPLETED"]),
         simulated_refund_amount: amountFor(["SIMULATED"]),
         failed_refund_amount: amountFor(["FAILED", "CANCELLED"]),
         affected: plan.totals.kept + plan.totals.moved + plan.totals.refunded,
-        applied_affected: active ? plan.totals.kept + plan.totals.moved + plan.totals.refunded : 0,
-        applied_saved: active ? plan.totals.kept + plan.totals.moved : 0,
-        applied_revenue_kept: active ? dollars(plan.totals.revenueKept) : 0,
+        applied_affected: recovery.affected,
+        applied_saved: recovery.saved,
+        applied_revenue_kept: recovery.revenueKept,
         created_at: plan.createdAt,
         covers: plan.sessionChanges.filter((change) => change.remedy === "substitute").map((change) => {
           const name = (id: string) => state.instructors.find((item) => item.id === id)?.name ?? id;
@@ -105,7 +109,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       id: `${plan.id}:${action.bookingId}`, plan_id: plan.id, booking_id: action.bookingId,
       action: action.action, reason: action.reason, amount: dollars(action.amount),
     }))),
-    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Overview recovery KPIs include applied plans only. Refund totals use the latest status per request. Revenue kept measures recovery interventions, so repeat disruptions can count a booking again."],
+    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Recovery KPIs count each booking once under its latest applied plan, using replies and settled refunds across its history. Kept or moved means the booking is confirmed; No reply yet separately tracks customer confirmation. Pending includes refunds requested or awaiting PayPal, including price differences for moved bookings. Revenue kept subtracts settled refunds; bookings requesting a full refund are excluded."],
   };
 }
 

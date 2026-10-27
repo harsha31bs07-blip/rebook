@@ -11,6 +11,7 @@ import { buildStudioData, insightRelationships } from "../lib/insights/studio-da
 import { initialReport, REPORT_STATE_VERSION, restoreReportState } from "../lib/insights/report";
 import { recoveryDisruptions, recoveryReceipts } from "../lib/insights/ai";
 import { buildInsights, type Insights } from "../lib/insights/data";
+import { recoveryMetric } from "../lib/insights/metrics";
 import { createCustomerLinks } from "../lib/choices/service";
 
 let directory: string;
@@ -31,6 +32,9 @@ describe("workspace insights", () => {
       repository.appendLedger({ workspaceId: workspace.id, bookingId: action.bookingId, kind: "refund", amount: action.amount,
         requestId: `${plan.id}:${action.bookingId}`, captureId: `cap-${action.bookingId}`, paypalId: `ref-${action.bookingId}`, status: "COMPLETED" });
     }
+    const before = buildInsights(state, [plan], repository.listLedger(workspace.id), repository.listCustomerLinks(workspace.id));
+    expect(before.disruptions[0]).toMatchObject({ kept: 9, moved: 16, refunded: 6, applied_saved: 25, applied_affected: 31, applied_revenue_kept: 577, completed_refund_amount: 135, no_reply: 25 });
+    expect(recoveryMetric(before.disruptions, "saved").value).toBe("81%");
     const link = repository.listCustomerLinks(workspace.id).find((item) => item.bookingId === "booking-0003")!;
     const requestId = `choice:${link.id}`;
     link.reply = { action: "refund", at: new Date().toISOString(), amount: "22.00", requestId };
@@ -39,12 +43,13 @@ describe("workspace insights", () => {
       requestId, captureId: "cap-choice", paypalId: "ref-choice" };
     repository.appendLedger({ ...event, status: "REQUESTED" });
     const pending: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
-    expect(pending.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 135, pending_refund_amount: 22 });
+    expect(pending.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 135, pending_refund_amount: 22, applied_saved: 24, applied_revenue_kept: 555, refunded: 6, pending: 1, no_reply: 24 });
     repository.appendLedger({ ...event, status: "COMPLETED" });
     // Persisted links must survive reopening the repository, just like a server restart.
     closeRepository();
     const data: Insights = await (await GET(new Request("http://localhost"), context(workspace.id))).json();
-    expect(data.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 157, pending_refund_amount: 0 });
+    expect(data.disruptions[0]).toMatchObject({ planned_refund_amount: 135, completed_refund_amount: 157, pending_refund_amount: 0, kept: 8, moved: 16, refunded: 7, applied_saved: 24, applied_revenue_kept: 555, pending: 0, no_reply: 24 });
+    expect(recoveryMetric(data.disruptions, "saved").value).toBe("77%");
     expect(data.money_events.find((row) => row.paypal_id === "ref-choice")).toMatchObject({
       plan_id: plan.id, booking_action_id: `${plan.id}:${link.bookingId}`, reason: "Customer chose a refund", issued_refund: 22,
     });

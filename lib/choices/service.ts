@@ -4,6 +4,7 @@ import { seatsLeft, sessionAvailable } from "../checkout/service";
 import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc } from "../domain/time";
 import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
+import { recoveryOutcomes } from "../recovery/outcomes";
 import { getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -158,7 +159,8 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
 export function ownerCustomerChoices(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireWorkspace(workspaceId);
   const links = repository.listCustomerLinks(workspaceId);
-  return { links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
+  return { outcomes: recoveryOutcomes(state, repository.listPlans(workspaceId), repository.listLedger(workspaceId), links),
+    links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
     path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
     replies: links.filter((link) => link.reply).map((link) => {
       const reply = link.reply!;

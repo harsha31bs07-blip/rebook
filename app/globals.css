@@ -206,6 +206,7 @@ textarea { resize: vertical; min-height: 120px; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
 .stats > div { border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; }
 .stats span, .stats small { color: var(--muted); font-size: 10px; }
+.stats.recovery-outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stats strong { font-size: 24px; line-height: 1.5; }
 .stats .money-stat { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 4px; }
 .money-stat > span { grid-column: 1 / -1; }
@@ -258,6 +259,9 @@ textarea { resize: vertical; min-height: 120px; }
 .placeholder-page .muted { margin: 16px 0 32px; }
 
 .insights-app { height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.insights-app > .recovery-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 24px 12px; flex-shrink: 0; }
+.recovery-summary > p { grid-column: 1 / -1; font-size: 11px; }
+@media (max-width: 720px) { .insights-app > .recovery-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-inline: 16px; } }
 .insights-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 24px 12px; flex-shrink: 0; }
 .insights-heading h1 { font-size: 23px; margin-top: 4px; }
 .insights-heading > p { font-size: 12px; }

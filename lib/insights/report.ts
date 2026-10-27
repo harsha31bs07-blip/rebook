@@ -1,7 +1,7 @@
 import type { AgReportState } from "ag-studio";
 import type { StudioRegistry } from "@/components/insights/widgets";
 
-export const REPORT_STATE_VERSION = 3;
+export const REPORT_STATE_VERSION = 4;
 export const REPORT_TRACKS = 30;
 export function reportLayout(canvasHeight: number) {
   return { rowHeight: Math.max(8, Math.floor((canvasHeight - 24) / REPORT_TRACKS)), pagePadding: 12, minWidth: 720 };
@@ -18,7 +18,7 @@ const barFormat = (text: string) => ({ ...title(text), style: { custom: { catego
 const at = (xTrack: number, yTrack: number, xSpan: number, ySpan: number) => ({ xTrack, yTrack, xSpan, ySpan });
 const kpi = (text: string, value: { id: string; aggregation?: "sum" }, caption?: string) => ({ type: "value" as const, dataMapping: { value: [value] }, format: { ...title(text), ...(caption ? { caption: { enabled: true, text: caption, typography: { fontSize: 10 } } } : {}), style: { typography: { fontSize: 26, fontWeight: "bold" as const }, textScaling: { enabled: true } } } });
 const metric = (text: string, metric: string, fields: string[]) => ({ type: "recovery-metric" as const, dataMapping: { rows: fields.map((id) => ({ id })) }, format: { ...title(text), style: { metric } } });
-export const recoveryFields = "id subject window status kept moved refunded sessions_affected revenue_kept refund_amount created_at".split(" ").map((field) => ({ id: `disruptions.${field}` }));
+export const recoveryFields = "id subject window status kept moved refunded pending no_reply simulated_refunded applied_affected sessions_affected revenue_kept refund_amount created_at".split(" ").map((field) => ({ id: `disruptions.${field}` }));
 export const receiptFields = [..."id kind paypal_id amount status created_at booking_id plan_id".split(" ").map((field) => ({ id: `money_events.${field}` })), { id: "customers.name" }];
 export const heatmapFields = "id instructor local_day booked capacity disrupted".split(" ").map((field) => ({ id: `sessions.${field}` }));
 

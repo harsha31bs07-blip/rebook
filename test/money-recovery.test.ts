@@ -123,11 +123,11 @@ describe("refund recovery via mocked SDK transport", () => {
   it("settles an already-applied legacy plan without retroactively enforcing new scheduling rules", async () => {
     const { workspace, plan } = prepared();
     const legacy = structuredClone(plan);
-    // Taylor's Tuesday HIIT booking clashes with the moved dance class. Recreate
-    // the old scheduling error explicitly; the hero now refunds by preference.
-    const taylor = workspace.state.customers.find((item) => item.id === "customer-020")!;
-    taylor.prefs.refundOnly = false;
-    legacy.bookingActions.find((item) => item.customerId === taylor.id)!.action = "move";
+    // The hero refunds one customer because moving them would clash with another class they booked.
+    // Recreate the old scheduling error explicitly by moving that customer anyway.
+    const clash = legacy.bookingActions.find((item) => item.action === "refund" && item.reason?.includes("overlap"))!;
+    expect(clash).toBeDefined();
+    clash.action = "move";
     legacy.totals = calculateTotals(legacy.sessionChanges.length, legacy.bookingActions);
     expect(validate(workspace.state, legacy).errors.some((error) => error.includes("double booking"))).toBe(true);
     const applied = applyPlan(workspace.state, legacy);

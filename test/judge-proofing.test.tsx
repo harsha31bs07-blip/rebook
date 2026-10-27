@@ -42,6 +42,9 @@ import { usePlanPreview } from "../components/console/use-plan-preview";
 import { useWorkspace } from "../components/console/use-workspace";
 import DisruptionPanel from "../components/console/disruption-panel";
 import PlanPanel, { RefundResults } from "../components/console/plan-panel";
+import { recoveryOutcomes } from "../lib/recovery/outcomes";
+import { buildInsights } from "../lib/insights/data";
+import RecoverySummary from "../components/insights/recovery-summary";
 import BuiltWithPage from "../app/built-with/page";
 
 type Element = ReactElement<Record<string, unknown>>;
@@ -243,4 +246,34 @@ it("renders every built-with section with feature tables and live-flow links", a
     expect(row).toMatch(/href="https:\/\/github.com\/harsha31bs07-blip\/rebook\/blob\/main\/[^"#]+#L\d+-L\d+" target="_blank" rel="noreferrer"/);
     expect(row).toMatch(/View code: [^<]+\.(tsx|ts)/);
   }
+});
+
+
+it("shows applied recovery, reply counts, settled refunds and the manual sharing estimate", () => {
+  const plan = { ...details.plan, status: "executed" as const };
+  const results = plan.bookingActions.filter((action) => action.action === "refund").map((action) => ({ bookingId: action.bookingId, status: "COMPLETED" }));
+  const outcomes = recoveryOutcomes(workspace.state, [{ ...plan, results }], []);
+  const panel = (current = outcomes) => renderToStaticMarkup(PlanPanel({ details, state: workspace.state, plan, results, outcomes: current, busy: false, onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() }));
+  const applied = panel();
+  expect(applied).toContain("Recovery applied");
+  expect(applied).not.toContain("Recovery complete");
+  expect(applied).toContain("25 customers haven&#x27;t replied");
+  expect(applied).toContain("Owner time saved (estimate)");
+  expect(applied).toContain("replaces about 31 calls or messages once you share the links");
+  for (const text of ["Kept or moved", "Refunded", "Pending", "No reply yet", "9 kept / 16 moved", "$577.00", "$135.00"]) expect(applied).toContain(text);
+  const replied = outcomes.map((item) => ({ ...item, no_reply: 0, final: true }));
+  expect(panel(replied)).toContain("Recovery complete");
+  expect(panel(replied)).toContain("All customers replied");
+  expect(panel(replied.map((item, index) => index ? item : { ...item, pending: 1, final: false }))).not.toContain("Recovery complete");
+  const data = buildInsights(workspace.state, [{ ...plan, results }], []);
+  const dashboard = renderToStaticMarkup(RecoverySummary({ data }));
+  for (const text of ["Kept or moved", "confirmed", "Refunded", "completed", "Pending", "No reply yet"]) expect(dashboard).toContain(text);
+});
+
+it("replaces confidence with understood facts, affected classes and the all-day assumption", () => {
+  const html = renderToStaticMarkup(render(() => DisruptionPanel({ state: workspace.state, text: "Maya is out Monday", setText: vi.fn(), busy: false,
+    interpretation: { disruption: demoDisruption, confidence: 0.85, source: "gemini", model: "gemini-flash", notes: ["Review the day before approval."] }, onInterpret: vi.fn(), onReport: vi.fn(), onEdit: vi.fn(), onPlan: vi.fn() })));
+  for (const text of ["Maya Chen unavailable", "All day Mon", "America/New_York", "Classes affected:", "Yoga Flow at Mon", "Dance Flow at Mon", "Barre Flow at Mon", "Assumed all day Monday", "Gemini Flash", "Review the day before approval."]) expect(html).toContain(text);
+  expect(html).not.toContain("confidence");
+  expect(html).not.toContain("85%");
 });

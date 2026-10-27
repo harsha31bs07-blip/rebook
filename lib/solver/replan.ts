@@ -1,8 +1,9 @@
 import type { BookingAction, Disruption, Placement, Plan, Remedy, ReplanOptions, Session, State } from "../domain/types";
 import { DisruptionSchema, ReplanOptionsSchema } from "../domain/schemas";
 import { addLocalDays, byId, compare, DAY, iso, localParts, MINUTE, zonedTimeToUtc } from "../domain/time";
-import { actionsFor, calculateTotals, compareObjectives, defaultWeights, isActiveBooking, remedyPriority, scoreCandidate, SLOT_MS, type CandidateObjective } from "./score";
-import { affectedSessions, feasibilityErrors } from "./validate";
+import { bookingActionEvaluator, calculateTotals, compareObjectives, defaultWeights, isActiveBooking, remedyPriority, scoreCandidate, SLOT_MS, type CandidateObjective } from "./score";
+import { affectedSessions } from "./validate";
+import { activeConstraints } from "./constraints";
 
 export { applyPlan } from "./validate";
 
@@ -16,6 +17,74 @@ const reasons: Record<Remedy, string> = {
   move_time: "Class rescheduled to an available slot within the recovery horizon.",
   cancel: "No feasible class within the recovery horizon; cancel and refund.",
 };
+
+/** Working resources stay fixed during each class's search; index their numeric intervals once. */
+function candidateFeasibility(state: State, before: Session, disruption: Disruption): (candidate: Session) => boolean {
+  type Interval = { start: number; end: number };
+  const instructorBusy = new Map<string, Interval[]>();
+  const roomBusy = new Map<string, Interval[]>();
+  const daily = new Map<string, number>();
+  const add = (index: Map<string, Interval[]>, id: string, interval: Interval) => {
+    const entries = index.get(id) ?? [];
+    entries.push(interval); index.set(id, entries);
+  };
+  for (const session of state.sessions) {
+    if (session.id === before.id) continue;
+    const interval = { start: Date.parse(session.start), end: Date.parse(session.end) };
+    add(instructorBusy, session.instructorId, interval);
+    add(roomBusy, session.roomId, interval);
+    const key = `${session.instructorId}|${localParts(session.start, state.studio.timezone).dateKey}`;
+    daily.set(key, (daily.get(key) ?? 0) + 1);
+  }
+  for (const instructor of state.instructors) {
+    for (const window of instructor.unavailability ?? []) {
+      add(instructorBusy, instructor.id, { start: Date.parse(window.from), end: Date.parse(window.to) });
+    }
+  }
+  const closures: Interval[] = [];
+  for (const constraint of [...activeConstraints(state), disruption]) {
+    const interval = { start: Date.parse(constraint.from), end: Date.parse(constraint.to) };
+    if (constraint.kind === "closure") closures.push(interval);
+    else if (constraint.kind === "instructor_unavailable") add(instructorBusy, constraint.instructorId, interval);
+    else add(roomBusy, constraint.roomId, interval);
+  }
+  const instructors = new Map(state.instructors.filter((item) => item.skills.includes(before.classType)).map((item) => [item.id, item]));
+  const rooms = new Map(state.rooms.filter((item) => item.supports.includes(before.classType)).map((item) => [item.id, item]));
+  const times = new Map<string, { start: number; end: number; date: string; open: boolean }>();
+  const availableInstructors = new Map<string, boolean>();
+  const availableRooms = new Map<string, boolean>();
+  return (candidate) => {
+    const timeKey = `${candidate.start}|${candidate.end}`;
+    let time = times.get(timeKey);
+    if (!time) {
+      const start = Date.parse(candidate.start), end = Date.parse(candidate.end);
+      const { dateKey, weekday } = localParts(candidate.start, state.studio.timezone);
+      time = { start, end, date: dateKey, open: end > start &&
+        !closures.some((item) => start < item.end && item.start < end) &&
+        (state.studio.openHours[weekday] ?? []).some((hours) =>
+          start >= Date.parse(zonedTimeToUtc(dateKey, hours.open, state.studio.timezone)) &&
+          end <= Date.parse(zonedTimeToUtc(dateKey, hours.close, state.studio.timezone))) };
+      times.set(timeKey, time);
+    }
+    if (!time.open) return false;
+    const instructor = instructors.get(candidate.instructorId), room = rooms.get(candidate.roomId);
+    if (!instructor || !room || candidate.capacity > room.capacity) return false;
+    const instructorKey = `${timeKey}|${instructor.id}`, roomKey = `${timeKey}|${room.id}`;
+    let instructorFree = availableInstructors.get(instructorKey);
+    if (instructorFree === undefined) {
+      instructorFree = (daily.get(`${instructor.id}|${time.date}`) ?? 0) < instructor.maxSessionsPerDay &&
+        !(instructorBusy.get(instructor.id) ?? []).some((item) => time.start < item.end && item.start < time.end);
+      availableInstructors.set(instructorKey, instructorFree);
+    }
+    if (!instructorFree) return false;
+    let roomFree = availableRooms.get(roomKey);
+    if (roomFree === undefined) {
+      roomFree = !(roomBusy.get(room.id) ?? []).some((item) => time.start < item.end && item.start < time.end);
+      availableRooms.set(roomKey, roomFree);
+    }
+    return roomFree;
+  };
+}
 
 /**
  * Greedy, deterministic allocation in session-ID order. Each chosen remedy reserves its resources.
@@ -41,12 +110,17 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
     bookings: state.bookings.filter((booking) => !affectedIds.has(booking.sessionId)) };
   const instructors = [...state.instructors].sort(byId);
   const rooms = [...state.rooms].sort(byId);
+  // Every customer's boundaries remain search candidates, but repeated windows add no slots.
+  const preferenceWindows = [...new Map(state.customers.flatMap((customer) => customer.prefs.windows)
+    .map((window) => [`${window.weekday}|${window.from}|${window.to}`, window])).values()];
   const plan: Plan = {
     disruption: structuredClone(disruption), now, sessionChanges: [], bookingActions: [],
     totals: calculateTotals(0, []), warnings: [],
   };
   for (const session of affected) {
     const bookings = state.bookings.filter((booking) => booking.sessionId === session.id);
+    const feasible = candidateFeasibility(working, session, disruption);
+    const actionsAt = bookingActionEvaluator(bookings, state.customers, session, tz, { ...working, originalSessions: state.sessions });
     const unavoidableRefunds = bookings.filter(isActiveBooking).filter((booking) => {
       const customer = state.customers.find((item) => item.id === booking.customerId);
       return !customer || customer.prefs.refundOnly;
@@ -57,17 +131,38 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       cost: scoreCandidate(remedy, session, after, actions, weights, tz),
       key: after ? `${after.start}|${after.instructorId}|${after.roomId}|${remedy}` : "~cancel",
     });
-    const cancelledActions = actionsFor(bookings, state.customers, session, undefined, tz);
+    const cancelledActions = actionsAt(undefined);
     let best: Candidate = {
       remedy: "cancel", actions: cancelledActions,
       objective: objective("cancel", undefined, cancelledActions),
     };
     const consider = (remedy: Remedy, candidate: Session) => {
-      if (feasibilityErrors(working, candidate, disruption).length) return;
-      const actions = actionsFor(bookings, state.customers, session, candidate, tz, { ...working, originalSessions: state.sessions });
+      if (!feasible(candidate)) return;
+      const actions = actionsAt(candidate);
       const candidateObjective = objective(remedy, candidate, actions);
       if (compareObjectives(candidateObjective, best.objective) < 0) {
         best = { remedy, after: candidate, actions, objective: candidateObjective };
+      }
+    };
+    const considerMoves = (start: number, duration: number) => {
+      const candidate = { ...session, start: iso(start), end: iso(start + duration) };
+      // Original instructor and full capacity give a retention upper bound for this time.
+      // A room or substitute can only add refunds. Keep the strict objective's tie order.
+      const timeActions = actionsAt(candidate);
+      const timeObjective = objective("move_time", candidate, timeActions);
+      if (timeObjective.refunds > best.objective.refunds ||
+        (timeObjective.refunds === best.objective.refunds && timeObjective.priority > best.objective.priority)) return;
+      for (const instructor of instructors) {
+        if (!instructor.skills.includes(session.classType)) continue;
+        const withInstructor = { ...candidate, instructorId: instructor.id };
+        const bound = objective("move_time", withInstructor, actionsAt(withInstructor));
+        // The prefix sorts before every complete room key, including prefix-sharing room IDs.
+        bound.key = `${withInstructor.start}|${instructor.id}|`;
+        if (compareObjectives(bound, best.objective) >= 0) continue;
+        for (const room of rooms) {
+          if (!room.supports.includes(session.classType)) continue;
+          consider("move_time", { ...withInstructor, roomId: room.id, capacity: Math.min(session.capacity, room.capacity) });
+        }
       }
     };
     for (const instructor of instructors) {
@@ -88,12 +183,7 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       // Evaluate the policy's preferred move first. Reaching the retention upper
       // bound here proves that no other move can improve this session's objective.
       if (nextDayStart >= Date.parse(now) && nextDayStart + duration <= horizon) {
-        for (const instructor of instructors) {
-          for (const room of rooms) {
-            consider("move_time", { ...session, instructorId: instructor.id, roomId: room.id,
-              capacity: Math.min(session.capacity, room.capacity), start: iso(nextDayStart), end: iso(nextDayStart + duration) });
-          }
-        }
+        considerMoves(nextDayStart, duration);
       }
       if (best.objective.refunds > unavoidableRefunds || best.objective.priority > 2) {
         const boundaryTimes = [Date.parse(disruption.to),
@@ -111,23 +201,14 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
             const slots = new Set<number>([open, Date.parse(zonedTimeToUtc(dateKey, originalTime, tz)) + (originalClock % 1) * MINUTE]);
             for (let start = day + Math.ceil((open - day) / SLOT_MS) * SLOT_MS; start <= last; start += SLOT_MS) slots.add(start);
             for (const boundary of boundaryTimes) if (boundary >= open && boundary <= last) slots.add(boundary);
-            for (const customer of state.customers) {
-              for (const preference of customer.prefs.windows) {
-                if (preference.weekday !== dayOfWeek) continue;
-                slots.add(Date.parse(zonedTimeToUtc(dateKey, preference.from, tz)));
-                slots.add(Date.parse(zonedTimeToUtc(dateKey, preference.to, tz)) - duration);
-              }
+            for (const preference of preferenceWindows) {
+              if (preference.weekday !== dayOfWeek) continue;
+              slots.add(Date.parse(zonedTimeToUtc(dateKey, preference.from, tz)));
+              slots.add(Date.parse(zonedTimeToUtc(dateKey, preference.to, tz)) - duration);
             }
             for (const start of [...slots].filter((slot) => slot >= open && slot <= last).sort((a, b) => a - b)) {
               if (start === Date.parse(session.start)) continue;
-              for (const instructor of instructors) {
-                if (!instructor.skills.includes(session.classType)) continue;
-                for (const room of rooms) {
-                  if (!room.supports.includes(session.classType)) continue;
-                  consider("move_time", { ...session, instructorId: instructor.id, roomId: room.id,
-                    capacity: Math.min(session.capacity, room.capacity), start: iso(start), end: iso(start + duration) });
-                }
-              }
+              considerMoves(start, duration);
             }
           }
         }

@@ -23,6 +23,7 @@ export function recoveryDisruptions(data: Insights, planId?: string) {
     disruption: `${row.subject}, ${row.window}`, status: row.status,
     classesAffected: row.sessions_affected, bookingsKept: row.kept, bookingsMoved: row.moved,
     bookingsRefunded: row.refunded, plannedRefundsUSD: row.planned_refund_amount,
+    bookingsPendingRefund: row.pending, bookingsWithoutReply: row.no_reply, simulatedRefundBookings: row.simulated_refunded,
     completedRefundsUSD: row.completed_refund_amount, pendingRefundsUSD: row.pending_refund_amount,
     simulatedRefundsUSD: row.simulated_refund_amount, failedRefundsUSD: row.failed_refund_amount,
     revenueKeptUSD: row.revenue_kept,

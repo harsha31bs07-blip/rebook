@@ -5,6 +5,7 @@ import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api"
 import type { State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
 import { formatMoney, toCents } from "@/lib/domain/time";
+import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" aria-label="Loading booking actions" /> });
 
@@ -20,28 +21,38 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, approvalRequested, onUndo, onMove, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, approvalRequested, onUndo, onMove, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
+  outcomes?: RecoveryOutcome[];
   approving?: boolean; approvalRequested?: boolean; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: () => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
   const money = (value: string) => formatMoney(value, state.studio.currency);
   const label = disruptionLabel(plan, state);
   const proposed = plan.status === "proposed";
+  const recovery = summarizeRecovery(outcomes ?? recoveryOutcomes(state, [{ ...plan, results }], []));
   const previous = plan.lastAdjustmentTotals;
   const refunds = previous ? totals.refunded - previous.refunded : 0;
   const revenue = previous ? toCents(totals.revenueKept) - toCents(previous.revenueKept) : 0;
   return <>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
-    <h2>{plan.status === "executed" ? results.some((result) => ["PENDING", "REQUESTED"].includes(result.status)) ? "Recovery applied · refunds pending" : "Recovery complete" : details.explanation.headline}</h2>
-    {plan.status === "executed" && <p className="muted plan-context">{totals.kept + totals.moved} bookings saved · {money(totals.revenueKept)} kept · {totals.refunded} refund{totals.refunded === 1 ? "" : "s"}{results.some((result) => result.status === "PENDING") ? " (some pending)" : " processed"}.</p>}
+    <h2>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
+    {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
-    <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages and {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
-    <div className="stats totals-updated" key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
-      <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
-      <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
-      <div><span>{proposed ? "Refunds planned" : "Refunds completed"}</span><strong className="danger-text">{proposed ? totals.refunded : results.filter((result) => result.status === "COMPLETED").length}</strong><small>{proposed ? "bookings" : `${results.filter((result) => ["PENDING", "REQUESTED"].includes(result.status)).length} pending · ${results.filter((result) => result.status === "SIMULATED").length} simulated`}</small></div>
-      <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
+    <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
+    <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
+      {proposed ? <>
+        <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
+        <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
+        <div><span>Refunds planned</span><strong className="danger-text">{totals.refunded}</strong><small>bookings</small></div>
+        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
+      </> : <>
+        <div><span>Kept or moved</span><strong className="success">{recovery.saved}</strong><small>confirmed - {recovery.kept} kept / {recovery.moved} moved</small></div>
+        <div><span>Refunded</span><strong className="danger-text">{recovery.refunded}</strong><small>completed - {recovery.simulatedRefunded} simulated separately</small></div>
+        <div><span>Pending</span><strong>{recovery.pending}</strong><small>refund requested / awaiting PayPal</small></div>
+        <div><span>No reply yet</span><strong>{recovery.noReply}</strong><small>customer confirmation outstanding</small></div>
+        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small></div>
+      </>}
     </div>
     {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul>{plan.sessionChanges.map((change) => {
       const session = state.sessions.find((item) => item.id === change.sessionId);

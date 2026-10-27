@@ -226,6 +226,17 @@ describe("booking decisions", () => {
     expectValid(state, plan);
   });
 
+  it("breaks move ties by complete placement keys when room IDs share a prefix", () => {
+    const state = fixture();
+    state.rooms[0].id = "r";
+    state.rooms[1].id = "r-2";
+    state.sessions[0].roomId = "r";
+    const plan = replan(state, closure, { now });
+    expect(plan.sessionChanges[0]).toMatchObject({ remedy: "move_time", after: { instructorId: "i1", roomId: "r-2" } });
+    expect(plan.totals.refunded).toBe(0);
+    expectValid(state, plan);
+  });
+
   it("moves customers who refuse the substitute when the original instructor can retain them", () => {
     const state = fixture();
     state.customers[0].prefs.refundOnly = true;
@@ -317,8 +328,8 @@ describe("seed and determinism", () => {
     const state = seedStudio();
     expect(StateSchema.safeParse(state).success).toBe(true);
     expect([state.sessions.length, state.customers.length, state.instructors.length, state.rooms.length]).toEqual([42, 120, 6, 4]);
-    expect(state.customers.filter((customer) => !customer.prefs.acceptsSubstitute)).toHaveLength(5);
-    expect(state.customers.filter((customer) => customer.prefs.refundOnly)).toHaveLength(6);
+    expect(state.customers.filter((customer) => !customer.prefs.acceptsSubstitute)).toHaveLength(6);
+    expect(state.customers.filter((customer) => customer.prefs.refundOnly)).toHaveLength(2);
     expect(state.customers.every((customer) => customer.prefs.windows.length >= 2 && customer.prefs.windows.length <= 4)).toBe(true);
     const tz = state.studio.timezone;
     expect(localParts(state.sessions[0].start, tz)).toEqual({ weekday: 1, minutesOfDay: 420, dateKey: "2026-11-09" });
@@ -345,6 +356,10 @@ describe("seed and determinism", () => {
     expect(seedStudio(43)).not.toEqual(state);
   });
 
+  it("preserves the full reviewed hero plan", () => {
+    expect(replan(seedStudio(), demoDisruption)).toMatchSnapshot();
+  });
+
   it("hero disruption accounts for customer conflicts with substitutes and time moves under 200 ms", () => {
     const state = seedStudio();
     const start = performance.now();
@@ -357,8 +372,12 @@ describe("seed and determinism", () => {
     expect(plan.totals).toEqual({ sessionsAffected: 3, kept: 9, moved: 16, refunded: 6, refundAmount: "135.00", revenueKept: "577.00" });
     const refunds = plan.bookingActions.filter((action) => action.action === "refund");
     expect(refunds.length).toBeGreaterThan(0);
-    expect(refunds.every((action) => action.reason === "Prefers a refund after a disruption." &&
-      state.customers.find((customer) => customer.id === action.customerId)!.prefs.refundOnly)).toBe(true);
+    expect(refunds.reduce<Record<string, number>>((counts, { reason }) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {})).toEqual({
+      "Prefers a refund after a disruption.": 2,
+      "New time does not fit the customer's availability.": 2,
+      "Only books with Maya Chen; the replacement instructor is not accepted.": 1,
+      "Recovery would overlap the customer's other class; refund the booking.": 1,
+    });
     expect(demoDisruption.from).toBe("2026-11-09T05:00:00.000Z");
     expect(demoDisruption.to).toBe("2026-11-10T05:00:00.000Z");
     expectValid(state, plan);

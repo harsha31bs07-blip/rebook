@@ -4,6 +4,7 @@ import { useRef } from "react";
 import type { Interpretation } from "@/lib/client/api";
 import type { State } from "@/lib/domain/types";
 import { disruptionLabel, interpretationSource } from "@/lib/client/scheduler-mapping";
+import { overlaps, localParts } from "../../lib/domain/time";
 
 const examples = ["Maya has the flu and can't teach Monday", "The Cycle Lab AC is broken Wednesday afternoon", "Studio closed Saturday morning for a burst pipe"];
 
@@ -13,6 +14,12 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const label = interpretation && disruptionLabel(interpretation, state);
+  const affected = interpretation ? state.sessions.filter((session) => {
+    const disruption = interpretation.disruption;
+    return overlaps(session.start, session.end, disruption.from, disruption.to) &&
+      (disruption.kind === "closure" || (disruption.kind === "instructor_unavailable" ? session.instructorId === disruption.instructorId : session.roomId === disruption.roomId));
+  }) : [];
+  const allDay = interpretation && localParts(interpretation.disruption.from, state.studio.timezone).minutesOfDay === 0 && localParts(interpretation.disruption.to, state.studio.timezone).minutesOfDay === 0;
   return <>
     <p className="eyebrow">A little change of plans</p><h2>Let’s get your week<br />back on track.</h2>
     <p className="muted">Tell us what changed. We’ll find the best way to take care of everyone.</p>
@@ -33,7 +40,9 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
       <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={interpretation.aiBusy ? 0 : undefined} title={interpretation.aiBusy ? "AI is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{interpretation.aiBusy ? "Rules (AI busy)" : interpretationSource(interpretation.source, interpretation.model)}</span></div>
-      <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone} · {Math.round(interpretation.confidence * 100)}% confidence</p>
+      <h3>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone}</p>
+      <p><strong>Classes affected:</strong> {affected.length ? affected.map((session) => `${session.title} at ${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start))}`).join("; ") : "None scheduled in this window"}.</p>
+      {allDay && !/\ball day\b/i.test(text) && <p className="muted">Assumed all day {new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "long" }).format(new Date(interpretation.disruption.from))}.</p>}
       {interpretation.notes.length > 0 && <ul>{interpretation.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
       <div className="button-row"><button id="judge-plan" className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>
     </div>}

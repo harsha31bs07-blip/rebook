@@ -65,15 +65,14 @@ describe("seeded demo weeks", () => {
     expect((plan.totals.kept + plan.totals.moved) / plan.bookingActions.length).toBeGreaterThanOrEqual(0.75);
     expect(toCents(plan.totals.revenueKept)).toBeGreaterThanOrEqual(3 * toCents(plan.totals.refundAmount));
     const refunds = plan.bookingActions.filter(({ action }) => action === "refund");
-    expect(new Set(refunds.map(({ reason }) => reason))).toEqual(new Set([
-      "Prefers a refund after a disruption.",
-    ]));
-    for (const refund of refunds) {
-      const customer = state.customers.find(({ id }) => id === refund.customerId)!;
-      expect(customer.prefs.refundOnly).toBe(true);
-    }
+    expect(refunds.reduce<Record<string, number>>((counts, { reason }) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {})).toEqual({
+      "Prefers a refund after a disruption.": 2,
+      "New time does not fit the customer's availability.": 2,
+      "Only books with Maya Chen; the replacement instructor is not accepted.": 1,
+      "Recovery would overlap the customer's other class; refund the booking.": 1,
+    });
     expect(refunds.map(({ customerId }) => state.customers.find(({ id }) => id === customerId)!.name).sort()).toEqual([
-      "Gray Brooks", "Harper Brooks", "Indigo Brooks", "Logan Brooks", "Taylor Brooks", "Uma Brooks",
+      "Avery Brooks", "Gray Brooks", "Harper Brooks", "Indigo Brooks", "Taylor Brooks", "Uma Brooks",
     ]);
     const captures = realCaptureBookingIds(state).size;
     console.info(`hero ${startKey}`, JSON.stringify({ ...plan.totals,

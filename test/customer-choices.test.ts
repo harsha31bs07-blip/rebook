@@ -13,6 +13,8 @@ import { limits } from "../lib/api/limits";
 import { processWebhook } from "../lib/paypal/webhook";
 import { GET, POST } from "../app/api/choices/[token]/route";
 import { GET as workspaceGET } from "../app/api/workspaces/[id]/route";
+import { buildInsights } from "../lib/insights/data";
+import { recoveryMetric } from "../lib/insights/metrics";
 import type { Plan } from "../lib/domain/types";
 
 let directory: string, repository: Repository;
@@ -323,4 +325,19 @@ describe("token-only API", () => {
     const limited = await POST(new Request(`http://localhost/api/choices/${token}`, { method: "POST", body: '{"action":"keep"}' }), { params: Promise.resolve({ token }) });
     expect(limited.status).toBe(429); expect(limited.headers.get("Retry-After")).toBeTruthy();
   });
+});
+
+
+it("updates recovery KPIs after a private-link refund settles", async () => {
+  const { token, workspaceId } = fixture();
+  const data = () => buildInsights(repository.requireWorkspace(workspaceId).state, repository.listPlans(workspaceId), repository.listLedger(workspaceId), repository.listCustomerLinks(workspaceId));
+  expect(data().disruptions[0]).toMatchObject({ applied_saved: 2, applied_revenue_kept: 44, refunded: 0, pending: 1 });
+  expect(recoveryMetric(data().disruptions, "saved").value).toBe("67%");
+  refundStatus = "PENDING";
+  await submitChoice(token, { action: "refund" }, repository);
+  expect(data().disruptions[0]).toMatchObject({ applied_saved: 1, applied_revenue_kept: 22, refunded: 0, pending: 2, completed_refund_amount: 0, pending_refund_amount: 22 });
+  refundStatus = "COMPLETED";
+  await customerChoice(token, repository);
+  expect(data().disruptions[0]).toMatchObject({ applied_saved: 1, applied_revenue_kept: 22, refunded: 1, pending: 1, completed_refund_amount: 22, pending_refund_amount: 0 });
+  expect(recoveryMetric(data().disruptions, "saved").value).toBe("33%");
 });

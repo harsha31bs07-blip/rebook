@@ -163,11 +163,18 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
       bookingCounts.set(customer.id, (bookingCounts.get(customer.id) ?? 0) + 1);
     }
   }
-  // Recovery choices recorded after the ordinary week was booked: Avery now accepts
-  // cover, while Logan, Taylor and Uma prefer refunds after any disruption.
-  // Along with Gray, Harper and Indigo, these are the six genuine Monday refunds.
-  state.customers[0].prefs.acceptsSubstitute = true;
-  for (const index of [11, 19, 20]) state.customers[index].prefs.refundOnly = true;
+  // Two members prefer refunds. Avery only books Maya; the substitute is not accepted.
+  // Taylor and Uma cannot attend Tuesday lunch; Indigo already booked Tuesday evening.
+  state.customers[0].prefs.windows = [
+    ...windows([1, 4], "07:00", "20:00"), ...windows([2], "17:00", "20:00"), ...windows([6], "09:30", "10:30"),
+  ];
+  state.customers[8].prefs.windows = [
+    ...windows([1], "17:00", "20:00"), ...windows([2], "12:15", "13:15"), ...windows([2], "18:45", "19:45"),
+  ];
+  delete state.customers[8].prefs.refundOnly;
+  for (const index of [19, 20]) state.customers[index].prefs.windows = state.customers[index].prefs.windows.filter((window) => window.weekday !== 2);
+  const taylorTuesday = state.bookings.find((booking) => booking.customerId === state.customers[19].id && booking.sessionId === "session-011");
+  if (taylorTuesday) taylorTuesday.customerId = state.customers[78].id;
   // Devon can make Tuesday lunch, so availability no longer forces a demo refund.
   state.customers[39].prefs.windows.push({ weekday: 2, from: "12:15", to: "13:15" });
   return state;

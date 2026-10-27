@@ -6,7 +6,8 @@ type WireCall = NonNullable<StudioChatRequest["messages"][number]["tool_calls"]>
 type RememberedCall = { call: WireCall; turnId: string };
 type SignedCall = AgAiToolCall & { extra_content?: WireCall["extra_content"]; rebook_turn_id?: string };
 
-export const ANALYST_UNAVAILABLE = "The Recovery analyst can't reach Gemini right now. Your dashboard still works. Please try again shortly.";
+export const ANALYST_UNAVAILABLE = "The analyst is busy right now \u2014 try again in a moment.";
+export const ANALYST_CALL_TIMEOUT_MS = 45_000;
 
 export function toChatRequest(request: AgLlmRequest, remembered: ReadonlyMap<string, RememberedCall> = new Map()): StudioChatRequest {
   const messages: StudioChatRequest["messages"] = [];
@@ -70,29 +71,45 @@ export function fromChatCompletion(completion: StudioCompletion, remembered: Map
   return { response, events };
 }
 
+class AnalystInputError extends Error {}
+
 export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmAdapter {
   // Studio has no provider-metadata slot. Keep exact wire calls by callId as well as on output
   // items, so the opaque Google signature survives even if Studio clones its conversation items.
   const remembered = new Map<string, RememberedCall>();
   return {
     executeTurn(request, options) {
-      const pending = (async () => {
-        const unavailable = () => fromChatCompletion({ id: `unavailable-${Date.now()}`, choices: [{ finish_reason: "stop", message: { role: "assistant", content: ANALYST_UNAVAILABLE } }] }, remembered);
-        let response: Response;
-        try { response = await fetch(endpoint, { method: "POST", signal: options?.signal,
-          headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools, toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
-        } catch {
-          options?.signal?.throwIfAborted();
-          return unavailable();
-        }
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      const cancelled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error(ANALYST_UNAVAILABLE)); }, ANALYST_CALL_TIMEOUT_MS);
+        onAbort = () => { controller.abort(); reject(options?.signal?.reason ?? new DOMException("Cancelled", "AbortError")); };
+        options?.signal?.addEventListener("abort", onAbort, { once: true });
+        if (options?.signal?.aborted) onAbort();
+      });
+      const pending = Promise.race([(async () => {
+        options?.signal?.throwIfAborted();
+        const response = await fetch(endpoint, { method: "POST", signal: controller.signal,
+          headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools ?? [], toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
         if (!response.ok) {
-          if (response.status >= 500 || response.status === 429) return unavailable();
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || "The recovery analyst is unavailable. Please try again shortly.");
+          if ([400, 404, 409, 413].includes(response.status)) {
+            const error = await response.json().catch(() => ({}));
+            const message = error.issues?.find((issue: { message?: unknown }) => typeof issue.message === "string")?.message ?? error.error;
+            throw new AnalystInputError(typeof message === "string" ? message : ANALYST_UNAVAILABLE);
+          }
+          throw new Error(ANALYST_UNAVAILABLE);
         }
-        try { return fromChatCompletion(await response.json(), remembered); }
-        catch { options?.signal?.throwIfAborted(); return unavailable(); }
-      })();
+        return fromChatCompletion(await response.json(), remembered);
+      })(), cancelled]).catch((error: unknown) => {
+        options?.signal?.throwIfAborted();
+        if (error instanceof AnalystInputError) throw error;
+        // Reject both channels: successful text makes delegated runners retry complete_task.
+        throw new Error(ANALYST_UNAVAILABLE);
+      }).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        if (onAbort) options?.signal?.removeEventListener("abort", onAbort);
+      });
       const complete = pending.then((result) => result.response);
       // The stream consumer owns failures; avoid an unhandled rejection before it awaits complete.
       void complete.catch(() => {});

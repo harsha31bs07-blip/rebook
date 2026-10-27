@@ -3,7 +3,7 @@ import type { AgAiConversationItem, AgAiEvent, AgLlmRequest } from "ag-studio";
 import { ANALYST_UNAVAILABLE, fromChatCompletion, geminiAdapter, toChatRequest } from "../lib/insights/gemini-adapter";
 import type { StudioCompletion } from "../lib/ai/studio-gemini";
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 const request: AgLlmRequest = { instructions: "Cite tool data.", input: [{ id: "user", kind: "input", type: "message", role: "user", content: [{ type: "text", text: "What did it cost?" }], status: "completed" }],
   tools: [{ name: "get_disruptions", description: "Read plans", parameters: { type: "object", properties: {} } }], toolChoice: { name: "get_disruptions" }, responseFormat: { type: "text" }, model: { id: "gemini-3.5-flash" } };
 const toolResponse: StudioCompletion = { id: "answer-1", created: 100, model: "gemini-3.5-flash", choices: [{ finish_reason: "tool_calls", message: { role: "assistant", content: "Checking the ledger.", tool_calls: [
@@ -55,7 +55,7 @@ describe("Studio Gemini adapter", () => {
     for await (const event of handler.stream) events.push(event);
     const first = await handler.complete;
     expect(events).toHaveLength(3);
-    expect(transport.mock.calls[0][1].signal).toBe(controller.signal);
+    expect(transport.mock.calls[0][1].signal.aborted).toBe(false);
     const stripped = first.output.map((item) => item.type === "function_call" ? { id: item.id, kind: item.kind, type: item.type, callId: item.callId, name: item.name, arguments: item.arguments } : item);
     const next = adapter.executeTurn({ ...request, input: [...request.input, ...stripped] });
     for await (const event of next.stream) expect(event.type).toBe("TEXT_MESSAGE_CHUNK");
@@ -73,21 +73,44 @@ describe("Studio Gemini adapter", () => {
     expect(wire.messages[0].tool_calls).toEqual(toolResponse.choices[0].message.tool_calls);
     expect(wire.messages[3].tool_calls?.[0].id).toBe("call-3");
   });
-  it("shows a friendly chat message during proxy outages and marks token truncation incomplete", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Please try again shortly." }, { status: 503 })));
-    const handler = geminiAdapter("/llm").executeTurn(request);
-    const events: AgAiEvent[] = [];
-    for await (const event of handler.stream) events.push(event);
-    expect(events).toContainEqual(expect.objectContaining({ type: "TEXT_MESSAGE_CHUNK", delta: ANALYST_UNAVAILABLE }));
-    expect((await handler.complete).output[0]).toMatchObject({ type: "message", content: [{ type: "text", text: ANALYST_UNAVAILABLE, annotations: [] }] });
+  it.each([503, 429, 500])("rejects outages (%s) on both channels for top-level and delegated agents", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "upstream-secret" }, { status })));
+    for (const agent of [undefined, "page", "widget", "data", "planning"] as const) {
+      const handler = geminiAdapter("/llm", agent).executeTurn(request);
+      await expect(handler.complete).rejects.toThrow(ANALYST_UNAVAILABLE);
+      await expect(handler.stream[Symbol.asyncIterator]().next()).rejects.toThrow(ANALYST_UNAVAILABLE);
+    }
     expect(fromChatCompletion({ ...toolResponse, choices: [{ message: { role: "assistant", content: "partial" }, finish_reason: "length" }] }, new Map()).response.status).toBe("incomplete");
   });
-  it("keeps transport errors out of chat and still honours cancellation", async () => {
+  it.each([400, 413])("surfaces readable oversized input errors (%s)", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Invalid input", issues: [{ message: "This conversation is too large. Please start a new conversation." }] }, { status })));
+    await expect(geminiAdapter("/llm", "page").executeTurn(request).complete).rejects.toThrow("This conversation is too large");
+  });
+  it("rejects transport errors without exposing details and honours cancellation", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed: upstream stack")));
-    const handler = geminiAdapter("/llm").executeTurn(request);
-    expect((await handler.complete).output[0]).toMatchObject({ content: [{ type: "text", text: ANALYST_UNAVAILABLE, annotations: [] }] });
+    await expect(geminiAdapter("/llm").executeTurn(request).complete).rejects.toThrow(ANALYST_UNAVAILABLE);
     const controller = new AbortController(); controller.abort();
-    const cancelled = geminiAdapter("/llm").executeTurn(request, { signal: controller.signal });
-    await expect(cancelled.complete).rejects.toMatchObject({ name: "AbortError" });
+    await expect(geminiAdapter("/llm").executeTurn(request, { signal: controller.signal }).complete).rejects.toMatchObject({ name: "AbortError" });
+  });
+  it("aborts and rejects at 45 seconds even when fetch or the response body ignores abort", async () => {
+    vi.useFakeTimers();
+    for (const response of [undefined, { ok: true, json: () => new Promise(() => {}) }]) {
+      const transport = vi.fn().mockImplementation(() => response ? Promise.resolve(response) : new Promise(() => {}));
+      vi.stubGlobal("fetch", transport);
+      const handler = geminiAdapter("/llm", "page").executeTurn(request);
+      const rejected = expect(handler.complete).rejects.toThrow(ANALYST_UNAVAILABLE);
+      await vi.advanceTimersByTimeAsync(45_000);
+      await rejected;
+      expect(transport.mock.calls[0][1].signal.aborted).toBe(true);
+      await expect(handler.stream[Symbol.asyncIterator]().next()).rejects.toThrow(ANALYST_UNAVAILABLE);
+    }
+  });
+  it("cancels an in-flight transport that ignores abort immediately", async () => {
+    const transport = vi.fn().mockImplementation(() => new Promise(() => {})); vi.stubGlobal("fetch", transport);
+    const controller = new AbortController();
+    const handler = geminiAdapter("/llm").executeTurn(request, { signal: controller.signal });
+    controller.abort();
+    await expect(handler.complete).rejects.toMatchObject({ name: "AbortError" });
+    expect(transport.mock.calls[0][1].signal.aborted).toBe(true);
   });
 });

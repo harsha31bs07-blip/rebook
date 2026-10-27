@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { StoreError } from "../store";
-import { limits } from "../api/limits";
 import type { State } from "../domain/types";
 import type { AiIdentity } from "../ai/gemini";
 import { StudioChatSchema, studioCompletion } from "../ai/studio-gemini";
 import { agentTools } from "./agent-protocol";
+import { studioModelCompletion } from "../ai/studio-transport";
+import { studioRequestFits, STUDIO_REQUEST_TOO_LARGE } from "../ai/studio-request";
 
 const names = new Set<string>(Object.values(agentTools).flat());
 const toolName = z.string().refine((name) => names.has(name), "Unknown Studio tool");
@@ -20,7 +20,7 @@ export const RecoveryHarnessSchema = z.strictObject({
     toolChoice: z.union([z.enum(["auto", "none", "required"]), z.object({ name: toolName })]).optional(),
     responseFormat: z.union([z.object({ type: z.literal("text") }), z.object({ type: z.literal("json"), name: z.string(), description: z.string().optional(), schema: z.record(z.string(), z.unknown()) })]).optional(),
   }),
-}).superRefine(({ harness }, ctx) => {
+}).refine(studioRequestFits, STUDIO_REQUEST_TOO_LARGE).superRefine(({ harness }, ctx) => {
   const allowed: readonly string[] = agentTools[harness.agent];
   if (harness.tools.some((entry) => !allowed.includes(entry.name))) ctx.addIssue({ code: "custom", message: "Tool is unavailable to this Studio agent" });
   if (typeof harness.toolChoice === "object" && !harness.tools.some((entry) => entry.name === (harness.toolChoice as { name: string }).name)) ctx.addIssue({ code: "custom", message: "Tool choice is not offered" });
@@ -35,39 +35,14 @@ const completionSchema = z.object({ id: z.string(), model: z.string().optional()
 export async function recoveryCompletion(body: z.infer<typeof RecoveryChatSchema>, signal: AbortSignal, identity: AiIdentity, state: State) {
   if (!("harness" in body)) return studioCompletion(body, signal, identity, state);
   const { harness } = body;
-  const unavailable = () => new StoreError(503, "The recovery analyst is temporarily unavailable. Your insights are still available; please try again shortly.");
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) throw unavailable();
-  const configured = (process.env.GEMINI_MODELS || "gemini-flash-lite-latest,gemini-3.5-flash,gemini-flash-latest").split(",").map((model) => model.trim()).filter(Boolean);
-  const models = body.model && configured.includes(body.model) ? [body.model, ...configured.filter((model) => model !== body.model)] : configured;
-  const started = Date.now();
-  for (const model of models) {
-    if (signal.aborted || Date.now() - started >= 25_000) break;
-    const controller = new AbortController();
-    const release = limits.aiCall(identity.client, identity.workspace);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(unavailable()); }, Math.min(12_000, 25_000 - (Date.now() - started))); });
-      const completion = await Promise.race([(async () => {
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-          method: "POST", cache: "no-store", signal: AbortSignal.any([signal, controller.signal]),
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-          body: JSON.stringify(providerBody(body, state, model)),
-        });
-        if (!response.ok) { if ([401, 403].includes(response.status)) throw new Error("credentials"); return undefined; }
-        const completion = completionSchema.parse(await response.json());
-        const message = completion.choices[0].message;
-        if (!message.content && !message.tool_calls?.length) return undefined;
-        // A model cannot invoke a tool from a different agent's roster.
-        if (message.tool_calls?.some((entry) => !harness.tools.some((offered) => offered.name === entry.function.name))) return undefined;
-        return completion;
-      })(), deadline]);
-      if (completion) return completion;
-    } catch (error) {
-      if (error instanceof Error && error.message === "credentials") break;
-    } finally { release(); if (timer !== undefined) clearTimeout(timer); }
-  }
-  throw unavailable();
+  return studioModelCompletion(body.model, signal, identity, (model) => providerBody(body, state, model), (value) => {
+    const completion = completionSchema.parse(value);
+    const message = completion.choices[0].message;
+    if (!message.content && !message.tool_calls?.length) throw new Error("Empty completion");
+    // A model cannot invoke a tool from a different agent's roster.
+    if (message.tool_calls?.some((entry) => !harness.tools.some((offered) => offered.name === entry.function.name))) throw new Error("Unoffered tool");
+    return completion;
+  });
 }
 
 export function providerBody(body: HarnessRequest, state: State, model: string) {

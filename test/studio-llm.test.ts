@@ -7,10 +7,18 @@ import { studioCompletion } from "../lib/ai/studio-gemini";
 import { closeRepository, getRepository } from "../lib/store";
 import { seedStudio } from "../lib/seed/seed";
 import { limits } from "../lib/api/limits";
+import { delegatedTurn } from "./fixtures/delegated-turn";
+import { STUDIO_REQUEST_BYTES } from "../lib/ai/studio-request";
+import { directLlmRunner, type AgAiEvent } from "ag-studio";
+import { ANALYST_UNAVAILABLE, geminiAdapter } from "../lib/insights/gemini-adapter";
+import { recoveryRunGuard } from "../lib/insights/run-guard";
 
 let directory: string;
+let epoch = Date.now();
 beforeEach(() => {
   limits.reset();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(epoch += 120_000);
   directory = mkdtempSync(join(tmpdir(), "rebook-studio-llm-"));
   vi.stubEnv("DATA_DIR", directory); vi.stubEnv("GEMINI_API_KEY", "test-secret");
   vi.stubEnv("GEMINI_MODELS", "gemini-flash-lite-latest,gemini-3.5-flash");
@@ -38,6 +46,46 @@ describe("Studio LLM proxy", () => {
     expect(provider.model).toBe("gemini-flash-lite-latest");
     expect(provider.max_tokens).toBe(4096);
     expect((await response.json()).choices[0].message.tool_calls[0].function.name).toBe("complete_task");
+  });
+  it("accepts realistic 50 KiB delegated turns and three concurrent calls after prior fallback rounds", async () => {
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const payload = delegatedTurn();
+    const bytes = Buffer.byteLength(JSON.stringify(payload));
+    expect(bytes).toBeGreaterThanOrEqual(50_000);
+    expect(bytes).toBeLessThan(65_536);
+    console.info(JSON.stringify({ message: "delegated_test_payload", bytes }));
+    // Three previous two-model rounds have already consumed six upstream attempts.
+    for (let i = 0; i < 6; i++) limits.aiCall("unknown", workspace.id)();
+    const signals: AbortSignal[] = [];
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    const fetch = vi.fn().mockImplementation(async (_url, options) => {
+      signals.push(options.signal);
+      await held;
+      return Response.json(completion);
+    });
+    vi.stubGlobal("fetch", fetch);
+    const pending = Array.from({ length: 3 }, () => POST(new Request("http://localhost/llm", { method: "POST", headers: { "X-Rebook-Studio": "harness" }, body: JSON.stringify(payload) }), context(workspace.id)));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+    finish();
+    expect((await Promise.all(pending)).map((response) => response.status)).toEqual([200, 200, 200]);
+    const provider = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(provider.messages[3].tool_calls[0].extra_content.google.thought_signature).toBe("delegate-signature-exact==");
+    expect(provider.tools[0].function.parameters).toEqual(payload.harness.tools[0].parameters);
+  });
+  it("accepts a large legacy conversation and rejects both contracts above the byte ceiling", async () => {
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const fetch = vi.fn().mockResolvedValue(Response.json(completion)); vi.stubGlobal("fetch", fetch);
+    expect((await POST(post({ messages: [{ role: "user", content: "x".repeat(50_000) }] }), context(workspace.id))).status).toBe(200);
+    for (const harness of [false, true]) {
+      const payload = harness ? delegatedTurn() : { messages: [{ role: "user", content: "" }] };
+      payload.messages[0].content = "\u00e9".repeat(STUDIO_REQUEST_BYTES / 2);
+      const response = await POST(new Request("http://localhost/llm", { method: "POST", headers: harness ? { "X-Rebook-Studio": "harness" } : {}, body: JSON.stringify(payload) }), context(workspace.id));
+      expect(response.status).toBe(413);
+      expect((await response.json()).error).toContain("too large");
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("rejects tools from another agent or external providers before making a harness request", async () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
@@ -73,7 +121,8 @@ describe("Studio LLM proxy", () => {
     expect(await response.text()).not.toContain("test-secret");
   });
   it("limits each workspace and client and reopens the bucket after a minute", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.stubEnv("AI_CLIENT_CALLS_PER_MIN", "10");
+    vi.stubEnv("AI_WORKSPACE_CALLS_PER_MIN", "10");
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json(completion)));
     vi.stubGlobal("fetch", fetch);
     const workspace = getRepository().createWorkspace(seedStudio());
@@ -94,15 +143,58 @@ describe("Studio LLM proxy", () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     expect((await POST(post(), context(workspace.id))).status).toBe(503);
   });
+  it("carries all-model 503 failures through the route and adapter to Studio's terminal chat error", async () => {
+    const workspace = getRepository().createWorkspace(seedStudio());
+    const fetch = vi.fn().mockImplementation((url, options) => url === "/llm"
+      ? POST(new Request("http://localhost/llm", options), context(workspace.id))
+      : Promise.resolve(new Response("upstream-secret", { status: 503 })));
+    vi.stubGlobal("fetch", fetch);
+    const runner = recoveryRunGuard()(directLlmRunner({ id: "page", adapter: geminiAdapter("/llm", "page") }));
+    const events: AgAiEvent[] = [];
+    for await (const event of runner.run({ threadId: "thread", runId: "run", messages: [{ id: "user", role: "user", content: "Add the chart" }], tools: [], state: {}, context: [], forwardedProps: {} }, { params: {}, instructions: () => "Add the chart", tools: () => [] })) events.push(event);
+    expect(fetch).toHaveBeenCalledTimes(3); // One local request, two upstream models.
+    expect(events.at(-1)).toMatchObject({ type: "RUN_ERROR", message: ANALYST_UNAVAILABLE });
+    expect(JSON.stringify(events)).not.toContain("upstream-secret");
+  });
   it("applies deadlines to transports that ignore abort and falls back", async () => {
     vi.useFakeTimers();
     const fetch = vi.fn().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(Response.json(completion));
     vi.stubGlobal("fetch", fetch);
     const pending = studioCompletion(body);
-    await vi.advanceTimersByTimeAsync(12_001);
+    await vi.advanceTimersByTimeAsync(4_001);
     expect((await pending).id).toBe("ok");
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+  it.each([429, 503])("skips recently overloaded models (%s) across agents and retries them after cooldown", async (status) => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status })).mockImplementation(() => Promise.resolve(Response.json(completion)));
+    vi.stubGlobal("fetch", fetch);
+    const workspace = getRepository().createWorkspace(seedStudio());
+    expect((await POST(post(), context(workspace.id))).status).toBe(200);
+    expect((await POST(new Request("http://localhost/llm", { method: "POST", headers: { "X-Rebook-Studio": "harness" }, body: JSON.stringify(delegatedTurn()) }), context(workspace.id))).status).toBe(200);
+    expect(fetch.mock.calls.map((entry) => JSON.parse(entry[1].body).model)).toEqual(["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash"]);
+    vi.setSystemTime(Date.now() + 30_001);
+    expect((await POST(post(), context(workspace.id))).status).toBe(200);
+    expect(JSON.parse(fetch.mock.calls[3][1].body).model).toBe("gemini-flash-lite-latest");
+  });
+  it("bounds the full model chain, aborts hung bodies and logs only model/status/timing", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("GEMINI_MODELS", "slow-a,slow-b,slow-c,slow-d");
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve({ ok: true, json: () => new Promise(() => {}) }));
+    vi.stubGlobal("fetch", fetch);
+    const pending = studioCompletion(body);
+    const rejected = expect(pending).rejects.toMatchObject({ status: 503 });
+    await vi.advanceTimersByTimeAsync(25_000);
+    await rejected;
+    expect(fetch.mock.calls.map((entry) => JSON.parse(entry[1].body).model)).toEqual(["slow-a", "slow-b", "slow-c"]);
+    expect(fetch.mock.calls.every((entry) => entry[1].signal.aborted)).toBe(true);
+    expect(log.mock.calls.map(([entry]) => JSON.parse(entry))).toEqual([
+      { message: "ai_call", model: "slow-a", status: "timeout", ms: 4000 },
+      { message: "ai_call", model: "slow-b", status: "timeout", ms: 20000 },
+      { message: "ai_call", model: "slow-c", status: "timeout", ms: 1000 },
+    ]);
+    log.mockRestore();
   });
   it("checks workspace and request shape before making an upstream call", async () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);

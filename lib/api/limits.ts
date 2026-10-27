@@ -48,8 +48,8 @@ export class Limits {
     this.take([
       { key: "ai-minute", max: envLimit("AI_CALLS_PER_MIN", 30), ms: 60_000 },
       { key: "ai-day", max: envLimit("AI_CALLS_PER_DAY", 1200), ms: 86_400_000 },
-      { key: `ai-client:${client}`, max: envLimit("AI_CLIENT_CALLS_PER_MIN", 10), ms: 60_000 },
-      { key: `ai-workspace:${workspace}`, max: envLimit("AI_WORKSPACE_CALLS_PER_MIN", 10), ms: 60_000 },
+      { key: `ai-client:${client}`, max: envLimit("AI_CLIENT_CALLS_PER_MIN", 24), ms: 60_000 },
+      { key: `ai-workspace:${workspace}`, max: envLimit("AI_WORKSPACE_CALLS_PER_MIN", 24), ms: 60_000 },
     ], 503);
     this.ai++;
     let released = false;

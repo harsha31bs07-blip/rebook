@@ -17,7 +17,7 @@ The walkthrough takes about 60 seconds once your studio is ready (first load can
 3. Review **9 kept / 16 moved / 6 refunded**, with **$577 kept vs $135 refunded**. Alex covers yoga; dance and barre move to Tuesday. Optionally use **Move** or drag a recovery class; totals update after validation.
 4. Click **Approve and refund**. Review the six sandbox refund receipts. If PayPal is slow, **Retry** reconciles existing refunds before another attempt.
 5. In **Customer messages and links**, open a card labelled **Private choice link** and choose **Keep** or **Refund**.
-6. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?" or "Show refunds by reason as a chart".
+6. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?", "Which class type earns the most revenue?" or "Add a bar chart of revenue by class type".
 
 ## What is real
 
@@ -63,7 +63,7 @@ Rebook's solver does the re-planning. Bryntum Scheduler is the interactive revie
 | Inspect the dashboard's cards, grids and charts | Rebook's colours and typography through `studioTheme.withParams` | [theme.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/theme.ts#L3-L19) |
 | Change the report layout or page, then reload that workspace | Report state saved under a workspace-specific browser-storage key | [studio-report.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/studio-report.tsx#L38-L56) |
 | Click a Week heatmap cell, then Clear selection | Other widgets filter by instructor AND day; the matrix remains available | [widgets.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/widgets.tsx#L50-L76) |
-| Ask Recovery analyst: "Show refunds by reason as a chart" or "Filter to Maya's classes" | Studio Agent Framework delegates real report changes to built-in Page/Widget agents; Data and Planning specialists are available | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L73-L87) |
+| Ask Recovery analyst: "Which class type earns the most revenue?" or "Add a bar chart of refunds by reason" | Direct, timestamped tools answer common questions in one fast call; preset charts are placed through Studio's state API; custom report edits ("Filter to Maya's classes") delegate to the built-in Page/Widget agents | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L73-L87) |
 | Ask what Monday cost; expand its lookup cards | Custom disruption/receipt tools return workspace records with readable tool cards | [tools](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L54-L72), [tool-cards.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/tool-cards.tsx#L14-L42) |
 | Use the analyst while Gemini is configured | Provider adapter forwards live schemas, cancellation and Google thought signatures; outages show a recoverable message | [gemini-adapter.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/gemini-adapter.ts#L11-L101) |
 
@@ -90,7 +90,7 @@ flowchart LR
   Executor --> Store
   Executor --> SDK[PayPal Server SDK / APIMatic]
   Routes --> SDK
-  Routes --> Gemini[Gemini: interpretation + analyst]
+  Routes --> Gemini[Gemini, Groq fallback: interpretation + analyst]
   SDK --> PayPal[PayPal sandbox]
   PayPal --> Webhooks[Signature-verified webhooks]
   Webhooks --> Routes

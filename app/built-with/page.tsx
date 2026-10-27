@@ -29,7 +29,7 @@ const studio: FeatureRow[] = [
   ["Relational data and formatting", "Eight related tables, numeric currency measures and studio-local dates/times.", "lib/insights/studio-data.ts#L8-L42"],
   ["Built-in visualisations", "Values, grids and grouped bar/column charts for revenue, refunds and actions.", "lib/insights/report.ts#L25-L51"],
   ["CSV export / PNG download", "CSV on grids and charts; PNG download on charts.", "components/insights/widgets.tsx#L190-L198"],
-  ["Studio Agent Framework", "Custom Recovery analyst delegates to built-in Data, Page, Planning and Widget agents.", "lib/insights/ai.ts#L73-L87"],
+  ["Studio Agent Framework", "Custom Recovery analyst answers common questions with direct tools and preset charts, and delegates custom report edits to built-in Data, Page, Planning and Widget agents.", "lib/insights/ai.ts#L73-L87"],
   ["Custom tools and tool cards", "Disruption and refund-receipt lookups display friendly expandable results.", "lib/insights/ai.ts#L54-L72"],
   ["Tool card rendering", "Expand a lookup result to inspect its disruption or refund receipt details.", "components/insights/tool-cards.tsx#L14-L42"],
   ["Provider adapter", "Gemini proxy forwards live tool schemas, cancellation and Google thought signatures.", "lib/insights/gemini-adapter.ts#L11-L101"],

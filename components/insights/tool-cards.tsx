@@ -57,7 +57,7 @@ function AnalystToolCard({ result }: AgAiToolDetailParams) {
         : `${titleCase(String(row.status))} · ${row.kept} kept · ${row.moved} moved · ${row.refunded} refunded · ${row.simulatedRefunded} simulated refunds · ${row.pending} pending · ${row.noReply} without reply · ${usd(row.revenueKept)} kept · ${usd(row.completedRefundAmount)} refunded · ${usd(row.simulatedRefundAmount)} simulated · ${usd(row.pendingRefundUSD)} pending · ${usd(row.failedRefundUSD)} failed · ${usd(row.plannedRefundUSD)} forecast`}
     </p>)}
     {rows.length > 8 && <p>{rows.length - 8} more records read.</p>}
-    {data.asOf ? <p>Data as of <time dateTime={String(data.asOf)}>{String(data.asOf)}</time>{data.timezone ? ` · ${data.timezone}` : ""}</p> : null}
+    {data.asOf ? <p>Data as of <time dateTime={String(data.asOfIso ?? data.asOf)}>{String(data.asOf)}</time>{data.timezone ? ` · ${data.timezone}` : ""}</p> : null}
     {data.note ? <p>{String(data.note)}</p> : null}
   </div>;
 }

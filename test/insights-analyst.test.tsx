@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { AgAiAgentRunner, AgAiEvent, AgAiHarnessConfig, AgAiRunInput, AgAiTool, AgAiToolContext, AgAiToolLabelParams, AgReportState, AgStudioApi } from "ag-studio";
 import { buildInsights, type Insights } from "../lib/insights/data";
-import { getRecoverySummary, getRefundBreakdown, getRevenueBreakdown, getCoverSummary } from "../lib/insights/analyst-tools";
+import { getRecoverySummary, getRefundBreakdown, getRevenueBreakdown, getCoverSummary, readableAsOf } from "../lib/insights/analyst-tools";
 import { buildRecoveryAi, recoveryInstructions } from "../lib/insights/ai";
 import { addPresetChart, chartPresets, presetWidgets } from "../lib/insights/chart-presets";
 import { initialReport } from "../lib/insights/report";
@@ -77,7 +77,7 @@ describe("direct analyst answers", () => {
     const result = getRecoverySummary(data);
     expect(result).toMatchObject({ kept: 9, moved: 16, refunded: 6, pending: 0, noReply: 25, revenueKept: 577, completedRefundAmount: 135, simulatedRefundAmount: 0 });
     expect(result.disruptions[0]).toMatchObject({ kept: 9, moved: 16, refunded: 6, revenueKept: 577, completedRefundAmount: 135 });
-    expect(result.asOf).toBe(data.as_of);
+    expect(result.asOf).toBe(readableAsOf(data));
     expect(JSON.stringify(result)).not.toContain(data.disruptions[0].id);
   });
 
@@ -87,7 +87,7 @@ describe("direct analyst answers", () => {
     expect(result.rows.reduce((sum, row) => sum + row.requests, 0)).toBe(6);
     expect(result.rows.reduce((sum, row) => sum + row.completedUSD, 0)).toBe(135);
     expect(result.rows.every((row) => row.pendingUSD === 0 && row.simulatedUSD === 0 && row.failedUSD === 0)).toBe(true);
-    expect(result.asOf).toBe(data.as_of);
+    expect(result.asOf).toBe(readableAsOf(data));
   });
 
   it.each(["class_type", "instructor", "day"] as const)("groups booked and kept revenue by %s with recovery revenue of 577 USD", (group) => {
@@ -101,7 +101,7 @@ describe("direct analyst answers", () => {
     const full = getRevenueBreakdown(data, group);
     const unaffected = data.bookings.filter((row) => !recoveryIds.has(row.id)).reduce((sum, row) => sum + row.amount, 0);
     expect(full.rows.reduce((sum, row) => sum + row.keptUSD, 0)).toBe(577 + unaffected);
-    expect(result.asOf).toBe(data.as_of);
+    expect(result.asOf).toBe(readableAsOf(data));
   });
 
   it("reports hero covered classes and distinguishes proposed cover from applied", () => {
@@ -110,7 +110,7 @@ describe("direct analyst answers", () => {
     expect(result.rows).toHaveLength(plan.sessionChanges.filter((row) => row.remedy === "substitute").length);
     expect(result.rows.length).toBeGreaterThan(0);
     expect(result.rows.every((row) => row.originalInstructor === "Maya Chen" && row.coveringInstructor !== "Maya Chen" && row.status === "executed")).toBe(true);
-    expect(result.asOf).toBe(data.as_of);
+    expect(result.asOf).toBe(readableAsOf(data));
     const proposed = buildInsights(workspace.state, [{ ...plan, status: "proposed" }], []);
     expect(getRecoverySummary(proposed)).toMatchObject({ affected: 0, revenueKept: 0, completedRefundAmount: 0 });
     expect(getCoverSummary(proposed).rows.every((row) => row.status === "proposed")).toBe(true);
@@ -151,7 +151,7 @@ describe("direct analyst answers", () => {
       const result = await tool.execute!({ name, toolCallId: name, args: {} }, ctx);
       const display = recoveryToolDisplay[name];
       const html = renderToStaticMarkup(createElement(display.detail!, { name, args: {}, status: "done", result }));
-      expect(html).toContain(data.as_of); expect(html).not.toContain(name);
+      expect(html).toContain(readableAsOf(data)); expect(html).toContain(data.as_of); expect(html).not.toContain(name);
       expect(html).not.toContain("NaN"); expect(html).not.toContain("undefined");
       if (name === "get_recovery_summary") { expect(html).toContain("9 kept"); expect(html).toContain("$577.00 kept"); expect(html).toContain("$135.00 refunded"); }
       const label = { args: {}, status: "cancelled" } as AgAiToolLabelParams;

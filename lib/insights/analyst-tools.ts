@@ -5,7 +5,9 @@ import { localTimeLabel, titleCase } from "./formatting";
 export type RefundGroup = "reason" | "class" | "status";
 export type RevenueGroup = "class_type" | "instructor" | "day";
 const money = (values: number[]) => values.reduce((sum, value) => sum + Math.round(value * 100), 0) / 100;
-const stamp = (data: Insights) => ({ asOf: data.as_of, timezone: data.studio.timezone, currency: data.studio.currency, scope: "Loaded workspace week; independent of report filters" });
+// Readable provenance: the model quotes asOf verbatim, so it must not be a raw ISO timestamp.
+export const readableAsOf = (data: Insights) => new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(data.as_of));
+const stamp = (data: Insights) => ({ asOf: readableAsOf(data), asOfIso: data.as_of, timezone: data.studio.timezone, currency: data.studio.currency, scope: "Loaded workspace week; independent of report filters" });
 
 export function getRecoverySummary(data: Insights) {
   return { ...stamp(data), ...summarizeRecovery(data.recovery_outcomes),

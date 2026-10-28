@@ -206,6 +206,14 @@ describe("disruption interpretation", () => {
     fetchMock.mockResolvedValue(response(intent({ startTime: "14:00", endTime: "16:00" })));
     expect(await interpretDisruption("Maya texted: won't make it Monday from 2pm to 4pm", state, "2026-11-09T05:15:00Z")).toMatchObject({ needsConfirmation: true });
   });
+  it.each([
+    { text: "Maya texted: can't teach Monday from 14:00 to 16:00", answer: { kind: "instructor_unavailable", name: "Maya Chen", day: "Monday", confidence: 0.9 } },
+    { text: "Maya texted: won't make it Monday", answer: { kind: "instructor_unavailable", name: "Maya Chen", day: "monday" } },
+    { text: "Maya texted: won't make it Monday", answer: { kind: "instructor_unavailable", name: "Maya Chen", day: "monday", confidence: null } },
+  ])("does not let a sparse answer widen 24-hour times or skip confidence: $text", async ({ text, answer }) => {
+    fetchMock.mockResolvedValue(response(answer));
+    expect(await interpretDisruption(text, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+  });
   it("accepts a fallback provider's sparse answer with a capitalised day", async () => {
     fetchMock.mockResolvedValue(response({ kind: "instructor_unavailable", name: "Maya Chen", day: "Monday", confidence: 0.9 }));
     const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now);

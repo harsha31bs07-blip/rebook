@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "../../lib/client/api";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
 
-const STATUS = { asked: "Asked", accepted: "Accepted", declined: "Declined" } as const;
+const STATUS = { asked: "Asked", accepted: "Accepted", declined: "Declined", replaced: "Replaced by a later change" } as const;
 const PAYOUT: Record<string, string> = { REQUESTED: "Sending to PayPal", PENDING: "Processing with PayPal", SUCCESS: "Paid", UNCLAIMED: "Unclaimed",
   ONHOLD: "On hold", FAILED: "Failed", RETURNED: "Returned", BLOCKED: "Blocked", REFUNDED: "Refunded", REVERSED: "Reversed", DENIED: "Declined" };
 

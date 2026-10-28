@@ -123,6 +123,58 @@ it("records PayPal's item status read-only", async () => {
   expect(coverView(token, repository).payout).toMatchObject({ status: "SUCCESS", itemId: "ITEM-9" });
 });
 
+it("never opens a second payout when PayPal answers a replay with a duplicate batch", async () => {
+  await approved(true);
+  payouts = () => { throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  payouts = () => Response.json({ name: "USER_BUSINESS_ERROR", message: "Batch with given sender_batch_id already exists" }, { status: 400 });
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1, error: expect.stringContaining("already have this payout") });
+  payouts = () => Response.json({ name: "VALIDATION_ERROR", message: "Invalid request" }, { status: 422 });
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1 });
+  expect(new Set(posts().map(requestId)).size).toBe(1);
+});
+
+it("keeps a payout unresolved when PayPal's success response has no batch id", async () => {
+  await approved(true);
+  payouts = () => new Response('{"batch_header":', { status: 201, headers: { "content-type": "application/json" } });
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1 });
+  payouts = () => created("BATCH-LATE");
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()[0]).toMatchObject({ status: "PENDING", batchId: "BATCH-LATE" });
+  expect(new Set(posts().map(requestId)).size).toBe(1);
+});
+
+it("refuses to pay or accept a cover that a later recovery reassigned", async () => {
+  await approved();
+  await respondToCover(token, "accept", repository);
+  const state = repository.requireWorkspace(workspaceId).state;
+  state.sessions.find((session) => session.id === sessionId)!.instructorId = "instructor-04";
+  repository.saveState(workspaceId, state);
+  expect(ownerCovers(workspaceId, repository)[0].status).toBe("replaced");
+  expect(coverView(token, repository)).toMatchObject({ status: "replaced", canRespond: false });
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 409 });
+  await expect(respondToCover(token, "decline", repository)).rejects.toMatchObject({ status: 409 });
+  expect(posts()).toHaveLength(0);
+});
+
+it("does not let an older status response overwrite a newer one, and keeps checking unclaimed payouts for weeks", async () => {
+  await approved(true);
+  await payCover(workspaceId, planId, sessionId, repository);
+  const timers = globalThis as typeof globalThis & { rebookCoverRefresh?: Map<string, number> };
+  // A concurrent check records SUCCESS while this one is still waiting on an older PENDING answer.
+  payouts = () => { const row = payoutRows()[0]; repository.saveCoverPayout({ ...row, status: "SUCCESS", itemId: "ITEM-NEW", updatedAt: new Date(Date.now() + 1000).toISOString() });
+    return Response.json({ batch_header: { batch_status: "PROCESSING" }, items: [{ payout_item_id: "ITEM-OLD", transaction_status: "PENDING" }] }); };
+  timers.rebookCoverRefresh?.clear(); await refreshCoverPayouts(workspaceId, repository);
+  expect(payoutRows()[0]).toMatchObject({ status: "SUCCESS", itemId: "ITEM-NEW" });
+  repository.saveCoverPayout({ ...payoutRows()[0], status: "UNCLAIMED", createdAt: new Date(Date.now() - 20 * 86_400_000).toISOString() });
+  payouts = () => Response.json({ batch_header: { batch_status: "SUCCESS" }, items: [{ payout_item_id: "ITEM-NEW", transaction_status: "SUCCESS" }] });
+  timers.rebookCoverRefresh?.clear(); await refreshCoverPayouts(workspaceId, repository);
+  expect(payoutRows()[0]).toMatchObject({ status: "SUCCESS" });
+});
+
 it("needs a configured sandbox payee", async () => {
   await approved(true); vi.stubEnv("PAYPAL_PAYOUT_RECEIVER", "");
   await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 503 });

@@ -27,7 +27,7 @@ function details(link: CoverLink, repository: Repository) {
   const change = plan?.sessionChanges.find((item) => item.sessionId === link.sessionId);
   const name = (id?: string) => state.instructors.find((item) => item.id === id)?.name ?? "Studio team";
   const payout = repository.listCoverPayouts(link.workspaceId).find((item) => item.planId === link.planId && item.sessionId === link.sessionId);
-  return { state, session, instructor: name(link.instructorId), original: name(change?.before.instructorId),
+  return { state, session, instructor: name(link.instructorId), original: name(change?.before.instructorId), current: session?.instructorId === link.instructorId,
     payout: payout && { status: payout.status, amount: payout.amount, itemId: payout.itemId, error: payout.error } };
 }
 const payoutLocks = (payout?: { status: string }) => !!payout && ACTIVE.concat("SUCCESS").includes(payout.status);
@@ -40,11 +40,11 @@ export function coverView(token: string, repository = getRepository()) {
   return viewOf(link, repository);
 }
 function viewOf(link: CoverLink, repository: Repository) {
-  const { state, session, instructor, original, payout } = details(link, repository);
+  const { state, session, instructor, original, payout, current } = details(link, repository);
   if (!session) throw new StoreError(410, "This class is no longer on the schedule.");
-  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: link.status, fee: link.fee, instructor, original,
+  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: current ? link.status : "replaced" as const, fee: link.fee, instructor, original,
     class: { title: session.title, start: session.start, end: session.end, room: state.rooms.find((room) => room.id === session.roomId)?.name ?? "Studio" },
-    payout, canRespond: !payoutLocks(payout) && Date.parse(session.start) > Date.now() };
+    payout, canRespond: current && !payoutLocks(payout) && Date.parse(session.start) > Date.now() };
 }
 export type CoverView = ReturnType<typeof viewOf>;
 
@@ -54,7 +54,7 @@ export async function respondToCover(token: string, action: "accept" | "decline"
   await withWorkspaceLock(repository, initial.workspaceId, () => repository.transaction(() => {
     const link = repository.coverLinkByToken(token)!;
     const view = viewOf(link, repository);
-    if (!view.canRespond) throw new StoreError(409, view.payout ? "This cover has already been paid." : "This class has already started.");
+    if (!view.canRespond) throw new StoreError(409, view.status === "replaced" ? "A later schedule change gave this class to someone else." : view.payout ? "This cover has already been paid." : "This class has already started.");
     const status = action === "accept" ? "accepted" : "declined";
     if (link.status !== status) repository.saveCoverLink({ ...link, status, respondedAt: new Date().toISOString(), respondedBy: "instructor" });
   }));
@@ -65,9 +65,9 @@ export async function respondToCover(token: string, action: "accept" | "decline"
 export function ownerCovers(workspaceId: string, repository = getRepository()) {
   void refreshCoverPayouts(workspaceId, repository).catch(() => {});
   return repository.listCoverLinks(workspaceId).map((link) => {
-    const { state, session, instructor, original, payout } = details(link, repository);
+    const { state, session, instructor, original, payout, current } = details(link, repository);
     const when = session ? new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start)) : "";
-    return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when, status: link.status,
+    return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when, status: current ? link.status : "replaced" as const,
       respondedBy: link.respondedBy, fee: link.fee, path: `/i/${repository.coverToken(link)}`, payout, payee: Boolean(process.env.PAYPAL_PAYOUT_RECEIVER?.trim()) };
   });
 }
@@ -81,7 +81,9 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
     const link = repository.listCoverLinks(workspaceId).find((item) => item.planId === planId && item.sessionId === sessionId);
     if (!link) throw new StoreError(404, "Cover not found");
     if (link.status !== "accepted") throw new StoreError(409, "Pay a cover only after the instructor accepts it.");
-    const { session } = details(link, repository);
+    const { session, current } = details(link, repository);
+    const paidBefore = repository.listCoverPayouts(workspaceId).some((item) => item.planId === planId && item.sessionId === sessionId);
+    if (!current && !paidBefore) throw new StoreError(409, "A later schedule change gave this class to someone else.");
     const payout = repository.transaction(() => {
       const previous = repository.listCoverPayouts(workspaceId).find((item) => item.planId === planId && item.sessionId === sessionId);
       if (previous && previous.status !== "REQUESTED" && payoutLocks(previous)) throw new StoreError(409, previous.status === "SUCCESS" ? "This cover is already paid." : "This payout is already with PayPal.");
@@ -97,10 +99,15 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
       repository.renewLock(workspaceId, owner);
       repository.saveCoverPayout({ ...payout, status: "PENDING", batchId: result.batchId, error: undefined, updatedAt: new Date().toISOString() });
     } catch (error) {
-      // A definitive rejection may be retried with a new attempt; anything else stays REQUESTED and replays the same id.
-      if (error instanceof PayPalError && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status)) {
+      // Only a rejection of a first send proves no money moved. A replay of an unknown attempt (e.g. PayPal's duplicate
+      // batch answer) may mean the original payout exists, so it stays REQUESTED with the same id and never gets a new one.
+      const replay = payout.createdAt !== payout.updatedAt;
+      if (!replay && error instanceof PayPalError && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status) && !/DUPLICATE/i.test(`${error.name} ${error.message}`)) {
         repository.saveCoverPayout({ ...payout, status: "FAILED", error: `PayPal declined the payout (${error.name}).`, updatedAt: new Date().toISOString() });
-      } else throw new StoreError(502, "PayPal did not confirm the payout yet. Check again before paying another way.");
+      } else {
+        if (error instanceof PayPalError) repository.saveCoverPayout({ ...payout, error: "PayPal may already have this payout. Check it in PayPal before paying another way.", updatedAt: new Date().toISOString() });
+        throw new StoreError(502, "PayPal did not confirm the payout yet. Check again before paying another way.");
+      }
     }
     return ownerCovers(workspaceId, repository);
   });
@@ -112,15 +119,18 @@ export async function refreshCoverPayouts(workspaceId: string, repository = getR
   const seen = lastRefresh.rebookCoverRefresh ??= new Map();
   if ((seen.get(workspaceId) ?? 0) + 10_000 > Date.now()) return;
   seen.set(workspaceId, Date.now());
+  // Unclaimed payouts can stay open for 30 days at PayPal; keep reconciling a little beyond that.
   const open = repository.listCoverPayouts(workspaceId).filter((item) => item.batchId && ["PENDING", "UNCLAIMED", "ONHOLD"].includes(item.status)
-    && Date.parse(item.createdAt) + 7 * 86_400_000 > Date.now());
+    && Date.parse(item.createdAt) + 35 * 86_400_000 > Date.now());
   for (const payout of open) {
     const state = await getPayout(payout.batchId!);
     const status = state.batchStatus === "DENIED" ? "DENIED" : ITEM_STATUSES.find((item) => item === state.itemStatus);
     if (!status) continue;
     repository.transaction(() => {
       const current = repository.listCoverPayouts(workspaceId).find((item) => item.planId === payout.planId && item.sessionId === payout.sessionId);
-      if (current?.requestId !== payout.requestId || current.status === status && current.itemId === state.itemId) return;
+      // Compare with the snapshot read before the fetch, so an older response cannot overwrite a newer status.
+      if (current?.requestId !== payout.requestId || current.status !== payout.status || current.updatedAt !== payout.updatedAt
+        || current.status === status && current.itemId === state.itemId) return;
       repository.saveCoverPayout({ ...current, status, itemId: state.itemId ?? current.itemId, error: state.error, updatedAt: new Date().toISOString() });
     });
   }

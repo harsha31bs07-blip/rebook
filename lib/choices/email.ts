@@ -7,6 +7,8 @@ import { ownerCustomerChoices } from "./service";
 
 export function requireEmail(): void {
   if (!emailConfigured()) throw new StoreError(503, "Email delivery is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server, or use a sharing app.");
+  // Private links in an email must never take their host from request headers.
+  if (!process.env.PUBLIC_ORIGIN?.trim()) throw new StoreError(503, "Email delivery needs PUBLIC_ORIGIN, the site's public address, on the server.");
 }
 export async function sendCustomerEmail(workspaceId: string, input: { planId: string; customerId: string; reminder?: boolean; resend?: boolean }, origin: string, client: string, repository = getRepository()) {
   requireEmail();

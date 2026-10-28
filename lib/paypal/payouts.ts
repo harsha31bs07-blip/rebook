@@ -13,7 +13,9 @@ export async function createPayout(input: { requestId: string; receiver: string;
     sender_batch_header: { sender_batch_id: input.requestId, email_subject: input.subject, email_message: input.note },
     items: [{ recipient_type: "EMAIL", receiver: input.receiver, amount: { value: input.amount, currency: "USD" }, note: input.note, sender_item_id: input.requestId }],
   } });
-  return { batchId: body.batch_header?.payout_batch_id, batchStatus: body.batch_header?.batch_status };
+  // A success without a batch id (e.g. a truncated body) proves nothing; the caller keeps the payout unresolved.
+  if (!body.batch_header?.payout_batch_id) throw new Error("PayPal accepted the payout without a batch id");
+  return { batchId: body.batch_header.payout_batch_id, batchStatus: body.batch_header.batch_status };
 }
 
 export async function getPayout(batchId: string): Promise<PayoutState> {

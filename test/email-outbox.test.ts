@@ -19,7 +19,7 @@ let directory: string, repository: Repository, fetchMock: ReturnType<typeof vi.f
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
   directory = mkdtempSync(join(tmpdir(), "rebook-email-")); vi.stubEnv("DATA_DIR", directory);
-  vi.stubEnv("BREVO_API_KEY", "test-key"); vi.stubEnv("BREVO_SENDER_EMAIL", "sender@studio.org");
+  vi.stubEnv("BREVO_API_KEY", "test-key"); vi.stubEnv("BREVO_SENDER_EMAIL", "sender@studio.org"); vi.stubEnv("PUBLIC_ORIGIN", "https://studio.org");
   repository = getRepository(); limits.reset(); fetchMock = vi.fn().mockResolvedValue(Response.json({ messageId: "message-1" }, { status: 201 })); vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force: true }); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
@@ -104,7 +104,10 @@ it("rejects foreign origins, invalid bodies, demo addresses, other workspaces an
   expect((await post(POST, { ...input, to: "override@studio.org" })).status).toBe(400);
   expect((await post(POST, { ...input, customerId: rows().find((row) => !row.emailDeliverable)!.customerId })).status).toBe(422);
   expect((await post(POST, input, "https://studio.org", repository.createWorkspace(seedStudio()).id)).status).toBe(404);
-  vi.stubEnv("BREVO_API_KEY", "");
+  // Without a configured public origin, links would come from request headers: refuse to send.
+  vi.stubEnv("PUBLIC_ORIGIN", "");
+  for (const handler of [POST, allPOST]) { const response = await post(handler, handler === POST ? input : { planId: input.planId }); expect(response.status).toBe(503); expect(await response.text()).toContain("PUBLIC_ORIGIN"); }
+  vi.stubEnv("PUBLIC_ORIGIN", "https://studio.org"); vi.stubEnv("BREVO_API_KEY", "");
   for (const handler of [POST, allPOST]) { const response = await post(handler, handler === POST ? input : { planId: input.planId }); expect(response.status).toBe(503); expect(await response.text()).toContain("not configured"); }
   expect(fetchMock).not.toHaveBeenCalled();
 });

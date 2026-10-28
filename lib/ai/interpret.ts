@@ -18,7 +18,7 @@ const IntentSchema = z.object({
   throughDay: word(z.enum(DAY_WORDS).nullable(), null),
   startTime: or(ClockSchema.nullable(), null), endTime: or(ClockSchema.nullable(), null),
   period: word(z.enum(["morning", "afternoon", "evening", "all_day"]), "all_day"),
-  thisWeek: or(z.boolean(), false), confidence: or(z.number().min(0).max(1), 0.7), notes: or(z.array(z.string().max(300)).max(5), []),
+  thisWeek: or(z.boolean(), false), confidence: or(z.number().min(0).max(1), 0), // a missing confidence never passes the gate notes: or(z.array(z.string().max(300)).max(5), []),
 });
 type Intent = z.infer<typeof IntentSchema>;
 const responseSchema = {
@@ -285,7 +285,8 @@ function windowMatchesText(text: string, disruption: Disruption, state: State, n
   const clock = (instant: string) => new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
   const start = clock(disruption.from), end = clock(disruption.to);
   const clocks = [...input.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/g)].map(([, hour, minute = "00", half]) =>
-    `${String(Number(hour) % 12 + (half === "pm" ? 12 : 0)).padStart(2, "0")}:${minute}`);
+    `${String(Number(hour) % 12 + (half === "pm" ? 12 : 0)).padStart(2, "0")}:${minute}`)
+    .concat([...input.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:am|pm))/g)].map(([, hour, minute]) => `${hour.padStart(2, "0")}:${minute}`));
   if (clocks.length) return clocks.includes(start) && (clocks.includes(end) || end === "00:00");
   const period = (["morning", "afternoon", "evening"] as const).find((name) => new RegExp(`\\b${name}\\b`).test(input));
   if (period) return from.dateKey === last.dateKey && start === PERIODS[period][0] && end === PERIODS[period][1];

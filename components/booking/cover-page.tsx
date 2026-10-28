@@ -33,7 +33,7 @@ export default function CoverPage({ token }: { token: string }) {
   }
   const when = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: data?.studio.timezone, weekday: "long", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
-  const title = !data ? "Cover request" : data.payout?.status === "SUCCESS" ? "Paid. Thank you for covering." : data.status === "accepted" ? "You’re teaching this class."
+  const title = !data ? "Cover request" : data.payout?.status === "SUCCESS" ? "Paid. Thank you for covering." : data.status === "replaced" ? "This class has been reassigned." : data.status === "accepted" ? "You’re teaching this class."
     : data.status === "declined" ? "You declined this cover." : `Can you cover ${data.class.title}?`;
   return <main id="main-content" tabIndex={-1} className="customer-booking customer-choice">
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A cover request from your studio.</span></header>

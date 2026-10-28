@@ -14,6 +14,9 @@ import { reconcileRefund } from "../lib/executor/reconcileRefund";
 import { REFUND_REPLAY_WINDOW_MS } from "../lib/executor/refund-policy";
 import { checkRefund, REFUND_SWEEP_CAP, startRefundSweep, sweepRefunds } from "../lib/executor/refund-sweep";
 import { POST as ownerCheck } from "../app/api/workspaces/[id]/refunds/check/route";
+import { POST as ownerRetry } from "../app/api/workspaces/[id]/refunds/retry/route";
+import { createCustomerLinks } from "../lib/choices/service";
+import { applyPlan } from "../lib/solver/validate";
 import { paymentsNeedingAttention } from "../lib/recovery/payment-attention";
 import { processWebhook } from "../lib/paypal/webhook";
 
@@ -382,4 +385,31 @@ it("a writer that lost its lease reserves nothing and never POSTs", async () => 
     () => { throw new Error("Workspace execution lease expired"); })).rejects.toThrow("lease expired");
   expect(send).not.toHaveBeenCalled();
   expect(repository.latestMoneyEvents(workspace.id).some((event) => event.kind === "refund")).toBe(false);
+});
+
+it("lets the owner retry a customer's reviewed refund only after PayPal proves it absent", async () => {
+  const { workspace, plan } = prepared();
+  const other = prepared();
+  createCustomerLinks(plan, workspace.state, applyPlan(workspace.state, plan), repository);
+  const link = repository.listCustomerLinks(workspace.id).find((item) => item.kind === "choice")!;
+  const booking = workspace.state.bookings.find((item) => item.id === link.bookingId)!;
+  const requestId = `choice:${link.id}`;
+  repository.saveCustomerLink({ ...link, reply: { action: "refund", amount: booking.amount, requestId, at: new Date().toISOString() } });
+  const event = repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", captureId: booking.payment!.captureId,
+    amount: booking.amount, paypalId: "", requestId, status: "NEEDS_REVIEW", firstAttemptAt: new Date(Date.now() - 2 * REFUND_REPLAY_WINDOW_MS).toISOString() });
+  const request = () => new Request("http://localhost/refunds/retry", { method: "POST", body: JSON.stringify({ requestId }) });
+  const posts = (send: ReturnType<typeof transport>) => send.mock.calls.filter(([url]) => url.endsWith("/refund"));
+
+  let send = transport(async (_url, init) => { expect(init.method).toBe("GET"); throw new Error("Unavailable"); });
+  expect((await ownerRetry(request(), { params: Promise.resolve({ id: other.workspace.id }) })).status).toBe(404);
+  const unknown = await ownerRetry(request(), { params: Promise.resolve({ id: workspace.id }) });
+  expect(await unknown.json()).toEqual({ status: "NEEDS_REVIEW" });
+  expect(posts(send)).toHaveLength(0);
+
+  send = transport(async (_url, init) => init.method === "GET"
+    ? Response.json({ id: event.captureId, status: "COMPLETED" }) : Response.json(refund(event), { status: 201 }));
+  const retried = await ownerRetry(request(), { params: Promise.resolve({ id: workspace.id }) });
+  expect(await retried.json()).toEqual({ status: "COMPLETED" });
+  expect(posts(send)).toHaveLength(1);
+  expect(repository.requireWorkspace(workspace.id).state.bookings.find((item) => item.id === booking.id)?.status).toBe("refunded");
 });

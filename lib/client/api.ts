@@ -50,6 +50,7 @@ export const api = {
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
   approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
   checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),
+  retryRefund: (id: string, requestId: string) => request<{ status: string }>(`${workspacePath(id)}/refunds/retry`, { requestId }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
   contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),
 };

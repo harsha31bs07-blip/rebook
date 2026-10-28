@@ -159,6 +159,16 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
   });
 }
 
+/** Owner retry for a customer's own refund; the executor still replays only after PayPal proves it absent. */
+export async function retryChoiceRefund(workspaceId: string, requestId: string, repository = getRepository()) {
+  return withWorkspaceLock(repository, workspaceId, async (owner) => {
+    const link = repository.listCustomerLinks(workspaceId).find((item) => item.kind === "choice" && item.reply?.requestId === requestId);
+    if (!link) throw new StoreError(404, "Refund not found");
+    await finishRefund(link, repository, owner);
+    return receiptFor(link, repository);
+  });
+}
+
 export function ownerCustomerChoices(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireWorkspace(workspaceId);
   const links = repository.listCustomerLinks(workspaceId);

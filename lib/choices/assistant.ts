@@ -33,15 +33,22 @@ export async function proposeChoice(token: string, message: string, repository =
     });
   } catch { throw new StoreError(503, "The assistant is busy right now. You can still choose below."); }
   const base = { checked: choice.alternatives.length, source: generated.provider, model: generated.model };
-  const clarify = (reply: string): ChoiceProposal => ({ ...base, action: "clarify", refund: "0.00", reply });
+  // Model prose is only trusted for a clarifying question, and never when it mentions money or a completed action.
+  const clarify = (reply: string): ChoiceProposal => ({ ...base, action: "clarify", refund: "0.00",
+    reply: /[$₹€£]|\d+(?:\.\d+)?\s*(?:usd|dollars?|rs|rupees?)\b|\b(?:refunded|booked|moved|confirmed|completed?|processed|done)\b/i.test(reply) ? "Which day, time or class would work for you?" : reply });
   const parsed = ProposalSchema.safeParse(generated.data);
   if (!parsed.success) return clarify("What class or time would work for you?");
   const proposal = parsed.data;
   if (proposal.action === "move") {
     const session = choice.alternatives.find((item) => item.id === proposal.sessionId);
     if (!session) return clarify("I couldn't find that class");
-    return { ...base, action: "move", sessionId: session.id, class: { title: session.title, start: session.start, instructor: session.instructor, seatsLeft: session.seatsLeft }, refund: session.difference, reply: proposal.reply };
+    return { ...base, action: "move", sessionId: session.id, class: { title: session.title, start: session.start, instructor: session.instructor, seatsLeft: session.seatsLeft }, refund: session.difference,
+      reply: `${session.title} on ${local(session.start)} with ${session.instructor} has a seat for you. Nothing changes until you confirm.` };
   }
   if (proposal.action === "refund" && toCents(choice.refundable) <= 0) return clarify("There is no captured amount available to refund. Would you like to keep your class?");
-  return { ...base, action: proposal.action, refund: proposal.action === "refund" ? choice.refundable : "0.00", reply: proposal.reply };
+  if (proposal.action === "clarify") return clarify(proposal.reply);
+  // Action and money statements come from server templates, never from the model.
+  return { ...base, action: proposal.action, refund: proposal.action === "refund" ? choice.refundable : "0.00",
+    reply: proposal.action === "refund" ? `We can refund $${choice.refundable} to your original payment. Nothing is refunded until you confirm.`
+      : `You can keep ${choice.after ? `${choice.after.title} on ${local(choice.after.start)} with ${choice.after.instructor}` : "your booking"}. Nothing changes until you confirm.` };
 }

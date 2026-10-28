@@ -215,7 +215,11 @@ export function interpretRules(text: string, state: State, nowIso: string, weekS
 export function hardSafetyStop(text: string, state: State): boolean {
   const input = text.toLowerCase().replace(/[\u2019\u2018]/g, "'");
   const absence = /\b(?:can't|cant|cannot|won't|wont|will not|not coming|not available|not teaching|not working|unavailable|absent|nahi)\b/.test(input);
-  return /\?|\b(if|might|maybe|may|perhaps|possibly|probably|likely|potentially|unsure|uncertain|seems|appears|chance|could|would|suppose|assuming|unless|whether|should|shayad|not confirmed|will let you know)\b/.test(input) ||
+  return /\?|\b(if|might|maybe|may|perhaps|possibly|probably|likely|potentially|unsure|uncertain|seems|appears|chance|could|would|suppose|assuming|unless|whether|should|shayad|not confirmed|will let you know|provided|in case|as long as|only if|depending|depends)\b/.test(input) ||
+    /\b(?:check|confirm|find out|verify)\b|^\s*(?:is|are|does|do|did|will|can|could)\s+(?!not\b)[a-z]+\s/.test(input) ||
+    /\b(?:sorry|no|nope|oops)\b[\s,.-]+(?:on\s+)?(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\b/.test(input) ||
+    /\b(?:won't|wont|will not|isn't|isnt|not)\s+be\s+(?:absent|out|off|away|sick|unavailable)\b/.test(input) ||
+    /\b(?:was|were)\s+(?:\w+\s+)?(?:unavailable|absent|off|away)\b/.test(input) ||
     /\b(no longer|false alarm|back now|all good|(?:is|he's|she's) fine|ignore|disregard|scratch that|cancel that|make that|change that|correction|correct that|i mean|i meant|no wait|actually|instead|rather|except)\b/.test(input) ||
     /\b(?:not|never|no|isn't|isnt|wasn't|wasnt|aren't|arent|weren't)\s+(?:not\s+)?(?:sick|ill|out|unavailable|absent|flu|fever|coming)\b/.test(input.replace(/\bnot (?:coming|available|teaching|working)\b/g, "unavailable")) ||
     /\b(?:don't|dont|doesn't|doesnt|didn't|didnt|can't|cannot|can not)\s+(?:cancel|close|be sick|be out)\b/.test(input) ||
@@ -223,7 +227,7 @@ export function hardSafetyStop(text: string, state: State): boolean {
     !absence && /\b(?:was|were|had)\s+(?:\w+\s+)?(?:sick|flu|fever|flooded|closed|out)\b/.test(input) ||
     /\bnext (?:week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b(every|daily)\b/.test(input) ||
     /\b(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\s+and\s+(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\b/.test(input) ||
-    state.instructors.some((person) => new RegExp(`\\b${words(person.name)[0]}(?:\\s+${words(person.name)[1]})?\\s*(?:and|&|,)\\s+[a-z]+\\s+(?:are|is|sick|out|unavailable|absent)\\b`).test(input)) ||
+    state.instructors.some((person) => new RegExp(`\\b${words(person.name)[0]}(?:\\s+${words(person.name)[1]})?\\s*(?:(?:and|&)\\s+[a-z]+|,\\s*[a-z]+\\s+(?:are|is|sick|out|unavailable|absent))\\b`).test(input)) ||
     mentionedNames(input, state.instructors).length + state.rooms.filter((room) => words(room.name).every((part) => words(input).some((token) => near(token, part)))).length > 1;
 }
 
@@ -244,7 +248,18 @@ function groundedModelText(text: string, intent: Intent, state: State): boolean 
   const mentioned = mentionedNames(input, state.instructors);
   const entity = intent.kind === "instructor_unavailable" ? matchName(input, mentioned.length ? mentioned : state.instructors) : intent.kind === "room_unavailable" ? matchName(input, state.rooms) : undefined;
   if (intent.kind !== "closure" && entity?.name.toLowerCase() !== intent.name?.toLowerCase()) return false;
-  if (intent.kind === "closure" && !/\bstudio\b/.test(input)) return false;
+  // A whole-studio closure needs closure words and no named person ("the studio won't let Maya teach" is not one).
+  if (intent.kind === "closure" && (!/\bstudio\b/.test(input) || !/\b(?:clos(?:e|ed|ing|ure)|shut)\b/.test(input) || mentioned.length)) return false;
+  // An unknown full name ("Maya Patel") must never resolve to the known instructor sharing its first name.
+  if (entity && intent.kind === "instructor_unavailable") {
+    const [first, last] = words(entity.name);
+    const surname = new RegExp(`\\b${first}\\s+([A-Z][a-z]+)\\b`, "i").exec(text.replace(/[’‘]/g, "'"))?.[1];
+    // A capitalised word right after the first name is a surname unless it is the known one or a day/time word.
+    if (surname && surname[0] === surname[0].toUpperCase() && !near(surname.toLowerCase(), last) &&
+        !/^(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|satur|sun)(?:day)?$|^(?:today|tomorrow|tonight|is|has|and)$/i.test(surname)) return false;
+    if (new RegExp(`\\b${first}\\s+(?!${last}\\b)[a-z]+\\s+(?:won't|wont|can't|cant|cannot|will not|is|has)\\b`).test(input) &&
+        !new RegExp(`\\b${first}\\s+(?:${last}|just|really|also|still|definitely|ka|ko|ki|madam|ma'am|ji|sir)\\b`).test(input)) return false;
+  }
   // Reports about another named person cannot silently select the messenger. Unknown full names also fail closed.
   if (/\b(?:says|said|told)\s+(?!the\b|she\b|he\b|they\b|i\b|her\b|his\b)[a-z]+\s+(?:is|was|has)\b/.test(input)) return false;
   if (entity && new RegExp(`\\b${words(entity.name)[0]}\\s+[a-z]+\\s+(?:sick|unavailable|out|absent)\\b`).test(input) &&
@@ -252,6 +267,26 @@ function groundedModelText(text: string, intent: Intent, state: State): boolean 
   // Require an explicit time reference and evidence of absence beyond an ambiguous illness-only report.
   if (!/\b(today|tomorrow|tmrw|tmr|tom|tod|kal|this morning|this afternoon|this evening|this week)\b/.test(input) && ![...input.matchAll(DAY_PATTERN)].length && !/\b\d{4}-\d{2}-\d{2}\b/.test(input)) return false;
   return /\b(unavailable|absent|out|off|away|leave|can't|cant|cannot|won't|wont|will not|not coming|not available|not teaching|not working|nahi|stay home|jury duty|emergency|closed|close|broken|soaked|serviced|kharab)\b/.test(input);
+}
+
+/** Days, clocks and periods the owner wrote bound the model's window: it may not drop, move or widen them. */
+function windowMatchesText(text: string, disruption: Disruption, state: State, nowIso: string, weekStart: string): boolean {
+  const tz = state.studio.timezone, input = text.toLowerCase().replace(/[’‘]/g, "'").replace(/\b(tmrw|tmr|tom)\b/g, "tomorrow").replace(/\btod\b/g, "today");
+  const today = localParts(nowIso, tz).dateKey, week = localParts(weekStart, tz).dateKey;
+  const days = new Set([...input.matchAll(DAY_PATTERN)].map((match) => dateFor(dayWord(match[1]), today, week)));
+  if (/\bkal\b/.test(input)) days.add(addLocalDays(today, 1));
+  if (/\bthis (?:morning|afternoon|evening)\b/.test(input)) days.add(today);
+  for (const iso of input.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []) days.add(iso);
+  const from = localParts(disruption.from, tz), last = localParts(new Date(Date.parse(disruption.to) - 1).toISOString(), tz);
+  if (!days.has(from.dateKey) || !days.has(last.dateKey)) return false;
+  const clock = (instant: string) => new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
+  const start = clock(disruption.from), end = clock(disruption.to);
+  const clocks = [...input.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/g)].map(([, hour, minute = "00", half]) =>
+    `${String(Number(hour) % 12 + (half === "pm" ? 12 : 0)).padStart(2, "0")}:${minute}`);
+  if (clocks.length) return clocks.includes(start) && (clocks.includes(end) || end === "00:00");
+  const period = (["morning", "afternoon", "evening"] as const).find((name) => new RegExp(`\\b${name}\\b`).test(input));
+  if (period) return from.dateKey === last.dateKey && start === PERIODS[period][0] && end === PERIODS[period][1];
+  return start === "00:00" && end === "00:00";
 }
 
 // Model fields are untrusted. Resolve exact studio names and local times, then validate the studio horizon.
@@ -313,7 +348,7 @@ export async function interpretDisruption(text: string, state: State, nowIso: st
     if (result.data.kind === "clarify") return grounded.kind === "clarify" ? grounded : { ...result.data, source: result.provider, model: result.model };
     if (result.data.confidence < 0.7) return grounded.kind === "clarify" ? grounded : { ...clarify("Please confirm who or what is unavailable, with its exact day and time."), source: result.provider, model: result.model };
     const candidate = modelDisruption(result.data, state, nowIso, weekStart);
-    if (grounded.kind === "clarify") return candidate && groundedModelText(text, result.data, state)
+    if (grounded.kind === "clarify") return candidate && groundedModelText(text, result.data, state) && windowMatchesText(text, candidate, state, nowIso, weekStart)
       ? { disruption: { ...candidate, reason: text }, confidence: result.data.confidence, source: result.provider, model: result.model, notes: [], needsConfirmation: true } : grounded;
     const expected = grounded.disruption;
     if (!candidate || !sameDisruption(candidate, expected)) return { ...grounded, fallbackReason: "model_mismatch" };

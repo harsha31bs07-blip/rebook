@@ -183,6 +183,29 @@ describe("disruption interpretation", () => {
     expect(scoreCase(item, result, state), JSON.stringify(result)).toEqual({ correct: true, dangerous: false });
     if (interpretRules(item.input, state, "2026-11-09T05:15:00Z").kind === "clarify") expect(result).toHaveProperty("needsConfirmation", true);
   });
+  it.each([
+    "Maya won't be absent Monday", "Maya won't make it Monday provided her test is positive", "Maya won't make it Monday, sorry Tuesday",
+    "Maya said she was unavailable Monday", "Can you check Maya is off Monday", "Maya and Natalie won't make it Monday",
+  ])("stops %s before any provider call", async (text) => {
+    fetchMock.mockResolvedValue(response(intent()));
+    expect(await interpretDisruption(text, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each([
+    { text: "Maya texted: won't make it Monday from 2pm to 4pm", fields: {} },
+    { text: "Maya texted: won't make it Monday", fields: { day: "tuesday" } },
+    { text: "Maya texted: won't make it Monday", fields: { throughDay: "wednesday" } },
+    { text: "Maya texted: won't make it Monday evening", fields: {} },
+    { text: "Maya Patel won't make it Monday", fields: {} },
+    { text: "Maya says the studio won't let her teach Monday", fields: { kind: "closure", name: null } },
+  ])("rejects a model window or resource the owner's words contradict: $text", async ({ text, fields }) => {
+    fetchMock.mockResolvedValue(response(intent(fields)));
+    expect(await interpretDisruption(text, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+  });
+  it("accepts the same AI-only reading when the window matches the owner's clock times", async () => {
+    fetchMock.mockResolvedValue(response(intent({ startTime: "14:00", endTime: "16:00" })));
+    expect(await interpretDisruption("Maya texted: won't make it Monday from 2pm to 4pm", state, "2026-11-09T05:15:00Z")).toMatchObject({ needsConfirmation: true });
+  });
   it("keeps the hero rules-confirmed by Gemini without a confirmation flag", async () => {
     fetchMock.mockResolvedValue(response(intent()));
     const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now);

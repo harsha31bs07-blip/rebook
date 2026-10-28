@@ -1,0 +1,470 @@
+[
+ {
+  "id": 1,
+  "category": "forwarded",
+  "input": "Fwd from Maya: hey so sorry, I've had a fever since last night and I really can't teach today. So sorry!!",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 2,
+  "category": "forwarded",
+  "input": "Maya just texted - flu, she's out for Monday",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 3,
+  "category": "forwarded",
+  "input": "Msg from Alex: 'woke up with a migraine, won't be able to do any of my classes tomorrow'",
+  "expected": {
+   "instructor": "Alex Rivera",
+   "window": {
+    "from": "2026-11-10T00:00",
+    "to": "2026-11-11T00:00"
+   }
+  }
+ },
+ {
+  "id": 4,
+  "category": "forwarded",
+  "input": "from Alex: so so sorry, my flight got cancelled and I'm stuck in Denver, can't teach Monday or Tuesday",
+  "expected": {
+   "instructor": "Alex Rivera",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-11T00:00"
+   }
+  }
+ },
+ {
+  "id": 5,
+  "category": "third-person",
+  "input": "Sam's kid is sick so he has to stay home Wednesday, can you sort his classes",
+  "expected": {
+   "instructor": "Sam Okafor",
+   "window": {
+    "from": "2026-11-11T00:00",
+    "to": "2026-11-12T00:00"
+   }
+  }
+ },
+ {
+  "id": 6,
+  "category": "third-person",
+  "input": "Priya's car broke down, she won't make it in this morning",
+  "expected": {
+   "instructor": "Priya Shah",
+   "window": {
+    "from": "2026-11-09T07:00",
+    "to": "2026-11-09T12:00"
+   }
+  }
+ },
+ {
+  "id": 7,
+  "category": "third-person",
+  "input": "Jordan has a family emergency and needs Thursday afternoon off",
+  "expected": {
+   "instructor": "Jordan Lee",
+   "window": {
+    "from": "2026-11-12T12:00",
+    "to": "2026-11-12T17:00"
+   }
+  }
+ },
+ {
+  "id": 8,
+  "category": "third-person",
+  "input": "Jordan has jury duty on Wednesday",
+  "expected": {
+   "instructor": "Jordan Lee",
+   "window": {
+    "from": "2026-11-11T00:00",
+    "to": "2026-11-12T00:00"
+   }
+  }
+ },
+ {
+  "id": 9,
+  "category": "third-person",
+  "input": "Chris lost his voice and can't lead classes tomorrow evening",
+  "expected": {
+   "instructor": "Chris Morgan",
+   "window": {
+    "from": "2026-11-10T17:00",
+    "to": "2026-11-10T21:00"
+   }
+  }
+ },
+ {
+  "id": 10,
+  "category": "third-person",
+  "input": "Maya won't be in Monday - she's isolating",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 11,
+  "category": "long",
+  "input": "Hi! Quick one before I forget - Jordan called earlier, his back has gone again and he can't teach at all on Friday. He's really sorry about it.",
+  "expected": {
+   "instructor": "Jordan Lee",
+   "window": {
+    "from": "2026-11-13T00:00",
+    "to": "2026-11-14T00:00"
+   }
+  }
+ },
+ {
+  "id": 12,
+  "category": "long",
+  "input": "Priya just let me know she's in hospital, so all of her classes this Saturday are off",
+  "expected": {
+   "instructor": "Priya Shah",
+   "window": {
+    "from": "2026-11-14T00:00",
+    "to": "2026-11-15T00:00"
+   }
+  }
+ },
+ {
+  "id": 13,
+  "category": "long",
+  "input": "Maya's doctor signed her off Monday to Wednesday",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-12T00:00"
+   }
+  }
+ },
+ {
+  "id": 14,
+  "category": "long",
+  "input": "Alex can't teach between 2pm and 5pm on Thursday, dentist",
+  "expected": {
+   "instructor": "Alex Rivera",
+   "window": {
+    "from": "2026-11-12T14:00",
+    "to": "2026-11-12T17:00"
+   }
+  }
+ },
+ {
+  "id": 15,
+  "category": "hinglish",
+  "input": "Maya bimaar hai, kal class nahi le paayegi",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-10T00:00",
+    "to": "2026-11-11T00:00"
+   }
+  }
+ },
+ {
+  "id": 16,
+  "category": "hinglish",
+  "input": "Alex ka phone aaya, Wednesday ko nahi aa payega",
+  "expected": {
+   "instructor": "Alex Rivera",
+   "window": {
+    "from": "2026-11-11T00:00",
+    "to": "2026-11-12T00:00"
+   }
+  }
+ },
+ {
+  "id": 17,
+  "category": "hinglish",
+  "input": "Cycle Lab ka AC kharab hai, Thursday morning use nahi kar sakte",
+  "expected": {
+   "room": "Cycle Lab",
+   "window": {
+    "from": "2026-11-12T07:00",
+    "to": "2026-11-12T12:00"
+   }
+  }
+ },
+ {
+  "id": 18,
+  "category": "indian-english",
+  "input": "Sam is having fever, he will not come on Friday",
+  "expected": {
+   "instructor": "Sam Okafor",
+   "window": {
+    "from": "2026-11-13T00:00",
+    "to": "2026-11-14T00:00"
+   }
+  }
+ },
+ {
+  "id": 19,
+  "category": "indian-english",
+  "input": "Priya madam is on leave tomorrow",
+  "expected": {
+   "instructor": "Priya Shah",
+   "window": {
+    "from": "2026-11-10T00:00",
+    "to": "2026-11-11T00:00"
+   }
+  }
+ },
+ {
+  "id": 20,
+  "category": "rooms",
+  "input": "plumber says the Mat Studio floor is soaked, it's out of action all of Tuesday",
+  "expected": {
+   "room": "Mat Studio",
+   "window": {
+    "from": "2026-11-10T00:00",
+    "to": "2026-11-11T00:00"
+   }
+  }
+ },
+ {
+  "id": 21,
+  "category": "rooms",
+  "input": "heads up - Small Studio heating is broken wednesday morning, can't use it",
+  "expected": {
+   "room": "Small Studio",
+   "window": {
+    "from": "2026-11-11T07:00",
+    "to": "2026-11-11T12:00"
+   }
+  }
+ },
+ {
+  "id": 22,
+  "category": "rooms",
+  "input": "Movement Hall is booked for a private event Sunday afternoon, so it's unavailable",
+  "expected": {
+   "room": "Movement Hall",
+   "window": {
+    "from": "2026-11-15T12:00",
+    "to": "2026-11-15T17:00"
+   }
+  }
+ },
+ {
+  "id": 23,
+  "category": "rooms",
+  "input": "The Cycle Lab bikes are being serviced Friday morning",
+  "expected": {
+   "room": "Cycle Lab",
+   "window": {
+    "from": "2026-11-13T07:00",
+    "to": "2026-11-13T12:00"
+   }
+  }
+ },
+ {
+  "id": 24,
+  "category": "closures",
+  "input": "power cut across the whole block Saturday, we'll have to close the studio for the day",
+  "expected": {
+   "closure": true,
+   "window": {
+    "from": "2026-11-14T00:00",
+    "to": "2026-11-15T00:00"
+   }
+  }
+ },
+ {
+  "id": 25,
+  "category": "shorthand",
+  "input": "maya chen flu monday cant teach sry",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 26,
+  "category": "shorthand",
+  "input": "Maya 🤒 Monday, out",
+  "expected": {
+   "instructor": "Maya Chen",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 27,
+  "category": "shorthand",
+  "input": "Sam is out today, stomach bug",
+  "expected": {
+   "instructor": "Sam Okafor",
+   "window": {
+    "from": "2026-11-09T00:00",
+    "to": "2026-11-10T00:00"
+   }
+  }
+ },
+ {
+  "id": 28,
+  "category": "must-clarify",
+  "input": "Maya might be coming down with something, I'll let you know tomorrow",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 29,
+  "category": "must-clarify",
+  "input": "False alarm - Maya is fine for Monday after all",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 30,
+  "category": "must-clarify",
+  "input": "Alex was sick last week but he's back now",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 31,
+  "category": "must-clarify",
+  "input": "Sam can't do Thursday, sorry no I mean Friday",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 32,
+  "category": "must-clarify",
+  "input": "someone on the team is out tomorrow",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 33,
+  "category": "must-clarify",
+  "input": "Maya and Alex are both sick Monday",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 34,
+  "category": "must-clarify",
+  "input": "Is Priya teaching on Friday?",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 35,
+  "category": "must-clarify",
+  "input": "If it snows Saturday we might close the studio",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 36,
+  "category": "must-clarify",
+  "input": "Jordan's not sick, he's just running a bit late Monday",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 37,
+  "category": "must-clarify",
+  "input": "Natalie called in sick for Tuesday",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 38,
+  "category": "must-clarify",
+  "input": "Maya is off every evening this week",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 39,
+  "category": "must-clarify",
+  "input": "the studio might be closed next Monday for a holiday",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 40,
+  "category": "must-clarify",
+  "input": "Chris is sick",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 41,
+  "category": "must-clarify",
+  "input": "Ignore my last message about Sam",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 42,
+  "category": "must-clarify",
+  "input": "Maya kal shayad nahi aayegi",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 43,
+  "category": "must-clarify",
+  "input": "Priya says she may need Thursday off, not confirmed yet",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 44,
+  "category": "must-clarify",
+  "input": "Alex out at 3",
+  "expected": {
+   "clarify": true
+  }
+ },
+ {
+  "id": 45,
+  "category": "must-clarify",
+  "input": "Sam was supposed to be off Friday but he's covering now, so all good",
+  "expected": {
+   "clarify": true
+  }
+ }
+]

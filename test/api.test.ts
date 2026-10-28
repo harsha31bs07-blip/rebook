@@ -104,7 +104,7 @@ describe("workspace API", () => {
     for (const booking of state.bookings) getRepository().appendLedger({ workspaceId: id, bookingId: booking.id,
       kind: "capture", amount: booking.amount, paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId,
       requestId: `capture-${booking.id}`, status: "SIMULATED" });
-    const plan = await (await propose(post({ disruption: { kind: "closure", from: "2026-11-09T05:00:00Z", to: "2026-11-16T05:00:00Z" } }), context(id))).json();
+    const plan = await (await propose(post({ disruption: { kind: "closure", from: "2026-11-09T05:00:00Z", to: "2026-11-16T05:00:00Z" }, confirmed: true }), context(id))).json();
     expect(plan.sessionChanges.some((change: { remedy: string }) => change.remedy === "cancel")).toBe(true);
     const params = { params: Promise.resolve({ id, planId: plan.id }) };
     const beforeResponse = await planDetails(new Request("http://localhost"), params);
@@ -169,7 +169,7 @@ describe("workspace API", () => {
       }
     }
     // No fallback into next week when the entire visible week is disrupted (including DST Sunday).
-    const closed = await (await propose(post({ disruption: { kind: "closure", from: week, to: horizonEnd } }), context(id))).json();
+    const closed = await (await propose(post({ disruption: { kind: "closure", from: week, to: horizonEnd }, confirmed: true }), context(id))).json();
     expect(closed.sessionChanges.every((change: { remedy: string }) => change.remedy === "cancel")).toBe(true);
   });
   it("returns status and progress and rejects plans and approval until ready", async () => {

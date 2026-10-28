@@ -28,7 +28,7 @@ vi.mock("@/lib/client/api", () => import("../lib/client/api"));
 vi.mock("@/lib/client/scheduler-mapping", () => import("../lib/client/scheduler-mapping"));
 vi.mock("@/lib/domain/time", () => import("../lib/domain/time"));
 vi.mock("../lib/webmcp/use-webmcp", () => ({ useWebMcp: () => {} }));
-vi.mock("../components/console/use-plan-preview", () => ({ usePlanPreview: () => ({}) }));
+vi.mock("../components/console/use-plan-preview", () => ({ usePlanPreview: () => ({ setDetails: vi.fn(), setBasis: vi.fn() }) }));
 vi.mock("../components/console/judge-hint", () => ({ default: () => null }));
 vi.mock("../components/console/use-workspace", () => ({ useWorkspace: () => ({ workspace: {
   state: adjustmentFixture(), plans: [], status: "ready", progress: { done: 1, total: 1 },
@@ -38,6 +38,7 @@ import PlanPanel, { ApprovalDialog, CoverRecord, RefundResults } from "../compon
 import PaymentsAttention from "../components/console/payments-attention";
 import { api } from "../lib/client/api";
 import OwnerConsole from "../components/console/owner-console";
+import DisruptionPanel from "../components/console/disruption-panel";
 import { PHONE_QUERY, useScheduleView } from "../components/console/use-schedule-view";
 
 type Element = ReactElement<Record<string, unknown>>;
@@ -130,6 +131,22 @@ it("puts recovery first in phone DOM order, offers Timeline/List, and keeps the 
   const toggled = elements(render(() => OwnerConsole({ id: "workspace" })));
   expect(toggled.some((element) => element.type === ScheduleAgenda)).toBe(false);
   expect(toggled.find((element) => element.props.className === "timeline-panel timeline-view")).toBeDefined();
+});
+
+it("holds the assistant shortcut at AI confirmation and plans only after an explicit owner Yes", async () => {
+  const parsed = { disruption, confidence: 0.95, source: "gemini" as const, needsConfirmation: true as const, notes: [] };
+  vi.spyOn(api, "interpret").mockResolvedValue(parsed);
+  const publicPlan: PublicPlan = { ...plan, id: "plan", workspaceId: "workspace", status: "proposed", createdAt: plan.now, results: [] };
+  const propose = vi.spyOn(api, "plan").mockResolvedValue(publicPlan);
+  vi.spyOn(api, "details").mockResolvedValue({ plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Ready", source: "template", bullets: [] } });
+  const panel = () => elements(render(() => OwnerConsole({ id: "workspace" }))).find((element) => element.type === DisruptionPanel)!;
+  await (panel().props.onReport as (text: string) => Promise<unknown>)("Forwarded absence");
+  expect(propose).not.toHaveBeenCalled();
+  expect(panel().props.interpretation).toEqual(parsed);
+  await (panel().props.onPlan as () => Promise<void>)();
+  expect(propose).not.toHaveBeenCalled();
+  await (panel().props.onPlan as (confirmed: boolean) => Promise<void>)(true);
+  expect(propose).toHaveBeenCalledExactlyOnceWith("workspace", disruption, undefined, true);
 });
 
 it("shows original/new placement and affected customers and focuses the result when approval applies", () => {

@@ -1,16 +1,26 @@
 import { expect, it } from "vitest";
-import { evaluationReport, scoreCase } from "../scripts/eval-interpret.mjs";
+import { argumentsFor, evaluationReport, scoreCase } from "../scripts/eval-interpret.mjs";
 import { demoDisruption, seedStudio } from "../lib/seed/seed";
 
 it("scores exact local windows, wrong resources, missed clarifications and dangerous outputs", () => {
   const state = seedStudio();
   const positive = { expected: { instructor: "Maya Chen", window: { from: "2026-11-09T00:00", to: "2026-11-10T00:00" } } };
   expect(scoreCase(positive, { disruption: demoDisruption }, state)).toEqual({ correct: true, dangerous: false });
+  expect(scoreCase(positive, { disruption: demoDisruption, needsConfirmation: true }, state)).toEqual({ correct: true, dangerous: false });
+  expect(scoreCase({ expected: { clarify: true } }, { disruption: demoDisruption, needsConfirmation: true }, state)).toEqual({ correct: false, dangerous: true });
   expect(scoreCase(positive, { disruption: { ...demoDisruption, instructorId: "instructor-02" } }, state).correct).toBe(false);
   expect(scoreCase(positive, { disruption: { ...demoDisruption, to: "2026-11-10T06:00:00Z" } }, state).correct).toBe(false);
   expect(scoreCase(positive, { kind: "clarify" }, state)).toEqual({ correct: false, dangerous: false });
   expect(scoreCase({ expected: { clarify: true } }, { disruption: demoDisruption }, state)).toEqual({ correct: false, dangerous: true });
   expect(scoreCase({ expected: { clarify: true } }, { kind: "clarify" }, state)).toEqual({ correct: true, dangerous: false });
+});
+
+it("selects the messy corpus and reports a measured rules-only baseline", () => {
+  expect(argumentsFor([]).corpus).toBe("default");
+  expect(argumentsFor(["--corpus", "messy", "--max-items", "45"])).toMatchObject({ corpus: "messy", maxItems: 45 });
+  expect(() => argumentsFor(["--corpus", "unknown"])).toThrow("--corpus");
+  const baseline = [{ correct: true, dangerous: false }, { correct: false, dangerous: false }];
+  expect(evaluationReport([], 45, 0, [], baseline)).toContain("Rules-only baseline: 1/2 (50.00%); dangerous false positives: 0.");
 });
 
 it("reports category accuracy, dangerous results, rules/outage rates, coverage, errors and median latency", () => {

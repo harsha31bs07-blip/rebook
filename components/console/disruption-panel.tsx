@@ -10,7 +10,7 @@ const examples = ["Maya has the flu and can't teach Monday", "The Cycle Lab AC i
 
 export default function DisruptionPanel({ state, text, setText, interpretation, onInterpret, onReport, onEdit, onPlan, busy }: {
   state: State; text: string; setText: (text: string) => void; interpretation?: Interpretation;
-  onInterpret: (text: string) => Promise<unknown>; onReport: (text: string) => Promise<unknown>; onEdit: () => void; onPlan: () => void; busy: boolean;
+  onInterpret: (text: string) => Promise<unknown>; onReport: (text: string) => Promise<unknown>; onEdit: () => void; onPlan: (confirmed?: boolean) => void; busy: boolean;
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const question = useRef<HTMLHeadingElement>(null);
@@ -27,6 +27,18 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
   }) : [];
   const allDay = understood && localParts(understood.disruption.from, state.studio.timezone).minutesOfDay === 0 && localParts(understood.disruption.to, state.studio.timezone).minutesOfDay === 0;
   const severalDays = understood && localParts(understood.disruption.from, state.studio.timezone).dateKey !== localParts(new Date(Date.parse(understood.disruption.to) - 1).toISOString(), state.studio.timezone).dateKey;
+  function editInterpretation() {
+    if (understood?.needsConfirmation && label) {
+      const disruption = understood.disruption, tz = state.studio.timezone;
+      const day = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long" }).format(new Date(instant));
+      const clock = (instant: string) => new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
+      const subject = label.subject.replace(/ unavailable$/, " is unavailable");
+      const last = new Date(Date.parse(disruption.to) - 1).toISOString();
+      setText(allDay ? `${subject} ${day(disruption.from)}${severalDays ? ` to ${day(last)}` : ""} all day`
+        : `${subject} ${day(disruption.from)} from ${clock(disruption.from)} to ${clock(disruption.to)}`);
+    }
+    onEdit();
+  }
   return <>
     <p className="eyebrow disruption-intro">A little change of plans</p><h2><span className="desktop-disruption-title">Let’s get your week<br />back on track.</span><span className="phone-disruption-title">What happened?</span></h2>
     <p className="muted disruption-intro">Tell us what changed. We’ll find the best way to take care of everyone.</p>
@@ -53,12 +65,13 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
       <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
-      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={understood.aiBusy ? 0 : undefined} title={understood.aiBusy ? "AI is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{understood.aiBusy ? "Rules (AI busy)" : interpretationSource(understood.source, understood.model)}</span></div>
-      <h3 ref={understoodHeading} tabIndex={-1}>{label?.subject}</h3><p>{label?.window}</p><p className="muted">{state.studio.timezone}</p>
+      <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={understood.aiBusy ? 0 : undefined} title={understood.aiBusy ? "AI is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{`${understood.aiBusy ? "Rules (AI busy)" : interpretationSource(understood.source, understood.model)}${understood.needsConfirmation ? " · needs your confirmation" : ""}`}</span></div>
+      <h3 ref={understoodHeading} tabIndex={-1}>{understood.needsConfirmation ? `AI read this message as: ${label?.subject} · ${label?.window} — Is that right?` : label?.subject}</h3>{!understood.needsConfirmation && <p>{label?.window}</p>}<p className="muted">{state.studio.timezone}</p>
+      {understood.needsConfirmation && <p role="status">Confirm this interpretation before we plan recovery.</p>}
       <p><strong>Classes affected:</strong> {affected.length ? affected.map((session) => `${session.title} at ${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start))}`).join("; ") : "None scheduled in this window"}.</p>
       {allDay && !/\ball day\b/i.test(text) && <p className="muted">{severalDays ? "Assumed all day throughout this window." : `Assumed all day ${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "long" }).format(new Date(understood.disruption.from))}.`}</p>}
       {understood.notes.length > 0 && <ul>{understood.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
-      <div className="button-row"><button id="judge-plan" className="primary" onClick={onPlan} disabled={busy}>{busy ? "Finding recovery…" : "Plan recovery"}</button><button onClick={onEdit} disabled={busy}>Edit</button></div>
+      <div className="button-row"><button id="judge-plan" className="primary" onClick={() => onPlan(understood.needsConfirmation === true)} disabled={busy}>{busy ? "Finding recovery…" : understood.needsConfirmation ? "Yes, plan recovery" : "Plan recovery"}</button><button onClick={editInterpretation} disabled={busy}>Edit</button></div>
     </div>}
     <div className="how-it-works"><h3>A calmer way to handle change</h3><ol><li>Describe the disruption.</li><li>Review every change on your timeline.</li><li>Approve the plan. Refunds are handled.</li></ol><p>You stay in control. Nothing changes until you approve.</p></div>
   </>;

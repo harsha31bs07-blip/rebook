@@ -81,3 +81,25 @@ it("moves focus to the understood heading after interpretation", () => {
   hooks.effects.forEach((effect) => effect());
   expect(focus).toHaveBeenCalledOnce();
 });
+
+it("asks for AI confirmation, plans only on Yes, and edits a structured replacement", () => {
+  const { props } = panel();
+  hooks.refs = []; hooks.effects = [];
+  const tree = DisruptionPanel({ ...props, text: "Fwd from Maya: can't teach today", interpretation: {
+    disruption: demoDisruption, confidence: 0.95, source: "gemini", needsConfirmation: true, notes: [],
+  } });
+  const html = renderToStaticMarkup(tree), all = elements(tree);
+  expect(html).toContain("AI read this message as: Maya Chen unavailable");
+  expect(html).toContain("Is that right?");
+  expect(html).toContain("Gemini · needs your confirmation");
+  expect(all.find((element) => element.props.role === "status")?.props.children).toContain("Confirm this interpretation");
+  const heading = all.find((element) => element.type === "h3" && element.props.tabIndex === -1)!;
+  const focus = vi.fn(); (heading.props.ref as { current: unknown }).current = { focus };
+  hooks.effects.forEach((effect) => effect()); expect(focus).toHaveBeenCalledOnce();
+  expect(props.onPlan).not.toHaveBeenCalled();
+  (all.find((element) => element.props.id === "judge-plan")!.props.onClick as () => void)();
+  expect(props.onPlan).toHaveBeenCalledExactlyOnceWith(true);
+  (all.find((element) => element.type === "button" && element.props.children === "Edit")!.props.onClick as () => void)();
+  expect(props.setText).toHaveBeenCalledExactlyOnceWith("Maya Chen is unavailable Monday all day");
+  expect(props.onEdit).toHaveBeenCalledOnce();
+});

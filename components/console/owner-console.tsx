@@ -89,19 +89,20 @@ export default function OwnerConsole({ id }: { id: string }) {
     setInterpretation(parsed);
     return parsed;
   }
-  async function previewPlan(parsed: Interpretation, signal?: AbortSignal) {
+  async function previewPlan(parsed: Interpretation, signal?: AbortSignal, confirmed = false) {
     if (parsed.kind === "clarify") return parsed;
+    if (parsed.needsConfirmation && !confirmed) return parsed;
     if (!state) throw new Error("The studio is not ready.");
-    const proposed = await api.plan(id, parsed.disruption, signal);
+    const proposed = await api.plan(id, parsed.disruption, signal, confirmed);
     const next = await api.details(id, proposed.id, signal);
     signal?.throwIfAborted();
     setApprovalRequested(""); setBasis({ ...state, sessions: next.sessions }); setDetails(next); setUpdatedPlan(undefined); setZoom("week"); await refresh();
     setToast("Recovery plan ready. Review the changes before approving.");
     return planSummary(next.plan, state.studio.currency);
   }
-  async function createPlan() {
+  async function createPlan(confirmed = false) {
     if (!interpretation || interpretation.kind === "clarify" || !state) return;
-    await run("plan", () => previewPlan(interpretation));
+    await run("plan", () => previewPlan(interpretation, undefined, confirmed));
   }
   async function reportDisruption(value: string, signal?: AbortSignal) {
     return run("plan", async () => previewPlan(await interpretText(value, signal), signal), true);

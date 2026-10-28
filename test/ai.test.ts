@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AiUnavailable, generateJson } from "../lib/ai/gemini";
-import { interpretDisruption, interpretRules } from "../lib/ai/interpret";
+import { hardSafetyStop, interpretDisruption, interpretRules } from "../lib/ai/interpret";
+import messyCorpus from "./fixtures/interpret-messy.json";
+import corpus from "./fixtures/interpret-eval.json";
+import { scoreCase } from "../scripts/eval-interpret.mjs";
 import { explainPlan } from "../lib/ai/explain";
 import { draftCustomerMessages } from "../lib/ai/messages";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
@@ -12,6 +15,7 @@ import { replan } from "../lib/solver/replan";
 import { localParts } from "../lib/domain/time";
 import type { Plan } from "../lib/domain/types";
 import { POST as interpret } from "../app/api/workspaces/[id]/interpret/route";
+import { POST as propose } from "../app/api/workspaces/[id]/plans/route";
 import { closeRepository, getRepository } from "../lib/store";
 import { limits } from "../lib/api/limits";
 
@@ -136,7 +140,76 @@ describe("disruption interpretation", () => {
     const result = await interpretDisruption(text, state, now, weekStart);
     expect(result).toMatchObject({ kind: "clarify", question: expect.any(String), suggestions: expect.any(Array) });
     expect(result).not.toHaveProperty("disruption");
-    expect(fetchMock).not.toHaveBeenCalled();
+    if (hardSafetyStop(text, state)) expect(fetchMock).not.toHaveBeenCalled();
+  });
+  // These clarify cases reach the model: unknown/unspecified names, missing days, ambiguous
+  // illness-only wording or a report about somebody else. Text/resource validation rejects
+  // even a confident invented Maya/Monday; malformed dates/times and ranges stop locally.
+  const modelValidated = { messy: [32, 37, 40], original: [116, 127, 130, 135, 137, 150, 154, 155, 156] };
+  it.each([
+    ...messyCorpus.filter((item) => item.expected.clarify).map((item) => ({ ...item, corpus: "messy" as const })),
+    ...corpus.filter((item) => item.expected.clarify).map((item) => ({ ...item, corpus: "original" as const })),
+  ])("has zero dangerous outputs for $corpus $id: $input with an adversarial provider", async (item) => {
+    fetchMock.mockResolvedValue(response(intent()));
+    expect(await interpretDisruption(item.input, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+    if (hardSafetyStop(item.input, state)) expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.length > 0, "All other clarify cases are protected before a provider call").toBe(modelValidated[item.corpus].includes(item.id));
+  });
+  it.each([
+    { text: "Natalie called in sick for Tuesday", fields: { name: "Natalie", day: "tuesday" } },
+    { text: "Chris is sick", fields: { name: "Chris Morgan", day: null } },
+  ])("validates model resource/day fields for $text", async ({ text, fields }) => {
+    fetchMock.mockResolvedValue(response(intent(fields)));
+    expect(await interpretDisruption(text, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+    expect(fetchMock).toHaveBeenCalled();
+  });
+  it("reads a forwarded absence only with owner confirmation, and rejects a different known name", async () => {
+    const text = messyCorpus[0].input, clock = "2026-11-09T05:15:00Z";
+    fetchMock.mockResolvedValueOnce(response(intent({ day: "today" })));
+    expect(await interpretDisruption(text, state, clock)).toMatchObject({ needsConfirmation: true, source: "gemini", disruption: { ...demoDisruption, reason: text } });
+    fetchMock.mockResolvedValue(response(intent({ name: "Alex Rivera", day: "today" })));
+    expect(await interpretDisruption(text, state, clock)).toMatchObject({ kind: "clarify" });
+  });
+  it.each(messyCorpus.filter((item) => !item.expected.clarify))("accepts a correct model reading of messy $id: $input", async (item) => {
+    const expected = item.expected, from = expected.window!.from, to = expected.window!.to;
+    const day = (date: string) => ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][new Date(`${date.slice(0, 10)}T12:00:00Z`).getUTCDay()];
+    const allDay = from.endsWith("00:00") && to.endsWith("00:00");
+    const last = new Date(Date.parse(`${to}:00Z`) - 1).toISOString();
+    fetchMock.mockResolvedValue(response(intent({ kind: expected.instructor ? "instructor_unavailable" : expected.room ? "room_unavailable" : "closure",
+      name: expected.instructor ?? expected.room ?? null, day: day(from), throughDay: allDay && from.slice(0, 10) !== last.slice(0, 10) ? day(last) : null,
+      startTime: allDay ? null : from.slice(11), endTime: allDay ? null : to.slice(11),
+    })));
+    const result = await interpretDisruption(item.input, state, "2026-11-09T05:15:00Z");
+    expect(scoreCase(item, result, state), JSON.stringify(result)).toEqual({ correct: true, dangerous: false });
+    if (interpretRules(item.input, state, "2026-11-09T05:15:00Z").kind === "clarify") expect(result).toHaveProperty("needsConfirmation", true);
+  });
+  it("keeps the hero rules-confirmed by Gemini without a confirmation flag", async () => {
+    fetchMock.mockResolvedValue(response(intent()));
+    const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now);
+    expect(result).toMatchObject({ source: "gemini", disruption: { instructorId: "instructor-01" } });
+    expect(result).not.toHaveProperty("needsConfirmation");
+  });
+  it.each([
+    { day: null }, { confidence: 0.69 }, { startTime: "14:00", endTime: null },
+    { name: "Natalie" },
+  ])("rejects invalid AI-only fields: %j", async (override) => {
+    fetchMock.mockResolvedValue(response(intent(override)));
+    expect(await interpretDisruption(messyCorpus[0].input, state, "2026-11-09T05:15:00Z")).toMatchObject({ kind: "clarify" });
+  });
+  it("rejects an AI-only window that has already ended", async () => {
+    fetchMock.mockResolvedValue(response(intent()));
+    expect(await interpretDisruption("Maya texted: won't make it Monday", state, "2026-11-11T15:00:00Z")).toMatchObject({ kind: "clarify" });
+  });
+  it("rejects AI-only relative dates outside the studio week", async () => {
+    fetchMock.mockResolvedValue(response(intent({ day: "today" })));
+    expect(await interpretDisruption(messyCorpus[0].input, state, "2026-11-16T15:00:00Z")).toMatchObject({ kind: "clarify" });
+  });
+  it("preserves the original clarification on model clarification or outage", async () => {
+    const text = messyCorpus[0].input, original = interpretRules(text, state, now);
+    fetchMock.mockResolvedValueOnce(response({ kind: "clarify", question: "Invented question?", suggestions: [] }));
+    expect(await interpretDisruption(text, state, now)).toEqual(original);
+    fetchMock.mockResolvedValue(new Response(null, { status: 503 }));
+    expect(await interpretDisruption(text, state, now)).toMatchObject({ ...original, aiBusy: true });
   });
   it.each([
     { name: "Beatrice Unknown" }, { name: "Alex Rivera" }, { day: "tuesday" },
@@ -302,6 +375,21 @@ describe("interpretation route", () => {
     expect(await result.json()).toMatchObject({ source: "rules", disruption: { instructorId: "instructor-01" } });
     expect(getRepository().listPlans(id)).toEqual([]);
     expect(getRepository().requireWorkspace(id).state).toEqual(state);
+  });
+  it("passes AI confirmation through the API and rejects planning until explicitly confirmed", async () => {
+    vi.setSystemTime(new Date("2026-11-09T05:15:00Z")); vi.stubEnv("GEMINI_API_KEY", "test-key-never-real");
+    fetchMock.mockResolvedValue(response(intent({ day: "today" })));
+    const parsed = await (await interpret(request({ text: messyCorpus[0].input }), { params: Promise.resolve({ id }) })).json();
+    expect(parsed).toMatchObject({ needsConfirmation: true, source: "gemini" });
+    for (const body of [{ disruption: parsed.disruption }, { disruption: parsed.disruption, confirmed: false }, { disruption: { ...parsed.disruption, reason: undefined } }]) {
+      const result = await propose(request(body), { params: Promise.resolve({ id }) });
+      expect(result.status).toBe(400);
+      expect(await result.json()).toMatchObject({ error: expect.stringContaining("Confirm") });
+      expect(getRepository().listPlans(id)).toEqual([]);
+    }
+    const confirmed = await propose(request({ disruption: parsed.disruption, confirmed: true }), { params: Promise.resolve({ id }) });
+    expect(confirmed.status).toBe(200);
+    expect(getRepository().listPlans(id)).toHaveLength(1);
   });
   it("returns a structured clarification without planning for unresolvable text", async () => {
     const result = await interpret(request({ text: "Something happened" }), { params: Promise.resolve({ id }) });

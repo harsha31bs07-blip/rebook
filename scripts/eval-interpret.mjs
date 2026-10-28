@@ -23,7 +23,7 @@ export function scoreCase(item, result, state) {
   return { correct: resource && local(disruption.from) === expected.window.from && local(disruption.to) === expected.window.to, dangerous: false };
 }
 
-export function evaluationReport(rows, total, elapsedMs, providers = []) {
+export function evaluationReport(rows, total, elapsedMs, providers = [], baseline) {
   const categories = new Map();
   for (const row of rows) {
     const bucket = categories.get(row.category) ?? { total: 0, correct: 0, dangerous: 0, fallback: 0 };
@@ -41,7 +41,7 @@ export function evaluationReport(rows, total, elapsedMs, providers = []) {
 Generated: ${new Date().toISOString()}. Evaluated ${rows.length}/${total} corpus items in ${(elapsedMs / 1000).toFixed(1)} s. Fixed studio clock: 2026-11-09 00:15 America/New_York; demo week: November 9–15, 2026.
 
 Exact resource/window or clarification accuracy: ${percent(rows.filter((row) => row.correct).length, rows.length)}.
-Dangerous false positives (must-clarify input produced a disruption): ${rows.filter((row) => row.dangerous).length}.
+${baseline ? `Rules-only baseline: ${baseline.filter((row) => row.correct).length}/${baseline.length} (${percent(baseline.filter((row) => row.correct).length, baseline.length)}); dangerous false positives: ${baseline.filter((row) => row.dangerous).length}.\n` : ""}Dangerous false positives (must-clarify input produced a disruption): ${rows.filter((row) => row.dangerous).length}.
 Rules result rate: ${percent(rows.filter((row) => row.source === "rules").length, rows.length)} (includes safety clarifications before a provider call).
 Rules fallback rate after a provider attempt: ${percent(rows.filter((row) => row.fallbackReason).length, rows.length)} (model mismatch or provider unavailable).
 Provider outage/timeout fallback rate: ${percent(rows.filter((row) => row.aiBusy).length, rows.length)}.
@@ -62,9 +62,13 @@ ${rows.map((row) => `| ${row.id} | ${row.category} | ${row.correct} | ${row.dang
 `;
 }
 
-function argumentsFor(argv) {
-  const config = { maxItems: 30, budgetMs: 120_000, delayMs: 500 };
+export function argumentsFor(argv) {
+  const config = { maxItems: 30, budgetMs: 120_000, delayMs: 500, corpus: "default" };
   for (let index = 0; index < argv.length; index += 2) {
+    if (argv[index] === "--corpus") {
+      if (!["default", "messy"].includes(argv[index + 1])) throw new Error("Use --corpus default or --corpus messy.");
+      config.corpus = argv[index + 1]; continue;
+    }
     const option = { "--max-items": "maxItems", "--budget-ms": "budgetMs", "--delay-ms": "delayMs" }[argv[index]];
     const value = Number(argv[index + 1]);
     if (!option || !Number.isSafeInteger(value) || value < 1) throw new Error("Use --max-items N --budget-ms N --delay-ms N (positive integers).");
@@ -78,7 +82,7 @@ function argumentsFor(argv) {
 // No build, dev server, extra package or copied provider implementation is needed.
 async function main() {
   if (process.argv.includes("--help")) {
-    console.info("node --env-file=.env.local scripts/eval-interpret.mjs --max-items 177 --budget-ms 2400000 --delay-ms 1500\nDefaults: 30 items, 120000 ms total, 500 ms delay; concurrency is always 1. Writes docs/interpretation-eval.md.");
+    console.info("node --env-file=.env.local scripts/eval-interpret.mjs --max-items 177 --budget-ms 2400000 --delay-ms 1500 [--corpus default|messy]\nDefaults: default corpus, 30 items, 120000 ms total, 500 ms delay; concurrency is always 1. Writes docs/interpretation-eval.md (or docs/interpretation-messy-eval.md for --corpus messy).");
     return;
   }
   const config = argumentsFor(process.argv.slice(2));
@@ -89,13 +93,14 @@ async function main() {
     const compiled = ts.transpileModule(readFileSync(filename, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } });
     module._compile(compiled.outputText, filename);
   };
-  const { interpretDisruption } = require(resolve(root, "lib/ai/interpret.ts"));
+  const { interpretDisruption, interpretRules } = require(resolve(root, "lib/ai/interpret.ts"));
   const { seedStudio } = require(resolve(root, "lib/seed/seed.ts"));
-  const corpus = JSON.parse(readFileSync(resolve(root, "test/fixtures/interpret-eval.json"), "utf8"));
+  const corpus = JSON.parse(readFileSync(resolve(root, `test/fixtures/interpret-${config.corpus === "messy" ? "messy" : "eval"}.json`), "utf8"));
   const buckets = [...new Set(corpus.map((item) => item.category))].map((category) => corpus.filter((item) => item.category === category));
   const ordered = [];
   for (let index = 0; buckets.some((bucket) => index < bucket.length); index++) for (const bucket of buckets) if (bucket[index]) ordered.push(bucket[index]);
   const state = seedStudio(), started = performance.now(), rows = [];
+  const baseline = config.corpus === "messy" ? corpus.map((item) => ({ id: item.id, ...scoreCase(item, interpretRules(item.input, state, "2026-11-09T05:15:00Z"), state) })) : undefined;
   for (const item of ordered.slice(0, config.maxItems)) {
     // Reserve the full production deadline; no request may overrun this run's budget.
     if (performance.now() - started + 12_000 > config.budgetMs) break;
@@ -110,9 +115,10 @@ async function main() {
     if (performance.now() - started + config.delayMs + 12_000 > config.budgetMs) break;
     await delay(config.delayMs);
   }
-  writeFileSync(resolve(root, "docs/interpretation-eval.md"), evaluationReport(rows, corpus.length, performance.now() - started,
-    ["GEMINI_API_KEY", "GROQ_API_KEY"].filter((key) => process.env[key]?.trim()).map((key) => key.split("_")[0].toLowerCase())));
-  console.info(`Wrote docs/interpretation-eval.md (${rows.length}/${corpus.length} items).`);
+  const output = `docs/interpretation-${config.corpus === "messy" ? "messy-" : ""}eval.md`;
+  writeFileSync(resolve(root, output), evaluationReport(rows, corpus.length, performance.now() - started,
+    ["GEMINI_API_KEY", "GROQ_API_KEY"].filter((key) => process.env[key]?.trim()).map((key) => key.split("_")[0].toLowerCase()), baseline));
+  console.info(`Wrote ${output} (${rows.length}/${corpus.length} items).`);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

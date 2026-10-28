@@ -66,6 +66,11 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
   const [approvalReview, setApprovalReview] = useState("");
   const covers = planCovers(plan, state);
   const confirmedIds = coverSelection.key === reviewKey ? coverSelection.ids : [];
+  // A new plan replaces the button that requested it; keep keyboard users in place instead of on <body>.
+  useEffect(() => {
+    const doc = resultHeading.current?.ownerDocument;
+    if (doc && (!doc.activeElement || doc.activeElement === doc.body)) resultHeading.current?.focus();
+  }, [plan.id]);
   useEffect(() => {
     if (wasProposed.current && !proposed) resultHeading.current?.focus();
     wasProposed.current = proposed;

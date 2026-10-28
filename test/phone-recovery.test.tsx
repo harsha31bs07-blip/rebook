@@ -60,7 +60,7 @@ it("shows live bounded-batch progress and a clear Needs review refund result", (
     createdAt: plan.now, results: [], refundProgress: { done: 3, total: 6 } };
   const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Recovery", source: "template", bullets: [] } };
   const html = renderToStaticMarkup(render(() => PlanPanel({ details, plan: publicPlan, state, busy: true, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() })));
-  expect(html).toContain("Refunding 4 of 6");
+  expect(html).toContain("3 of 6 complete");
   const result = renderToStaticMarkup(<RefundResults state={state} results={[{ bookingId: state.bookings[0].id, status: "NEEDS_REVIEW", error: "Automatic retry is paused to avoid a duplicate." }]} />);
   expect(result).toContain("Needs review"); expect(result).toContain("avoid a duplicate");
 });

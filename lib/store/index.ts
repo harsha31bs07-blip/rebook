@@ -279,7 +279,7 @@ export class Repository {
       return event ? { bookingId: action.bookingId, status: event.status, paypalId: event.paypalId || undefined,
         debugId: event.debugId, error: event.error ?? (["FAILED", "REQUESTED"].includes(event.status)
           ? plan.results.find((item) => item.bookingId === action.bookingId)?.error : undefined) }
-        : { bookingId: action.bookingId, status: "REQUESTED", error: "Refund has not been submitted yet" };
+        : { bookingId: action.bookingId, status: "REQUESTED", ...(plan.status === "executing" ? {} : { error: "Refund has not been submitted yet" }) };
     });
     const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING"].includes(item.status))
       ? "partially_failed" : "executed";

@@ -273,6 +273,9 @@ textarea { resize: vertical; min-height: 120px; }
 .outbox-customer > h3 { margin-bottom: 8px; }
 .outbox-status { margin-bottom: 16px; font-size: 13px; }
 .outbox-status .muted { margin-top: 6px; font-size: 12px; }
+.email-status { display: inline-block; max-width: 100%; padding: 6px 10px; margin-bottom: 12px; border-radius: 8px; background: #eff6ff; color: #1e3a8a; font-size: 12px; overflow-wrap: anywhere; }
+.outbox-customer, .outbox-toolbar { overflow-wrap: anywhere; }
+.outbox-toolbar button, .outbox-actions button, .outbox-reminder button { max-width: 100%; white-space: normal; }
 .outbox-reminder p { width: 100%; }
 .outbox-reminder-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; margin: 16px 0; background: #eff6ff; border-radius: 8px; font-size: 13px; }
 .placeholder-page { padding: 80px 32px; max-width: 640px; margin: auto; }

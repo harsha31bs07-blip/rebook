@@ -1,5 +1,8 @@
 import type { CustomerMessage } from "../ai/messages";
 
+export type DeliveryStatus = "queued" | "sent" | "failed" | "unknown" | "delivered" | "bounced" | "deferred";
+export type DeliveryView = { status: DeliveryStatus; updatedAt: string };
+
 export type OutboxChange = {
   bookingId: string; subject: string; body: string;
   kind?: "choice" | "receipt"; path?: string; expiresAt?: number;
@@ -7,6 +10,7 @@ export type OutboxChange = {
 };
 export type OutboxCustomer = {
   customerId: string; customerName: string; planId: string; changes: OutboxChange[];
+  emailDeliverable?: boolean; delivery?: DeliveryView; reminderDelivery?: DeliveryView;
 };
 
 export function outboxState(row: OutboxCustomer) {

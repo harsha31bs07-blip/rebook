@@ -53,4 +53,7 @@ export const api = {
   retryRefund: (id: string, requestId: string) => request<{ status: string }>(`${workspacePath(id)}/refunds/retry`, { requestId }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
   contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),
+  email: (id: string, planId: string, customerId: string, reminder = false, resend = false) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email`, { planId, customerId, reminder, resend }),
+  emailAll: (id: string, planId: string) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email/all`, { planId }),
+  emailStatus: (id: string, planId: string) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email/status`, { planId }),
 };

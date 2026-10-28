@@ -13,6 +13,13 @@ export class Limits {
   private ai = 0;
   /** Tests can model a new server process without changing production limits. */
   reset(): void { this.buckets.clear(); this.preparations = 0; this.poolPreparations = 0; this.ai = 0; }
+  email(client: string, workspace: string): void {
+    this.take([
+      { key: `email-workspace:${workspace}`, max: 30, ms: 86_400_000 },
+      { key: "email-global", max: 250, ms: 86_400_000 },
+      { key: `email-client:${client}`, max: 20, ms: 3_600_000 },
+    ]);
+  }
   take(entries: { key: string; max: number; ms: number; count?: number }[], status = 429): void {
     const now = Date.now();
     for (const [key, bucket] of this.buckets) if (bucket.until <= now) this.buckets.delete(key);

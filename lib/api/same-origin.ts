@@ -19,3 +19,8 @@ export function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   return !origin || allowedOrigins(request).has(origin);
 }
+
+export function publicOrigin(request: Request): string {
+  const origins = [...allowedOrigins(request)];
+  return process.env.PUBLIC_ORIGIN?.trim() ? new URL(process.env.PUBLIC_ORIGIN.trim()).origin : origins.at(-1)!;
+}

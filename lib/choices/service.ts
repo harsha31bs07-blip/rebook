@@ -6,6 +6,7 @@ import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
 import { type OutboxCustomer } from "./outbox";
+import { deliverableAddress } from "./email-content";
 import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -177,6 +178,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
   const links = repository.listCustomerLinks(workspaceId);
   const outbox = new Map<string, OutboxCustomer>();
   const plans = repository.listPlans(workspaceId);
+  const checkouts = repository.listCheckout(workspaceId), deliveries = repository.listDeliveries(workspaceId);
   for (const link of links.toSorted((a, b) => Number(b.kind === "choice") - Number(a.kind === "choice"))) {
     const booking = state.bookings.find((item) => item.id === link.bookingId);
     if (!booking) continue;
@@ -189,6 +191,14 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
       reply: reply ? { at: reply.at, status: reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
+  }
+  for (const row of outbox.values()) {
+    const customer = state.customers.find((item) => item.id === row.customerId);
+    row.emailDeliverable = !!customer && deliverableAddress(customer.email, row.changes.map((change) => change.bookingId), checkouts);
+    for (const kind of ["message", "reminder"] as const) {
+      const delivery = deliveries.find((item) => item.planId === row.planId && item.customerId === row.customerId && item.kind === kind);
+      if (delivery) row[kind === "message" ? "delivery" : "reminderDelivery"] = { status: delivery.status, updatedAt: delivery.updatedAt };
+    }
   }
   return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links),
     outbox: [...outbox.values()],

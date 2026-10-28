@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement, ReactNode } from "react";
 import type { OutboxCustomer } from "../lib/choices/outbox";
 
-const hooks = vi.hoisted(() => ({ cursor: 0, slots: [] as unknown[] }));
+const hooks = vi.hoisted(() => ({ cursor: 0, slots: [] as unknown[], captureEffects: false, effects: [] as (() => void | (() => void))[] }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
   useRef: (value: unknown) => hooks.slots[hooks.cursor++] ??= { current: value },
@@ -11,7 +11,7 @@ vi.mock("react", async (original) => ({
     const index = hooks.cursor++; if (!(index in hooks.slots)) hooks.slots[index] = value;
     return [hooks.slots[index], (next: unknown) => { hooks.slots[index] = next; }];
   },
-  useEffect: () => {},
+  useEffect: (effect: () => void | (() => void)) => { if (hooks.captureEffects) hooks.effects.push(effect); },
 }));
 import MessagesDrawer from "../components/console/messages-drawer";
 
@@ -39,7 +39,7 @@ function row(name: string, sent = false, kind: "choice" | "receipt" = "choice"):
     path: `/c/${name}`, subject: `New time for ${name}'s yoga & dance`, body: `Hi ${name},\n\nYour class moved & it's ready.`, sentAt: sent ? "2026-11-05T12:00:00Z" : undefined }] };
 }
 beforeEach(() => {
-  hooks.cursor = 0; hooks.slots = []; rows = [row("Asha & Jo"), row("Bea", true), row("Chen", true, "receipt")];
+  hooks.cursor = 0; hooks.slots = []; hooks.captureEffects = false; hooks.effects = []; rows = [row("Asha & Jo"), row("Bea", true), row("Chen", true, "receipt")];
   location.href = ""; open = vi.fn(); copy = vi.fn().mockResolvedValue(undefined); onUpdated = vi.fn();
   vi.stubGlobal("window", { location, open }); vi.stubGlobal("navigator", { clipboard: { writeText: copy } });
   fetchMock = vi.fn(async (_url: string, options: RequestInit) => {
@@ -49,7 +49,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", fetchMock);
 });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it("has list semantics, customer-specific actions, link kinds, sent times and polite status updates", () => {
   const html = render();
@@ -64,7 +64,7 @@ it("has list semantics, customer-specific actions, link kinds, sent times and po
   expect(html).toContain("2 sent · 0 replied · 1 waiting");
 });
 
-it.each(["WhatsApp", "SMS", "Email", "Copy message for"])("%s shares the full message and link, saves Sent, then allows undo", async (channel) => {
+it.each(["WhatsApp", "SMS", "Email draft for", "Copy message for"])("%s shares the full message and link, saves Sent, then allows undo", async (channel) => {
   render(); const html = await click(`${channel} Asha & Jo`);
   expect(fetchMock).toHaveBeenCalledOnce();
   const [url, options] = fetchMock.mock.calls[0];
@@ -122,4 +122,72 @@ it("blocks repeated sharing while a write is pending and uses the latest polled 
   for (let index = 0; index < 20; index++) await Promise.resolve(); render();
   rows = rows.map((customer) => customer.customerId === "Asha & Jo" ? { ...customer, changes: customer.changes.map((change) => ({ ...change, sentAt: "2026-11-05T13:00:00Z", reply: { status: "kept", at: "2026-11-05T13:01:00Z" } })) } : customer);
   expect(render()).toContain("3 sent · 1 replied · 1 waiting");
+});
+
+it("enables direct Email only for checkout addresses and keeps manual drafts for demo rows", () => {
+  rows[0].emailDeliverable = true;
+  const html = render(); expect(button("Email Asha & Jo").props.disabled).toBe(false); expect(button("Email Bea").props.disabled).toBe(true);
+  expect(button("Email draft for Bea").props.disabled).toBe(false);
+  expect(html).toContain("Demo address · not sent"); expect(button("Email 1 customers with addresses")).toBeTruthy();
+});
+
+it("announces Sending, saves a sent chip, disables duplicate email and accepts later delivery updates", async () => {
+  rows[0].emailDeliverable = true; let resolve!: (value: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }));
+  render(); const send = button("Email Asha & Jo").props.onClick as () => void; send(); send();
+  expect(render()).toContain("Sending…"); expect(fetchMock).toHaveBeenCalledOnce();
+  expect(button("Email Asha & Jo").props.disabled).toBe(true);
+  const updated = rows.map((row, index) => index ? row : { ...row, delivery: { status: "sent" as const, updatedAt: "2026-11-05T13:00:00Z" }, changes: row.changes.map((change) => ({ ...change, sentAt: "2026-11-05T13:00:00Z" })) });
+  resolve(Response.json({ outbox: updated })); for (let index = 0; index < 20; index++) await Promise.resolve();
+  expect(render()).toContain("Email for Asha &amp; Jo: Sent"); expect(button("Email Asha & Jo").props.disabled).toBe(true);
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/workspaces/workspace1/outbox/email");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toMatchObject({ customerId: "Asha & Jo", reminder: false, resend: false });
+  rows = updated.map((row, index) => index ? row : { ...row, delivery: { status: "delivered", updatedAt: "2026-11-05T13:01:00Z" } });
+  expect(render()).toContain("Email for Asha &amp; Jo: Delivered");
+});
+
+it.each(["failed", "unknown", "bounced"] as const)("requires confirmation to resend %s email and announces the result", async (status) => {
+  rows[0] = { ...rows[0], emailDeliverable: true, delivery: { status, updatedAt: "2026-11-05T13:00:00Z" } };
+  render(); const html = await click("Send again to Asha & Jo");
+  if (status === "unknown") expect(html).toContain("Unknown — check before resending");
+  expect(html).toContain("A previous email may already have arrived"); expect(fetchMock).not.toHaveBeenCalled();
+  await click("Cancel email again to Asha & Jo"); expect(fetchMock).not.toHaveBeenCalled();
+  await click("Send again to Asha & Jo");
+  fetchMock.mockResolvedValueOnce(Response.json({ outbox: rows.map((row, index) => index ? row : { ...row, delivery: { status: "sent", updatedAt: "2026-11-05T13:01:00Z" } }) }));
+  expect(await click("Confirm send again to Asha & Jo")).toContain("Email for Asha &amp; Jo: Sent");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).resend).toBe(true);
+});
+
+it("bulk sends only the eligible count and keeps unknown rows out of that count", async () => {
+  rows[0].emailDeliverable = true;
+  rows[1] = { ...rows[1], emailDeliverable: true, delivery: { status: "unknown", updatedAt: "2026-11-05T13:00:00Z" } };
+  render(); await click("Email 1 customers with addresses");
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/workspaces/workspace1/outbox/email/all");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ planId: "plan" });
+});
+
+it("polls the status endpoint and updates chips from Deferred to Delivered", async () => {
+  vi.useFakeTimers(); rows[0] = { ...rows[0], emailDeliverable: true, delivery: { status: "sent", updatedAt: "2026-11-05T13:00:00Z" } };
+  fetchMock.mockResolvedValueOnce(Response.json({ outbox: rows.map((row, index) => index ? row : { ...row, delivery: { status: "deferred", updatedAt: "2026-11-05T13:01:00Z" } }) }));
+  hooks.captureEffects = true; render(); hooks.captureEffects = false;
+  const cleanup = hooks.effects.at(-1)!();
+  try {
+    for (let index = 0; index < 20; index++) await Promise.resolve();
+    expect(render()).toContain("Email for Asha &amp; Jo: Deferred");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/workspaces/workspace1/outbox/email/status");
+    fetchMock.mockResolvedValueOnce(Response.json({ outbox: rows.map((row, index) => index ? row : { ...row, delivery: { status: "delivered", updatedAt: "2026-11-05T13:02:00Z" } }) }));
+    await vi.advanceTimersByTimeAsync(60_000); expect(render()).toContain("Email for Asha &amp; Jo: Delivered");
+  } finally { if (typeof cleanup === "function") cleanup(); }
+});
+
+it("does not let a stale status response overwrite a send completed while it was pending", async () => {
+  let resolve!: (value: Response) => void; rows[0].emailDeliverable = true;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }));
+  hooks.captureEffects = true; render(); hooks.captureEffects = false; const cleanup = hooks.effects.at(-1)!();
+  try {
+    fetchMock.mockResolvedValueOnce(Response.json({ outbox: rows.map((row, index) => index ? row : { ...row, delivery: { status: "sent", updatedAt: "2026-11-05T13:00:00Z" } }) }));
+    expect(await click("Email Asha & Jo")).toContain("Email for Asha &amp; Jo: Sent");
+    resolve(Response.json({ outbox: rows })); for (let index = 0; index < 20; index++) await Promise.resolve();
+    expect(render()).toContain("Email for Asha &amp; Jo: Sent");
+  } finally { if (typeof cleanup === "function") cleanup(); }
 });

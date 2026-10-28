@@ -8,6 +8,10 @@ import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "..
 import { nextWeekStart } from "../seed/seed";
 import { activateConstraint, activeConstraints, preserveConstraints } from "../solver/constraints";
 import type { CoverConfirmation } from "../recovery/covers";
+import type { DeliveryStatus } from "../choices/outbox";
+
+export type Delivery = { workspaceId: string; planId: string; customerId: string; kind: "message" | "reminder";
+  status: DeliveryStatus; attemptId: string; messageId?: string; createdAt: string; updatedAt: string; reason?: string };
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
@@ -91,6 +95,12 @@ export class Repository {
         request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
       );
       CREATE TABLE IF NOT EXISTS choice_secrets (id INTEGER PRIMARY KEY CHECK(id = 1), secret TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS deliveries (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, customer_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
+      );
+      CREATE TABLE IF NOT EXISTS email_checks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, checked_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS customer_links (
         id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -108,6 +118,38 @@ export class Repository {
     this.db.prepare("INSERT OR IGNORE INTO choice_secrets VALUES (1, ?)").run(randomBytes(32).toString("hex"));
   }
   close(): void { this.db.close(); }
+  listDeliveries(workspaceId: string): Delivery[] {
+    // A process that died after reserving a send cannot prove whether Brevo accepted it.
+    // Update only a still-queued row, so another process's completed attempt cannot be overwritten.
+    this.db.prepare(`UPDATE deliveries SET data = json_set(data, '$.status', 'unknown', '$.updatedAt', ?)
+      WHERE workspace_id = ? AND json_extract(data, '$.status') = 'queued' AND json_extract(data, '$.updatedAt') < ?`)
+      .run(new Date().toISOString(), workspaceId, new Date(Date.now() - 30_000).toISOString());
+    return (this.db.prepare("SELECT data FROM deliveries WHERE workspace_id = ?").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  saveDelivery(delivery: Delivery): void {
+    this.db.prepare("INSERT INTO deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, plan_id, customer_id, kind) DO UPDATE SET data = excluded.data")
+      .run(delivery.workspaceId, delivery.planId, delivery.customerId, delivery.kind, JSON.stringify(delivery));
+  }
+  queueDelivery(key: Pick<Delivery, "workspaceId" | "planId" | "customerId" | "kind">, resend = false, beforeQueue: () => void = () => {}): Delivery {
+    return this.transaction(() => {
+      const previous = this.listDeliveries(key.workspaceId).find((row) => row.planId === key.planId && row.customerId === key.customerId && row.kind === key.kind);
+      if (previous && previous.status !== "failed" && !(resend && ["unknown", "bounced"].includes(previous.status))) {
+        throw new StoreError(409, "This email already has a send attempt. Check its status before sending again.");
+      }
+      beforeQueue();
+      const now = new Date().toISOString();
+      const delivery: Delivery = { ...key, status: "queued", attemptId: randomUUID(), createdAt: now, updatedAt: now };
+      this.saveDelivery(delivery); return delivery;
+    });
+  }
+  claimEmailCheck(workspaceId: string): boolean {
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT checked_at FROM email_checks WHERE workspace_id = ?").get(workspaceId) as { checked_at: number } | undefined;
+      if (row && row.checked_at + 60_000 > Date.now()) return false;
+      this.db.prepare("INSERT INTO email_checks VALUES (?, ?) ON CONFLICT(workspace_id) DO UPDATE SET checked_at = excluded.checked_at").run(workspaceId, Date.now());
+      return true;
+    });
+  }
   // Only the digest is indexed/stored. The server key lets the owner re-open the delivery link
   // after a restart without storing bearer tokens in workspace JSON, plans, or the ledger.
   customerToken(link: CustomerLink): string {

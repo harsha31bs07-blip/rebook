@@ -9,13 +9,16 @@ const DAY_WORDS = ["today", "tomorrow", ...DAYS] as const;
 const DAY_PATTERN = /\b(today|tomorrow|sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\b/g;
 const PERIODS = { morning: ["07:00", "12:00"], afternoon: ["12:00", "17:00"], evening: ["17:00", "21:00"], all_day: ["00:00", "00:00"] } as const;
 const ClockSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+// Providers differ: Groq omits optional fields and capitalises days. Normalise only the shape; values are validated below.
+const or = <T extends z.ZodType>(schema: T, fallback: unknown) => z.preprocess((value) => value ?? fallback, schema);
+const word = <T extends z.ZodType>(schema: T, fallback: unknown) => z.preprocess((value) => typeof value === "string" ? value.trim().toLowerCase() : value ?? fallback, schema);
 const IntentSchema = z.object({
   kind: z.enum(["instructor_unavailable", "room_unavailable", "closure"]),
-  name: z.string().nullable(), day: z.enum(DAY_WORDS).nullable(), untilDay: z.enum(DAY_WORDS).nullable(),
-  throughDay: z.enum(DAY_WORDS).nullable().optional(),
-  startTime: ClockSchema.nullable(), endTime: ClockSchema.nullable(),
-  period: z.enum(["morning", "afternoon", "evening", "all_day"]),
-  thisWeek: z.boolean(), confidence: z.number().min(0).max(1), notes: z.array(z.string().max(300)).max(5),
+  name: or(z.string().nullable(), null), day: word(z.enum(DAY_WORDS).nullable(), null), untilDay: word(z.enum(DAY_WORDS).nullable(), null),
+  throughDay: word(z.enum(DAY_WORDS).nullable(), null),
+  startTime: or(ClockSchema.nullable(), null), endTime: or(ClockSchema.nullable(), null),
+  period: word(z.enum(["morning", "afternoon", "evening", "all_day"]), "all_day"),
+  thisWeek: or(z.boolean(), false), confidence: or(z.number().min(0).max(1), 0.7), notes: or(z.array(z.string().max(300)).max(5), []),
 });
 type Intent = z.infer<typeof IntentSchema>;
 const responseSchema = {
@@ -42,7 +45,7 @@ export type Clarification = {
   source?: "gemini" | "groq" | "rules"; model?: string; aiBusy?: boolean;
 };
 export type Interpretation = DisruptionInterpretation | Clarification;
-const ClarificationSchema = z.object({ kind: z.literal("clarify"), question: z.string().min(1).max(500), suggestions: z.array(z.string().min(1).max(500)).max(5) });
+const ClarificationSchema = z.object({ kind: z.literal("clarify"), question: z.string().min(1).max(500), suggestions: or(z.array(z.string().min(1).max(500)).max(5), []) });
 const ModelSchema = z.union([ClarificationSchema, IntentSchema]);
 const clarify = (question: string, suggestions: string[] = []): Clarification => ({ kind: "clarify", question, suggestions, source: "rules" });
 export class InterpretationError extends Error {

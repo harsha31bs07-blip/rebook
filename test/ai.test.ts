@@ -206,6 +206,12 @@ describe("disruption interpretation", () => {
     fetchMock.mockResolvedValue(response(intent({ startTime: "14:00", endTime: "16:00" })));
     expect(await interpretDisruption("Maya texted: won't make it Monday from 2pm to 4pm", state, "2026-11-09T05:15:00Z")).toMatchObject({ needsConfirmation: true });
   });
+  it("accepts a fallback provider's sparse answer with a capitalised day", async () => {
+    fetchMock.mockResolvedValue(response({ kind: "instructor_unavailable", name: "Maya Chen", day: "Monday", confidence: 0.9 }));
+    const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now);
+    expect(result).toMatchObject({ source: "gemini", disruption: { instructorId: "instructor-01" } });
+    expect(result).not.toHaveProperty("fallbackReason");
+  });
   it("keeps the hero rules-confirmed by Gemini without a confirmation flag", async () => {
     fetchMock.mockResolvedValue(response(intent()));
     const result = await interpretDisruption("Maya has the flu and can't teach Monday", state, now);

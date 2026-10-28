@@ -344,7 +344,9 @@ export async function interpretDisruption(text: string, state: State, nowIso: st
   if (grounded.kind === "clarify" && (hardSafetyStop(text, state) ||
       !["Is there a confirmed upcoming disruption?", "Which known instructor do you mean?", "Which instructor or room is unavailable?", "What is unavailable?", "Which day is affected?", "Please report one known instructor or room at a time."].some((prefix) => grounded.question.startsWith(prefix)))) return grounded;
   try {
-    const result = await generateJson(promptFor(text, state, nowIso, weekStart), responseSchema, ModelSchema, { identity, budgetMs: 12_000, timeoutMs: 6_000 });
+    // A rules-read message only needs the model's agreement, so a slow first provider hands over to the fallback sooner.
+    const result = await generateJson(promptFor(text, state, nowIso, weekStart), responseSchema, ModelSchema,
+      { identity, ...(grounded.kind === "clarify" ? { budgetMs: 12_000, timeoutMs: 6_000 } : { budgetMs: 8_000, timeoutMs: 3_500 }) });
     if (result.data.kind === "clarify") return grounded.kind === "clarify" ? grounded : { ...result.data, source: result.provider, model: result.model };
     if (result.data.confidence < 0.7) return grounded.kind === "clarify" ? grounded : { ...clarify("Please confirm who or what is unavailable, with its exact day and time."), source: result.provider, model: result.model };
     const candidate = modelDisruption(result.data, state, nowIso, weekStart);

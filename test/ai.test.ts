@@ -266,17 +266,20 @@ describe("disruption interpretation", () => {
   it("starts this week on local today without losing later days", () => {
     expect(interpretRules("Maya unavailable this week", state, "2026-11-11T15:00:00Z")).toMatchObject({ disruption: { from: "2026-11-11T05:00:00.000Z", to: "2026-11-16T05:00:00.000Z" } });
   });
-  it("bounds the whole provider chain including stalled bodies to 12 seconds", async () => {
+  it.each([
+    { text: "Maya is sick Monday", budget: 8_000, calls: 3, result: { source: "rules", aiBusy: true, disruption: { instructorId: "instructor-01" } } },
+    { text: messyCorpus[0].input, budget: 12_000, calls: 2, result: { kind: "clarify", aiBusy: true } },
+  ])("bounds the whole provider chain including stalled bodies to $budget ms", async ({ text, budget, calls, result }) => {
     vi.useFakeTimers();
     vi.stubEnv("AI_MODELS", "gemini:deadline-first,groq:deadline-second,gemini:deadline-third");
     vi.stubEnv("GROQ_API_KEY", "test-groq");
     fetchMock.mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
     const started = Date.now();
-    const pending = interpretDisruption("Maya is sick Monday", state, now);
-    await vi.advanceTimersByTimeAsync(12_000);
-    expect(await pending).toMatchObject({ source: "rules", aiBusy: true, disruption: { instructorId: "instructor-01" } });
-    expect(Date.now() - started).toBe(12_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const pending = interpretDisruption(text, state, "2026-11-09T05:15:00Z");
+    await vi.advanceTimersByTimeAsync(budget);
+    expect(await pending).toMatchObject(result);
+    expect(Date.now() - started).toBe(budget);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
     expect(fetchMock.mock.calls.every(([, options]) => options.signal.aborted)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });

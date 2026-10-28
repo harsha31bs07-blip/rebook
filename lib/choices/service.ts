@@ -174,7 +174,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     const reply = link.reply;
     row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind,
       path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
-      reply: reply ? { at: reply.at, status: reply.action === "refund" ? "refunded" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
+      reply: reply ? { at: reply.at, status: reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
   }
   return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links),

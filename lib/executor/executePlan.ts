@@ -47,7 +47,7 @@ export async function executePlan(workspaceId: string, planId: string, repositor
         sessionId: cover.sessionId, instructorId: cover.instructorId, confirmedBy: "Workspace owner", confirmedAt: new Date().toISOString(),
       }));
       plan = { ...plan, status: "executing", basis, coverConfirmations };
-      repository.transaction(() => { repository.saveState(workspaceId, next); repository.savePlan(plan!); createCustomerLinks(plan!, basis, next, repository); });
+      repository.transaction(() => { repository.saveState(workspaceId, next); repository.savePlan(plan!); repository.discardOtherProposals(workspaceId, planId); createCustomerLinks(plan!, basis, next, repository); });
     } else {
       // Scheduling rules apply at approval; retries settle the already-approved money actions.
       plan = { ...plan, status: "executing" };

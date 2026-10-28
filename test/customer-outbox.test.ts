@@ -87,7 +87,7 @@ describe("durable owner outbox", () => {
     const choice = rows().flatMap((row) => row.changes).find((change) => change.kind === "choice")!;
     const link = repository.listCustomerLinks(id).find((item) => item.bookingId === choice.bookingId)!;
     const action = plan.bookingActions.find((item) => item.bookingId === choice.bookingId)!;
-    for (const [input, label] of [["keep", action.action === "move" ? "moved" : "kept"], ["move", "chose another class"], ["refund", "refunded"]] as const) {
+    for (const [input, label] of [["keep", action.action === "move" ? "moved" : "kept"], ["move", "chose another class"], ["refund", "refund requested"]] as const) {
       repository.saveCustomerLink({ ...link, reply: { action: input, at: new Date().toISOString(), amount: "0.00" } });
       expect(rows().flatMap((row) => row.changes).find((change) => change.bookingId === choice.bookingId)?.reply?.status).toBe(label);
     }

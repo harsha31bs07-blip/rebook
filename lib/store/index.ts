@@ -296,6 +296,12 @@ export class Repository {
     if (plan.status !== "proposed") throw new StoreError(409, "Only a proposed plan can be discarded.");
     this.db.prepare("DELETE FROM plans WHERE id = ? AND workspace_id = ?").run(id, workspaceId);
   }
+  /** Superseded previews would otherwise keep their classes paused for customer booking. */
+  discardOtherProposals(workspaceId: string, keepId?: string): void {
+    for (const plan of this.listPlans(workspaceId)) {
+      if (plan.status === "proposed" && plan.id !== keepId) this.db.prepare("DELETE FROM plans WHERE id = ? AND workspace_id = ?").run(plan.id, workspaceId);
+    }
+  }
   clearPlans(workspaceId: string): void {
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }

@@ -29,7 +29,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const validation = validate(state, plan);
       if (!validation.ok) throw new StoreError(409, "A valid recovery plan could not be generated");
       plan.planningDurationMs = performance.now() - started;
-      return repository.createPlan(id, plan);
+      return repository.transaction(() => { repository.discardOtherProposals(id); return repository.createPlan(id, plan); });
     });
   });
 }

@@ -29,7 +29,7 @@ export function getRefundBreakdown(data: Insights, groupBy: RefundGroup = "reaso
   return { ...stamp(data), groupBy, rows: [...groups].map(([label, events]) => ({ label, requests: events.length,
     completedUSD: money(events.filter((row) => row.status === "COMPLETED").map((row) => row.amount)),
     simulatedUSD: money(events.filter((row) => row.status === "SIMULATED").map((row) => row.amount)),
-    pendingUSD: money(events.filter((row) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(row.status)).map((row) => row.amount)),
+    pendingUSD: money(events.filter((row) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(row.status)).map((row) => row.amount)),
     failedUSD: money(events.filter((row) => ["FAILED", "CANCELLED"].includes(row.status)).map((row) => row.amount)),
   })).sort((a, b) => b.completedUSD + b.simulatedUSD - a.completedUSD - a.simulatedUSD || a.label.localeCompare(b.label)),
   note: "Latest receipt per request, including customer-choice refunds. Requests are not unique bookings. Completed and simulated amounts are separate; pending/failed amounts are not issued refunds." };

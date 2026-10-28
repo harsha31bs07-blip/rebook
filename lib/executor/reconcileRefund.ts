@@ -52,10 +52,13 @@ export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> 
 export async function reconcileRefund(event: LedgerEvent, repository: Repository): Promise<Reconciliation> {
   const outcome = await lookupRefund(event);
   if (outcome.kind !== "found") return outcome;
-  const delivered = repository.latestMoneyEvents(event.workspaceId).find((item) => item.kind === "refund" && item.requestId === event.requestId);
-  const status = delivered?.status === "COMPLETED" ? "COMPLETED" : outcome.payment.status;
-  const paypalId = delivered?.status === "COMPLETED" ? delivered.paypalId : outcome.payment.id;
   const settled = repository.transaction(() => {
+    const delivered = repository.latestMoneyEvents(event.workspaceId).find((item) => item.kind === "refund" && item.requestId === event.requestId);
+    // A webhook or a new lease owner may have written while this GET was in flight.
+    // Compare and persist under the SQLite write transaction, including across processes.
+    if (delivered?.id !== event.id) return delivered;
+    const status = delivered.status === "COMPLETED" ? "COMPLETED" : outcome.payment.status;
+    const paypalId = delivered.status === "COMPLETED" ? delivered.paypalId : outcome.payment.id;
     const recorded = repository.appendLedger({ ...event, paypalId, status,
       error: status === "FAILED" ? "PayPal reports that this refund failed" : undefined });
     const workspace = repository.requireWorkspace(event.workspaceId, true);
@@ -66,5 +69,6 @@ export async function reconcileRefund(event: LedgerEvent, repository: Repository
     }
     return recorded;
   });
+  if (!settled) return outcome;
   return { kind: "found", payment: { ...outcome.payment, id: settled.paypalId, status: settled.status } };
 }

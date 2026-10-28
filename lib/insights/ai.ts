@@ -74,7 +74,7 @@ export function buildRecoveryAi(id: string, data: Insights): AgAiHarnessSetup {
       name: "get_refund_receipts", description: "Read latest refund receipts with customer, class, local day/time, instructor, amount, status and reason. All amounts are USD; simulations are labelled.",
       params: (s) => s.object({
         plan_id: s.string({ description: "Optional disruption plan ID." }).optional(),
-        status: s.enum(["COMPLETED", "PENDING", "REQUESTED", "SIMULATED", "FAILED", "UNKNOWN"]).optional(),
+        status: s.enum(["COMPLETED", "PENDING", "REQUESTED", "NEEDS_REVIEW", "SIMULATED", "FAILED", "UNKNOWN"]).optional(),
       }),
       execute: (args, ctx) => {
         const rows = recoveryReceipts(data, args.plan_id, args.status);

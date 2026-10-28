@@ -54,15 +54,32 @@ export async function executePlan(workspaceId: string, planId: string, repositor
       repository.savePlan(plan);
     }
     createCustomerLinks(plan, basis, repository.requireWorkspace(workspaceId).state, repository);
-    const results: ExecutionResult[] = [];
-    for (const action of plan.bookingActions.filter((item) => item.action === "refund")) {
-      repository.renewLock(workspaceId, owner);
-      const result = await executeRefund(workspaceId, action, `${planId}:${action.bookingId}`, repository,
-        () => repository.renewLock(workspaceId, owner));
-      results.push(result);
-      plan = { ...plan, results: [...results] };
-      repository.savePlan(plan);
-    }
+    const actions = plan.bookingActions.filter((item) => item.action === "refund");
+    const ordered: (ExecutionResult | undefined)[] = actions.map(() => undefined);
+    let next = 0, done = 0;
+    let stopped = false;
+    plan = { ...plan, refundProgress: { done, total: actions.length } };
+    repository.savePlan(plan);
+    const worker = async () => {
+      while (!stopped && next < actions.length) {
+        const index = next++, action = actions[index];
+        try {
+          repository.renewLock(workspaceId, owner);
+          ordered[index] = await executeRefund(workspaceId, action, `${planId}:${action.bookingId}`, repository,
+            () => repository.renewLock(workspaceId, owner));
+          repository.renewLock(workspaceId, owner);
+          done += 1;
+          plan = { ...plan!, results: ordered.filter((item): item is ExecutionResult => !!item), refundProgress: { done, total: actions.length } };
+          repository.savePlan(plan);
+        } catch (error) { stopped = true; throw error; }
+      }
+    };
+    // Join every in-flight request before releasing the lease, even after a worker fails.
+    const workers = await Promise.allSettled(Array.from({ length: Math.min(3, actions.length) }, worker));
+    const failed = workers.find((item) => item.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    repository.renewLock(workspaceId, owner);
+    const results = ordered.filter((item): item is ExecutionResult => !!item);
     plan = { ...plan, results, status: results.some((result) => !["COMPLETED", "PENDING", "SIMULATED"].includes(result.status)) ? "partially_failed" : "executed" };
     repository.savePlan(plan);
     const view = repository.getPlan(workspaceId, planId)!;

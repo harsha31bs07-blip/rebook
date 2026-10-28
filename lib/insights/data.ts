@@ -3,6 +3,7 @@ import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
 import type { CustomerLink, LedgerEvent, StoredPlan } from "../store";
 import { recoveryOutcomes, summarizeRecovery } from "../recovery/outcomes";
+import { paymentsNeedingAttention } from "../recovery/payment-attention";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
@@ -45,6 +46,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
   return {
     as_of: new Date().toISOString(),
     recovery_outcomes: outcomes,
+    payments_needing_attention: paymentsNeedingAttention(state, ledger),
     covers: plans.flatMap((plan) => plan.sessionChanges.filter((change) => change.remedy === "substitute" && change.after).map((change) => ({
       plan_id: plan.id, status: plan.status, class: sessions.get(change.sessionId)?.title ?? "Class unavailable",
       local_day: localParts(change.before.start, state.studio.timezone).dateKey,
@@ -98,7 +100,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
         refund_amount: dollars(plan.totals.refundAmount), revenue_kept: active ? recovery.revenueKept : dollars(plan.totals.revenueKept),
         planned_refund_amount: dollars(plan.totals.refundAmount),
-        pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN"]),
+        pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]),
         completed_refund_amount: amountFor(["COMPLETED"]),
         simulated_refund_amount: amountFor(["SIMULATED"]),
         failed_refund_amount: amountFor(["FAILED", "CANCELLED"]),

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-const recovery = vi.hoisted(() => ({ resume: vi.fn(), prune: vi.fn(), pool: vi.fn() }));
+const recovery = vi.hoisted(() => ({ resume: vi.fn(), prune: vi.fn(), pool: vi.fn(), refunds: vi.fn() }));
+vi.mock("../lib/executor/refund-sweep", () => ({ startRefundSweep: recovery.refunds }));
 vi.mock("../lib/store", () => ({ startPruning: recovery.prune }));
 vi.mock("../lib/demo/createWorkspace", () => ({ resumeStalePreparations: recovery.resume, startWarmPool: recovery.pool }));
 import { register } from "../instrumentation";
@@ -15,8 +16,10 @@ it("runs startup recovery before the first prune or pool fill", async () => {
   await vi.waitFor(() => expect(recovery.resume).toHaveBeenCalled());
   expect(recovery.prune).not.toHaveBeenCalled();
   expect(recovery.pool).not.toHaveBeenCalled();
+  expect(recovery.refunds).not.toHaveBeenCalled();
   resolve();
   await startup;
   expect(recovery.prune).toHaveBeenCalledOnce();
   expect(recovery.pool).toHaveBeenCalledOnce();
+  expect(recovery.refunds).toHaveBeenCalledOnce();
 });

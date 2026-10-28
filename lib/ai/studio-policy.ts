@@ -10,7 +10,7 @@ const tool = (name: string, description: string, parameters: Record<string, unkn
 /** Public analyst tools are owned here, never accepted from the browser. Studio executes them locally. */
 export const studioTools = [
   tool("get_disruptions", "Read workspace disruption plans, saved bookings, costs and instructor cover.", object({ plan_id: text })),
-  tool("get_refund_receipts", "Read refund receipts by optional plan and status. Distinguish actual and simulated payments.", object({ plan_id: text, status: { type: "string", enum: ["COMPLETED", "PENDING", "REQUESTED", "SIMULATED", "FAILED", "UNKNOWN"] } })),
+  tool("get_refund_receipts", "Read refund receipts by optional plan and status. Distinguish actual and simulated payments.", object({ plan_id: text, status: { type: "string", enum: ["COMPLETED", "PENDING", "REQUESTED", "NEEDS_REVIEW", "SIMULATED", "FAILED", "UNKNOWN"] } })),
   tool("view_schema", "Inspect the studio tables and fields before querying or configuring a chart.", object()),
   tool("execute_query", "Query studio data using the AG Studio query object. Read the schema first.", object({ query: { type: "object", additionalProperties: true } }, ["query"])),
   tool("view_page", "Inspect the current page, layout and widgets.", object()),

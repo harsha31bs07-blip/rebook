@@ -7,7 +7,7 @@ import { studioStartupMessage, watchStudioRequest } from "../../lib/client/studi
 function hasPendingRefunds(workspace?: WorkspaceResponse): boolean {
   const latest = new Map<string, string>();
   for (const event of workspace?.ledger ?? []) if (event.kind === "refund") latest.set(event.requestId, event.status);
-  return [...latest.values()].some((status) => ["PENDING", "REQUESTED", "UNKNOWN"].includes(status));
+  return [...latest.values()].some((status) => ["PENDING", "REQUESTED", "UNKNOWN", "NEEDS_REVIEW"].includes(status));
 }
 
 export function useWorkspace(id: string, watchExecution: boolean) {

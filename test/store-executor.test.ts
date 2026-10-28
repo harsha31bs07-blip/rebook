@@ -171,8 +171,9 @@ describe("plan execution", () => {
     expect(result.plan.status).toBe("executed");
     const calls = fetch.mock.calls.filter(([url]) => String(url).endsWith("/refund"));
     expect(calls).toHaveLength(actions.length - 1);
-    const init = (calls[0] as unknown[])[1] as RequestInit;
-    expect((init.headers as Record<string, string>)["PayPal-Request-Id"]).toBe(`${plan.id}:${actions[1].bookingId}`);
+    // Concurrent fresh actions may reach PayPal before the interrupted action finishes its GET.
+    const keys = calls.map((call) => ((call as unknown[])[1] as RequestInit).headers as Record<string, string>);
+    expect(keys.filter((headers) => headers["PayPal-Request-Id"] === `${plan.id}:${actions[1].bookingId}`)).toHaveLength(1);
   });
   it("does not refund a capture reserved by another operation or beyond the captured amount", async () => {
     const { workspace, plan } = prepared();

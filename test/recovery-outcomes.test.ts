@@ -56,10 +56,19 @@ describe("current booking recovery outcomes", () => {
   it("never calls simulated or failed refunds completed", () => {
     const refundAction = plan.bookingActions.find((item) => item.action === "refund")!;
     const one = { ...plan, bookingActions: [refundAction] };
-    for (const status of ["REQUESTED", "PENDING", "FAILED", "CANCELLED", "UNKNOWN"]) {
+    for (const status of ["REQUESTED", "PENDING", "NEEDS_REVIEW", "FAILED", "CANCELLED", "UNKNOWN"]) {
       const summary = summarizeRecovery(recoveryOutcomes(state, [one], [event(`${one.id}:${refundAction.bookingId}`, refundAction.amount, status, refundAction.bookingId)]));
       expect(summary).toMatchObject({ refunded: 0, pending: 1, revenueKept: 0, complete: false });
     }
     expect(summarizeRecovery(recoveryOutcomes(state, [one], [event(`${one.id}:${refundAction.bookingId}`, refundAction.amount, "SIMULATED", refundAction.bookingId)]))).toMatchObject({ refunded: 0, simulatedRefunded: 1, pending: 0, completedRefundAmount: 0 });
+  });
+
+  it("keeps Needs review reserved in dashboard money totals and labels it as needing attention", () => {
+    const refundAction = plan.bookingActions.find((item) => item.action === "refund")!;
+    const one = { ...plan, bookingActions: [refundAction] };
+    const data = buildInsights(state, [one], [event(`${one.id}:${refundAction.bookingId}`, refundAction.amount, "NEEDS_REVIEW", refundAction.bookingId)]);
+    expect(data.disruptions[0]).toMatchObject({ pending_refund_amount: Number(refundAction.amount), completed_refund_amount: 0 });
+    expect(data.recovery_outcomes[0]).toMatchObject({ payment_state: "needs_attention", pending: 1, final: false });
+    expect(data.payments_needing_attention[0]).toMatchObject({ status: "NEEDS_REVIEW", amount: refundAction.amount });
   });
 });

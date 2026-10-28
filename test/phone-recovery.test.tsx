@@ -34,7 +34,9 @@ vi.mock("../components/console/use-workspace", () => ({ useWorkspace: () => ({ w
   state: adjustmentFixture(), plans: [], status: "ready", progress: { done: 1, total: 1 },
 }, refresh: vi.fn() }) }));
 import ScheduleAgenda from "../components/console/schedule-agenda";
-import PlanPanel, { ApprovalDialog, CoverRecord } from "../components/console/plan-panel";
+import PlanPanel, { ApprovalDialog, CoverRecord, RefundResults } from "../components/console/plan-panel";
+import PaymentsAttention from "../components/console/payments-attention";
+import { api } from "../lib/client/api";
 import OwnerConsole from "../components/console/owner-console";
 import { PHONE_QUERY, useScheduleView } from "../components/console/use-schedule-view";
 
@@ -51,7 +53,35 @@ beforeEach(() => {
   hooks.cursor = 0; hooks.slots = []; hooks.effects = []; hooks.phone = false;
   vi.stubGlobal("window", { matchMedia: vi.fn(() => ({ matches: hooks.phone, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it("shows live bounded-batch progress and a clear Needs review refund result", () => {
+  const publicPlan: PublicPlan = { ...plan, totals: { ...plan.totals, refunded: 6 }, id: "plan", workspaceId: "workspace", status: "executing",
+    createdAt: plan.now, results: [], refundProgress: { done: 3, total: 6 } };
+  const details: PlanDetails = { plan: publicPlan, sessions: state.sessions, messages: [], explanation: { headline: "Recovery", source: "template", bullets: [] } };
+  const html = renderToStaticMarkup(render(() => PlanPanel({ details, plan: publicPlan, state, busy: true, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() })));
+  expect(html).toContain("Refunding 4 of 6");
+  const result = renderToStaticMarkup(<RefundResults state={state} results={[{ bookingId: state.bookings[0].id, status: "NEEDS_REVIEW", error: "Automatic retry is paused to avoid a duplicate." }]} />);
+  expect(result).toContain("Needs review"); expect(result).toContain("avoid a duplicate");
+});
+
+it("lists an unresolved partial refund with its age and checks PayPal without approving another refund", async () => {
+  const check = vi.spyOn(api, "checkRefund").mockResolvedValue({ kind: "unknown" });
+  const approve = vi.spyOn(api, "approve");
+  const onUpdated = vi.fn();
+  const props = { workspaceId: "workspace", payments: [{ requestId: "partial", bookingId: "b1", status: "NEEDS_REVIEW", amount: "4.00",
+    customer: "Customer", since: "2026-10-28T00:00:00Z", ageMinutes: 70, message: "Upstream diagnostics stay private" }], onUpdated };
+  let tree = render(() => PaymentsAttention(props));
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Payments needing attention"); expect(html).toContain("Needs review");
+  expect(html).toContain("70 min ago"); expect(html).toContain("$4.00");
+  expect(html).not.toContain("Upstream diagnostics");
+  (elements(tree).find((element) => element.type === "button")!.props.onClick as () => void)();
+  await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce());
+  expect(check).toHaveBeenCalledWith("workspace", "partial"); expect(approve).not.toHaveBeenCalled();
+  tree = render(() => PaymentsAttention(props));
+  expect(renderToStaticMarkup(tree)).toContain("The amount stays reserved");
+});
 
 it("groups agenda cards by local day with original/recovery badges, room, occupancy and Move", () => {
   const moved = adjustPlan(state, plan, { sessionId: "s1", start: "2026-11-10T10:00:00Z" });

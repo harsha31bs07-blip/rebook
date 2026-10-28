@@ -15,6 +15,7 @@ export type StoredPlan = Plan & {
   createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
   lastAdjustmentTotals?: Plan["totals"];
   coverConfirmations?: CoverConfirmation[];
+  refundProgress?: { done: number; total: number };
 };
 export type Workspace = {
   id: string; bookingId: string; state: State; createdAt: string; updatedAt: string;
@@ -81,6 +82,10 @@ export class Repository {
       CREATE INDEX IF NOT EXISTS ledger_capture ON ledger(capture_id);
       CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, raw_body TEXT NOT NULL, received_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_locks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS refund_checks (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, request_id TEXT NOT NULL,
+        attempts INTEGER NOT NULL, next_check_at INTEGER NOT NULL, PRIMARY KEY(workspace_id, request_id)
+      );
       CREATE TABLE IF NOT EXISTS checkout_reservations (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
@@ -146,6 +151,8 @@ export class Repository {
       .run(row.id, row.workspaceId, row.requestId, row.orderId ?? null, JSON.stringify(row));
   }
   transaction<T>(operation: () => T): T {
+    // Nested calls join the outer write transaction; the outermost one commits or rolls back.
+    if (this.db.isTransaction) return operation();
     this.db.exec("BEGIN IMMEDIATE");
     try { const value = operation(); this.db.exec("COMMIT"); return value; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
@@ -325,9 +332,9 @@ export class Repository {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
     // Keep the original replay deadline across transitions and process restarts.
-    const event = { ...input, id, createdAt, ...(input.kind === "capture" ? {
+    const event = { ...input, id, createdAt, ...(["capture", "refund"].includes(input.kind) ? {
       firstAttemptAt: previous?.firstAttemptAt ?? this.listLedger(input.workspaceId)
-        .find((event) => event.kind === "capture" && event.requestId === input.requestId)?.createdAt ?? input.firstAttemptAt ?? createdAt,
+        .find((event) => event.kind === input.kind && event.requestId === input.requestId)?.createdAt ?? input.firstAttemptAt ?? createdAt,
     } : {}) };
     this.db.prepare("INSERT OR IGNORE INTO ledger(id, workspace_id, paypal_id, capture_id, data) VALUES (?, ?, ?, ?, ?)")
       .run(id, input.workspaceId, input.paypalId, input.captureId, JSON.stringify(event));
@@ -341,8 +348,39 @@ export class Repository {
   }
   latestMoneyEvents(workspaceId: string): LedgerEvent[] {
     const latest = new Map<string, LedgerEvent>();
-    for (const event of this.listLedger(workspaceId)) latest.set(`${event.kind}:${event.requestId}`, event);
+    const firstAttempts = new Map<string, string>();
+    for (const event of this.listLedger(workspaceId)) {
+      const key = `${event.kind}:${event.requestId}`;
+      // Legacy refund rows predate firstAttemptAt. Never use a later retry's timestamp.
+      if (!firstAttempts.has(key)) firstAttempts.set(key, event.firstAttemptAt ?? event.createdAt);
+      latest.set(key, event.kind === "refund" ? { ...event, firstAttemptAt: firstAttempts.get(key) } : event);
+    }
     return [...latest.values()].filter((event) => event.status !== "MERGED");
+  }
+  dueRefunds(now: number, minimumAgeMs: number, cap: number, workspaceId?: string): LedgerEvent[] {
+    return (this.db.prepare(`SELECT l.data FROM ledger l
+      LEFT JOIN refund_checks c ON c.workspace_id = l.workspace_id AND c.request_id = json_extract(l.data, '$.requestId')
+      WHERE json_extract(l.data, '$.kind') = 'refund'
+      AND json_extract(l.data, '$.status') IN ('REQUESTED', 'PENDING', 'NEEDS_REVIEW')
+      AND (? IS NULL OR l.workspace_id = ?)
+      AND COALESCE(json_extract(l.data, '$.firstAttemptAt'), (SELECT json_extract(f.data, '$.createdAt') FROM ledger f
+        WHERE f.workspace_id = l.workspace_id AND json_extract(f.data, '$.kind') = 'refund'
+        AND json_extract(f.data, '$.requestId') = json_extract(l.data, '$.requestId') ORDER BY f.seq LIMIT 1)) <= ?
+      AND COALESCE(c.next_check_at, 0) <= ?
+      AND l.seq = (SELECT MAX(n.seq) FROM ledger n WHERE n.workspace_id = l.workspace_id
+        AND json_extract(n.data, '$.kind') = 'refund' AND json_extract(n.data, '$.requestId') = json_extract(l.data, '$.requestId'))
+      ORDER BY COALESCE(c.next_check_at, 0), l.seq LIMIT ?`)
+      .all(workspaceId ?? null, workspaceId ?? null, new Date(now - minimumAgeMs).toISOString(), now, cap) as JsonRow[])
+      .map((row) => JSON.parse(row.data));
+  }
+  deferRefundCheck(event: LedgerEvent, now = Date.now()): void {
+    const previous = this.db.prepare("SELECT attempts FROM refund_checks WHERE workspace_id = ? AND request_id = ?")
+      .get(event.workspaceId, event.requestId) as { attempts: number } | undefined;
+    const attempts = (previous?.attempts ?? 0) + 1;
+    const delay = Math.min(60 * 60_000, 60_000 * 2 ** Math.min(attempts - 1, 6));
+    this.db.prepare(`INSERT INTO refund_checks VALUES (?, ?, ?, ?) ON CONFLICT(workspace_id, request_id)
+      DO UPDATE SET attempts = excluded.attempts, next_check_at = excluded.next_check_at`)
+      .run(event.workspaceId, event.requestId, attempts, now + delay);
   }
   ledgerSummary(workspaceId: string): { captured: string; refunded: string; pending: string; simulatedCaptured: string; simulatedRefunded: string } {
     const totals = { captured: 0, refunded: 0, pending: 0, simulatedCaptured: 0, simulatedRefunded: 0 };
@@ -352,7 +390,7 @@ export class Repository {
       if (event.kind === "capture" && event.status === "SIMULATED") totals.simulatedCaptured += amount;
       if (event.kind === "refund" && event.status === "COMPLETED") totals.refunded += amount;
       if (event.kind === "refund" && event.status === "SIMULATED") totals.simulatedRefunded += amount;
-      if (event.kind === "refund" && ["PENDING", "REQUESTED"].includes(event.status)) totals.pending += amount;
+      if (event.kind === "refund" && ["PENDING", "REQUESTED", "NEEDS_REVIEW"].includes(event.status)) totals.pending += amount;
     }
     return Object.fromEntries(Object.entries(totals).map(([key, amount]) => [key, fromCents(amount)])) as ReturnType<Repository["ledgerSummary"]>;
   }
@@ -396,7 +434,7 @@ export class Repository {
         if (this.listCustomerLinks(id).some((link) => customerLinkReadableUntil(link) > Date.now())) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
-        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
+        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       }
       // Keep event IDs for deduplication; only the retained raw payload expires.

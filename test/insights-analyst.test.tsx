@@ -119,8 +119,8 @@ describe("direct analyst answers", () => {
   it("keeps latest pending, failed, simulated and choice receipts separate", () => {
     const { data } = hero();
     const event = data.money_events[0];
-    const mixed = { ...data, money_events: [event, ...["PENDING", "FAILED", "SIMULATED"].map((status, index) => ({ ...event, id: `extra-${index}`, status, amount: index + 1 }))] };
-    expect(getRefundBreakdown(mixed).rows[0]).toMatchObject({ completedUSD: event.amount, pendingUSD: 1, failedUSD: 2, simulatedUSD: 3 });
+    const mixed = { ...data, money_events: [event, ...["PENDING", "FAILED", "SIMULATED", "NEEDS_REVIEW"].map((status, index) => ({ ...event, id: `extra-${index}`, status, amount: index + 1 }))] };
+    expect(getRefundBreakdown(mixed).rows[0]).toMatchObject({ completedUSD: event.amount, pendingUSD: 5, failedUSD: 2, simulatedUSD: 3 });
   });
 
   it("handles empty workspaces and sums money in cents", () => {

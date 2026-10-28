@@ -5,6 +5,7 @@ import type { CustomerMessage } from "../ai/messages";
 import type { Disruption } from "../domain/types";
 import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../store";
 import type { OwnerCustomerChoices } from "../choices/service";
+import type { PaymentAttention } from "../recovery/payment-attention";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
 export type WorkspaceResponse = Workspace & {
@@ -12,6 +13,7 @@ export type WorkspaceResponse = Workspace & {
   ledger: LedgerEvent[];
   ledgerSummary: Record<string, unknown>;
   customerChoices?: OwnerCustomerChoices;
+  paymentsNeedingAttention?: PaymentAttention[];
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };
@@ -47,6 +49,7 @@ export const api = {
   discard: (id: string, planId: string) => request<{ discarded: true }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, undefined, "DELETE"),
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
   approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
+  checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
   contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),
 };

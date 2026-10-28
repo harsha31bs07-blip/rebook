@@ -242,12 +242,12 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
   const state = initialState(true);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     for (const event of repository.latestMoneyEvents(workspaceId)) {
-      if (event.kind !== "refund" || !["REQUESTED", "PENDING"].includes(event.status)) continue;
+      if (event.kind !== "refund" || !["REQUESTED", "PENDING", "NEEDS_REVIEW"].includes(event.status)) continue;
       repository.renewLock(workspaceId, owner);
       await reconcileRefund(event, repository);
     }
     if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing") ||
-      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status)) ||
+      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
       repository.listPlans(workspaceId).some((plan) => ["executing", "partially_failed"].includes(plan.status))) {
       throw new StoreError(409, "Finish or retry pending refunds first");
     }

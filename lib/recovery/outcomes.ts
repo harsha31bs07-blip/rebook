@@ -33,12 +33,12 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
     const refundedAmount = completedAmount + simulatedAmount;
     const refundIntent = action.action === "refund" || link?.reply?.action === "refund" || ["refund_pending", "refunded"].includes(booking?.status ?? "") || refundedAmount >= originalAmount;
     const fullySettled = refundIntent && refundedAmount >= originalAmount;
-    const pending = refunds.some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status)) ||
+    const pending = refunds.some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
       (refundIntent && !fullySettled);
     const saved = !refundIntent && refundedAmount < originalAmount;
     const moved = saved && (link?.reply?.action === "move" || action.action === "move");
     const noReply = !refundIntent && !link?.reply;
-    const failed = refunds.some((event) => ["FAILED", "CANCELLED"].includes(event.status));
+    const failed = refunds.some((event) => ["FAILED", "CANCELLED", "NEEDS_REVIEW"].includes(event.status));
     return {
       booking_id: action.bookingId, customer_id: action.customerId, plan_id: plan.id, planned_remedy: action.action,
       customer_reply: link?.reply?.action ?? "none", outcome: fullySettled ? simulatedAmount ? "simulated_refund" : "refunded" : refundIntent ? "pending" : moved ? "moved" : "kept",

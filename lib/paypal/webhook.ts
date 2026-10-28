@@ -80,7 +80,7 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
         ? resource.amount?.value === exact.amount : matchingRefund(evidence, exact));
       if (exact && (exact.captureId !== capture.captureId || !matchesExact)) return { duplicate: false, matched: false, reason: "refund_mismatch" };
       const byRequest = latest.find((item) => item.kind === "refund" && item.captureId === capture.captureId &&
-        ["REQUESTED", "PENDING"].includes(item.status) && matchingRefund(evidence, item));
+        ["REQUESTED", "PENDING", "NEEDS_REVIEW"].includes(item.status) && matchingRefund(evidence, item));
       const previousRefund = exact && exact.requestId !== `webhook:${resource.id}` ? exact : byRequest ?? exact;
       const amount = resource.amount?.value ?? previousRefund?.amount;
       if (!amount || toCents(amount) > toCents(capture.amount)) return { duplicate: false, matched: false, reason: "invalid_refund_amount" };

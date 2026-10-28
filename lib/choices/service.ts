@@ -46,7 +46,7 @@ function remainingCaptured(link: CustomerLink, repository: Repository): number {
   const capture = repository.latestMoneyEvents(link.workspaceId).find((event) => event.kind === "capture" && event.paypalId === booking?.payment?.captureId);
   if (!capture || !["COMPLETED", "SIMULATED"].includes(capture.status)) return 0;
   return Math.max(0, toCents(capture.amount) - repository.latestMoneyEvents(link.workspaceId)
-    .filter((event) => event.kind === "refund" && event.captureId === capture.captureId && ["REQUESTED", "PENDING", "COMPLETED", "SIMULATED"].includes(event.status))
+    .filter((event) => event.kind === "refund" && event.captureId === capture.captureId && ["REQUESTED", "PENDING", "NEEDS_REVIEW", "COMPLETED", "SIMULATED"].includes(event.status))
     .reduce((sum, event) => sum + toCents(event.amount), 0));
 }
 

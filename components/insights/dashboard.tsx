@@ -9,6 +9,7 @@ import { ReportBoundary } from "./report-boundary";
 import ConsoleHeader from "../console/console-header";
 import RecoverySummary from "./recovery-summary";
 import ExpiredDemo from "../console/expired-demo";
+import PaymentsAttention from "../console/payments-attention";
 
 const StudioReport = dynamic(() => import("./studio-report"), { ssr: false, loading: () => <p className="insight-loading" role="status">Opening Studio insights…</p> });
 
@@ -31,6 +32,7 @@ export default function Dashboard({ id }: { id: string }) {
     <div className="insights-heading"><div><p className="eyebrow">Your studio, in perspective</p><h1>Studio insights</h1></div><p className="muted">Workspace bookings, payments and recovery outcomes.</p></div>
     {error && <div className="insight-loading" role="alert"><p>{error}{data ? " Showing the last loaded records." : ""}</p><button disabled={loading} onClick={() => refresh.current()}>Try again</button></div>}
     {data && <RecoverySummary data={data} />}
+    {data && <PaymentsAttention workspaceId={id} payments={data.payments_needing_attention} onUpdated={() => refresh.current()} />}
     {data ? <ReportBoundary key={id}><StudioReport id={id} data={data} /></ReportBoundary> : !error && <p className="insight-loading" role="status">Loading workspace records…</p>}
   </main>;
 }

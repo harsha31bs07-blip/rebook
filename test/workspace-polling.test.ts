@@ -13,7 +13,7 @@ vi.mock("react", async (original) => ({
 import { useWorkspace } from "../components/console/use-workspace";
 
 afterEach(() => { vi.useRealTimers(); harness.effects = []; harness.read.mockReset(); });
-it.each(["PENDING", "REQUESTED", "UNKNOWN"])("backs off %s refunds and keeps polling past two minutes until unmount", async (status) => {
+it.each(["PENDING", "REQUESTED", "UNKNOWN", "NEEDS_REVIEW"])("backs off %s refunds and keeps polling past two minutes until unmount", async (status) => {
   vi.useFakeTimers();
   const workspace = { id: "demo", status: "ready", state: { bookings: [], sessions: [], customers: [], studio: { timezone: "UTC" } }, plans: [], ledger: [{ kind: "refund", requestId: "key", status }] } as unknown as WorkspaceResponse;
   harness.read.mockResolvedValue(workspace);

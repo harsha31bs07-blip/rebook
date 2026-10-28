@@ -17,7 +17,7 @@ const bryntum: FeatureRow[] = [
   ["Event rendering", "Original ghosts, recovery highlights, cancelled classes and Adjusted by you badges.", "lib/client/scheduler-mapping.ts#L118-L165"],
   ["Keyboard selection", "Enter / Space and Move buttons open the same accessible adjustment dialog.", "components/console/schedule.tsx#L152-L162"],
   ["Timezone and views", "Studio-local week/day views with instructor and room rows.", "components/console/schedule.tsx#L29-L44"],
-  ["Trial resilience", "An accessible schedule and recovery list remain available if Scheduler cannot render.", "components/console/schedule-boundary.tsx#L7-L30"],
+  ["Trial resilience", "An accessible schedule and recovery list remain available if Scheduler cannot render.", "components/console/schedule-boundary.tsx#L6-L17"],
 ];
 const studio: FeatureRow[] = [
   ["Report and pages", "Week overview, Disruptions and Money; saved report state per workspace.", "components/insights/studio-report.tsx#L38-L56"],

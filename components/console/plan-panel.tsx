@@ -9,14 +9,18 @@ import { formatMoney, toCents } from "@/lib/domain/time";
 import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
 import type { summarizeOutbox } from "../../lib/choices/outbox";
 import { planCovers } from "../../lib/recovery/covers";
+import type { OwnerCover } from "../../lib/recovery/cover-pay";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" role="status" aria-label="Loading booking actions" /> });
 
-export function CoverRecord({ plan, state }: { plan: PublicPlan; state: State }) {
+export function CoverRecord({ plan, state, links }: { plan: PublicPlan; state: State; links?: OwnerCover[] }) {
   const covers = planCovers(plan, state);
   if (!covers.length) return null;
   return <div className="cover-confirmations"><h3>Substitute confirmations</h3><ul>{covers.map((cover) => {
     const confirmation = plan.coverConfirmations?.find((item) => item.sessionId === cover.sessionId && item.instructorId === cover.instructorId);
+    // The substitute's own answer on their cover link supersedes the owner's pre-approval record.
+    const answered = links?.find((item) => item.planId === plan.id && item.sessionId === cover.sessionId && item.respondedBy === "instructor");
+    if (answered) return <li key={cover.sessionId}>{cover.label} — {answered.status === "accepted" ? `Accepted by ${cover.instructor} on their cover link` : `Declined by ${cover.instructor}`}</li>;
     return <li key={cover.sessionId}>{cover.label} — {confirmation ? <>Confirmed by {confirmation.confirmedBy} at <time dateTime={confirmation.confirmedAt}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(confirmation.confirmedAt))}</time></> : "Not yet confirmed"}</li>;
   })}</ul></div>;
 }
@@ -49,10 +53,11 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
   })}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, outboxSummary, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, outboxSummary, coverLinks, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   outcomes?: RecoveryOutcome[];
   outboxSummary?: ReturnType<typeof summarizeOutbox>;
+  coverLinks?: OwnerCover[];
   approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: (confirmedCoverSessionIds?: string[]) => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
@@ -121,7 +126,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
     {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button id="judge-approve" className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={() => setApprovalReview(reviewKey)}>{approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
     {proposed && approvalReview === reviewKey && <ApprovalDialog unconfirmed={covers.filter((cover) => !confirmedIds.includes(cover.sessionId))} busy={busy} onClose={() => setApprovalReview("")} onApprove={() => { setApprovalReview(""); onApprove(confirmedIds); }} />}
-    {!proposed && <CoverRecord plan={plan} state={state} />}
+    {!proposed && <CoverRecord plan={plan} state={state} links={coverLinks} />}
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}

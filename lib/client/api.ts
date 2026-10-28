@@ -6,6 +6,7 @@ import type { Disruption } from "../domain/types";
 import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../store";
 import type { OwnerCustomerChoices } from "../choices/service";
 import type { PaymentAttention } from "../recovery/payment-attention";
+import type { OwnerCover } from "../recovery/cover-pay";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
 export type WorkspaceResponse = Workspace & {
@@ -14,6 +15,7 @@ export type WorkspaceResponse = Workspace & {
   ledgerSummary: Record<string, unknown>;
   customerChoices?: OwnerCustomerChoices;
   paymentsNeedingAttention?: PaymentAttention[];
+  covers?: OwnerCover[];
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };
@@ -50,6 +52,7 @@ export const api = {
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
   approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
   checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),
+  payCover: (id: string, planId: string, sessionId: string) => request<OwnerCover[]>(`${workspacePath(id)}/covers/pay`, { planId, sessionId }),
   retryRefund: (id: string, requestId: string) => request<{ status: string }>(`${workspacePath(id)}/refunds/retry`, { requestId }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
   contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),

@@ -40,6 +40,16 @@ export type CustomerLink = {
   sentAt?: string;
   reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
+export type CoverLink = {
+  id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
+  status: "asked" | "accepted" | "declined"; respondedAt?: string; respondedBy?: "instructor" | "owner"; fee: string;
+};
+/** Cover pay is staffing cost, kept apart from the customer money ledger and its revenue totals. */
+export type CoverPayout = {
+  workspaceId: string; planId: string; sessionId: string; instructorId: string; amount: string; attempt: number; requestId: string;
+  status: "REQUESTED" | "PENDING" | "SUCCESS" | "FAILED" | "UNCLAIMED" | "RETURNED" | "ONHOLD" | "BLOCKED" | "REFUNDED" | "REVERSED" | "DENIED";
+  batchId?: string; itemId?: string; error?: string; createdAt: string; updatedAt: string;
+};
 /** Choice deadlines do not erase the customer's lasting outcome or refund receipt. */
 export function customerLinkReadableUntil(link: CustomerLink): number {
   return Date.parse(link.createdAt) + 30 * 86_400_000;
@@ -101,6 +111,17 @@ export class Repository {
         PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
       );
       CREATE TABLE IF NOT EXISTS email_checks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, checked_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS cover_links (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL,
+        UNIQUE(plan_id, session_id)
+      );
+      CREATE TABLE IF NOT EXISTS cover_payouts (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(plan_id, session_id)
+      );
       CREATE TABLE IF NOT EXISTS customer_links (
         id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -155,6 +176,36 @@ export class Repository {
   customerToken(link: CustomerLink): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
     return createHmac("sha256", secret).update(link.id).digest("base64url");
+  }
+  // Cover links use a separate HMAC domain so a customer token can never open an instructor link.
+  coverToken(link: Pick<CoverLink, "id">): string {
+    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
+    return createHmac("sha256", secret).update(`cover:${link.id}`).digest("base64url");
+  }
+  createCoverLink(input: Omit<CoverLink, "id" | "tokenHash" | "createdAt">): CoverLink {
+    const previous = this.listCoverLinks(input.workspaceId).find((link) => link.planId === input.planId && link.sessionId === input.sessionId);
+    if (previous) return previous;
+    const link: CoverLink = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", createdAt: new Date().toISOString() };
+    link.tokenHash = createHash("sha256").update(this.coverToken(link)).digest("hex");
+    this.db.prepare("INSERT INTO cover_links VALUES (?, ?, ?, ?, ?, ?)").run(link.id, link.tokenHash, link.workspaceId, link.planId, link.sessionId, JSON.stringify(link));
+    return link;
+  }
+  listCoverLinks(workspaceId: string): CoverLink[] {
+    return (this.db.prepare("SELECT data FROM cover_links WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  coverLinkByToken(token: string): CoverLink | undefined {
+    const row = this.db.prepare("SELECT data FROM cover_links WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  saveCoverLink(link: CoverLink): void {
+    this.db.prepare("UPDATE cover_links SET data = ? WHERE id = ?").run(JSON.stringify(link), link.id);
+  }
+  listCoverPayouts(workspaceId: string): CoverPayout[] {
+    return (this.db.prepare("SELECT data FROM cover_payouts WHERE workspace_id = ?").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  saveCoverPayout(payout: CoverPayout): void {
+    this.db.prepare("INSERT INTO cover_payouts VALUES (?, ?, ?, ?) ON CONFLICT(plan_id, session_id) DO UPDATE SET data = excluded.data")
+      .run(payout.workspaceId, payout.planId, payout.sessionId, JSON.stringify(payout));
   }
   createCustomerLink(input: Omit<CustomerLink, "id" | "tokenHash" | "createdAt">): CustomerLink {
     const previous = this.listCustomerLinks(input.workspaceId).find((link) => link.planId === input.planId && link.bookingId === input.bookingId);

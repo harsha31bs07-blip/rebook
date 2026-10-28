@@ -29,7 +29,10 @@ export async function executePlan(workspaceId: string, planId: string, repositor
     if (plan.status !== "proposed" && (!["executing", "partially_failed"].includes(plan.status) || !plan.basis)) throw new StoreError(409, "Plan cannot be executed");
     const basis = plan.status === "proposed" ? workspace.state : plan.basis!;
     if (plan.status === "proposed") {
-      if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing")) throw new StoreError(409, "A customer payment is still being reconciled. Check its status, then refresh the recovery preview.", "CHECK_PAYMENT_STATUS");
+      const touched = new Set([...plan.sessionChanges.map((change) => change.sessionId), ...plan.bookingActions.flatMap((action) =>
+        workspace.state.bookings.filter((booking) => booking.id === action.bookingId).map((booking) => booking.sessionId))]);
+      const capturing = repository.listCheckout(workspaceId).find((row) => row.status === "capturing" && touched.has(row.sessionId));
+      if (capturing) throw new StoreError(409, `A customer payment for ${capturing.session.title} is still being reconciled. Check its status, then refresh the recovery preview.`, "CHECK_PAYMENT_STATUS");
       if (planTimeErrors(plan, Date.now()).length) throw new StoreError(409, "This recovery preview has expired. Plan a fresh recovery before approving.", "PLAN_EXPIRED");
     }
     if (plan.status === "proposed") {

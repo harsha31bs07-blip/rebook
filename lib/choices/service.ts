@@ -18,16 +18,19 @@ export type ChoiceInput = z.infer<typeof ChoiceInputSchema>;
 
 export function createCustomerLinks(plan: StoredPlan, before: State, after: State, repository: Repository): void {
   const messages = draftCustomerMessages(plan, before);
+  const checkouts = new Map(repository.listCheckout(plan.workspaceId).map((row) => [row.id, row]));
   for (const action of plan.bookingActions) {
     const booking = before.bookings.find((item) => item.id === action.bookingId)!;
     const original = before.sessions.find((item) => item.id === booking.sessionId)!;
     const current = after.sessions.find((item) => item.id === booking.sessionId);
     const message = messages.find((item) => item.bookingId === booking.id)!;
+    const checkout = checkouts.get(booking.id);
+    const body = checkout ? message.body.replace(`Hi ${message.customerName},`, () => `Hi ${checkout.customer.name},`) : message.body;
     repository.createCustomerLink({ workspaceId: plan.workspaceId, planId: plan.id, bookingId: booking.id,
       kind: action.action === "refund" ? "receipt" : "choice",
       expiresAt: Math.min(Date.now() + 7 * 86_400_000, Date.parse(current?.start ?? original.start)),
       before: original, after: action.action === "refund" ? undefined : current,
-      message: { subject: message.subject, body: message.body.replace("Doesn't work? Reply for a refund.", "Choose below to keep your new time, find another class, or take a refund.") },
+      message: { subject: message.subject, body: body.replace("Doesn't work? Reply for a refund.", "Choose below to keep your new time, find another class, or take a refund.") },
     });
   }
 }

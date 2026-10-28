@@ -117,8 +117,9 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
     }
     const { state } = repository.requireReadyWorkspace(row.workspaceId);
     if (!state.bookings.some((booking) => booking.id === row.id)) {
-      const customerId = `customer-${row.id}`;
-      state.customers.push({ id: customerId, ...row.customer, prefs: { acceptsSubstitute: true,
+      const customer = state.customers.find((item) => item.email.trim().toLowerCase() === row.customer.email.trim().toLowerCase());
+      const customerId = customer?.id ?? `customer-${row.id}`;
+      if (!customer) state.customers.push({ id: customerId, ...row.customer, prefs: { acceptsSubstitute: true,
         windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) } });
       state.bookings.push({ id: row.id, customerId, sessionId: row.sessionId, amount: row.amount, status: "confirmed",
         bookedAt: new Date().toISOString(),
@@ -134,14 +135,34 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
 }
 
 export function receipt(workspaceId: string, orderId: string, repository = getRepository()) {
-  repository.requireWorkspace(workspaceId);
+  const { state } = repository.requireWorkspace(workspaceId);
   const row = repository.checkoutByOrder(workspaceId, orderId);
   if (!row) throw new StoreError(404, "Checkout not found");
+  const booking = state.bookings.find((item) => item.id === row.id);
+  const session = booking && state.sessions.find((item) => item.id === booking.sessionId);
+  const current = booking ? { class: session?.title ?? row.session.title, start: session?.start ?? row.session.start,
+    end: session?.end ?? row.session.end, status: booking.status,
+    changed: booking.status !== "confirmed" || booking.sessionId !== row.sessionId || !!session &&
+      (session.title !== row.session.title || session.start !== row.session.start || session.end !== row.session.end) } : undefined;
   return { orderId, bookingId: row.id, status: row.status, class: row.session.title, start: row.session.start, end: row.session.end,
     amount: row.amount, currency: row.currency, captureId: row.captureId, webhookConfigured: Boolean(process.env.PAYPAL_WEBHOOK_ID),
-    webhookConfirmed: Boolean(row.webhookConfirmed) };
+    webhookConfirmed: Boolean(row.webhookConfirmed), current };
 }
 export type Receipt = ReturnType<typeof receipt>;
+
+const hasNoCaptures = (order: PayPalOrder) => !order.purchase_units?.some((unit) => unit.payments?.captures?.length);
+const neverApproved = (order: PayPalOrder) => ["CREATED", "SAVED", "PAYER_ACTION_REQUIRED"].includes(order.status) && hasNoCaptures(order);
+/** Webhooks confirm payments without the workspace lock, so leaving "capturing" must re-check the stored row. */
+function leaveCapturing(row: CheckoutReservation, status: "pending" | "failed", repository: Repository): boolean {
+  return repository.transaction(() => {
+    const current = repository.checkoutByOrder(row.workspaceId, row.orderId!);
+    if (current?.status !== "capturing") return false;
+    repository.saveCheckout({ ...current, status });
+    return true;
+  });
+}
+const settled = (workspaceId: string, orderId: string, repository: Repository) =>
+  repository.checkoutByOrder(workspaceId, orderId)?.status === "confirmed" ? receipt(workspaceId, orderId, repository) : undefined;
 
 export async function captureCheckout(workspaceId: string, orderId: string, repository = getRepository()): Promise<Receipt> {
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
@@ -156,13 +177,14 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
       // Crash/timeout recovery must inspect the existing order before attempting another capture.
       const existing = await getOrder(orderId);
       if (existing.status === "COMPLETED") return confirmOrder(row, existing, repository);
-      if (existing.status === "VOIDED" && !existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) {
-        repository.saveCheckout({ ...row, status: "failed" });
+      // A CREATED snapshot cannot rule out an earlier capture request that is still completing; only VOIDED is final.
+      if (existing.status === "VOIDED" && hasNoCaptures(existing)) {
+        if (!leaveCapturing(row, "failed", repository)) { const done = settled(workspaceId, orderId, repository); if (done) return done; }
         throw new StoreError(410, "This payment was voided. Start checkout again.", "RESTART_CHECKOUT");
       }
       if (row.expiresAt <= Date.now()) throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
     }
-    const current = row;
+    const current = row, firstAttempt = row.status === "pending";
     if (repository.listCheckout(workspaceId).some((other) => other.id !== current.id && other.status === "capturing" &&
       other.sessionId === current.sessionId && other.customer.email.toLowerCase() === current.customer.email.toLowerCase())) {
       throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
@@ -186,25 +208,39 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
     } catch (error) {
       if (repository.checkoutByOrder(workspaceId, orderId)?.status === "confirmed") return receipt(workspaceId, orderId, repository);
       if (error instanceof PayPalError && (error.issues.includes("INSTRUMENT_DECLINED") || error.name === "INSTRUMENT_DECLINED")) {
-        repository.saveCheckout({ ...row, status: "failed" });
+        if (!leaveCapturing(row, "failed", repository)) { const done = settled(workspaceId, orderId, repository); if (done) return done; }
         throw new StoreError(422, "Payment declined. Choose another payment method and restart checkout.", "INSTRUMENT_DECLINED");
       }
       // Reconcile a lost response or ORDER_ALREADY_CAPTURED with the real SDK's order read.
+      let existing: PayPalOrder | undefined;
       try {
-        const existing = await getOrder(orderId);
+        existing = await getOrder(orderId);
         if (existing.status === "COMPLETED") return confirmOrder(row, existing, repository);
         // An empty snapshot cannot rule out a capture that is still completing upstream.
-        if (existing.status === "VOIDED" && !existing.purchase_units?.some((unit) => unit.payments?.captures?.length)) repository.saveCheckout({ ...row, status: "failed" });
+        if (existing.status === "VOIDED" && hasNoCaptures(existing)) leaveCapturing(row, "failed", repository);
       } catch { /* Unknown money outcome: retain the hold; retry capture reconciles it. */ }
+      // PayPal explicitly rejected the only capture attempt for an order the buyer never approved: no money can move.
+      const rejection = error instanceof PayPalError ? ["ORDER_NOT_APPROVED", "PAYER_ACTION_REQUIRED"].find((issue) => error.issues.includes(issue) || error.name === issue) : undefined;
+      if (firstAttempt && rejection && existing && neverApproved(existing)) {
+        if (!leaveCapturing(row, row.expiresAt > Date.now() ? "pending" : "failed", repository)) { const done = settled(workspaceId, orderId, repository); if (done) return done; }
+        else throw new StoreError(422, "PayPal hasn't approved this payment yet. Approve it in PayPal or choose another method.", rejection);
+      }
       throw error;
     }
   });
 }
 
 export async function cancelCheckout(workspaceId: string, orderId: string, repository = getRepository()) {
-  return withWorkspaceLock(repository, workspaceId, () => {
+  return withWorkspaceLock(repository, workspaceId, async () => {
     const row = repository.checkoutByOrder(workspaceId, orderId);
-    if (row?.status === "capturing") throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
+    if (row?.status === "capturing") {
+      const order = await getOrder(orderId).catch(() => undefined);
+      const done = settled(workspaceId, orderId, repository);
+      if (done) return { cancelled: false, receipt: done };
+      if (order?.status === "COMPLETED") return { cancelled: false, receipt: confirmOrder(row, order, repository) };
+      if (order?.status === "VOIDED" && hasNoCaptures(order) && leaveCapturing(row, "failed", repository)) return { cancelled: true };
+      throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
+    }
     if (row?.status === "confirmed") return { cancelled: false, receipt: receipt(workspaceId, orderId, repository) };
     if (row?.status === "pending") repository.saveCheckout({ ...row, status: "failed" });
     return { cancelled: row?.status === "pending" };

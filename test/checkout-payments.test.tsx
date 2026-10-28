@@ -234,6 +234,20 @@ describe("card checkout lifecycle", () => {
     expect(alert()).toBe("Check payment status before trying again.");
     expect(card.submit).toHaveBeenCalledTimes(1);
   });
+
+  it("allows approval or cancellation after PayPal rejects an unapproved capture", async () => {
+    await load();
+    fetchMock.mockResolvedValueOnce(Response.json({ orderId: "ORDER-1" })).mockResolvedValueOnce(Response.json({
+      error: "PayPal hasn't approved this payment yet. Approve it in PayPal or choose another method.", code: "ORDER_NOT_APPROVED",
+    }, { status: 422 }));
+    clickPay(); await settle();
+    expect(alert()).toContain("Approve it in PayPal");
+    expect(elements(tree).some((element) => element.props.children === "Check payment status")).toBe(false);
+    expect(elements(tree).some((element) => element.props.children === "Cancel checkout")).toBe(true);
+    clickPay(); await settle();
+    expect(card.submit).toHaveBeenCalledTimes(2);
+    expect(props.onSuccess).toHaveBeenCalledWith(receipt);
+  });
 });
 
 it("renders singular seats and HIIT titles in the booking catalog", async () => {
@@ -256,6 +270,42 @@ it("never links a public checkout receipt to the owner console", () => {
   tree = BookingPage({ id: "0123456789abcdefghijklmnopqrstuv", clientId: "sandbox-client", sandbox: true });
   expect(elements(tree).some((element) => element.props.children === "Booking confirmed")).toBe(true);
   expect(elements(tree).filter((element) => typeof element.props.href === "string").map((element) => element.props.href)).toEqual(["/"]);
+});
+
+it("refreshes a confirmed receipt every fifteen seconds and announces its updated time", async () => {
+  vi.useFakeTimers();
+  const original = { ...receipt, bookingId: "booking-1", class: "Dance Flow", start: "2026-11-09T17:15:00Z", end: "2026-11-09T18:15:00Z", amount: "22.00", currency: "USD", webhookConfigured: true, webhookConfirmed: true };
+  const current = { class: "Dance Flow", start: "2026-11-10T17:15:00Z", end: "2026-11-10T18:15:00Z", status: "moved", changed: true };
+  const catalog = { studio: { name: "Studio", timezone: "UTC" }, sessions: [] };
+  hooks.slots[0] = catalog; hooks.slots[4] = original;
+  fetchMock.mockImplementation(async (url: string) => Response.json(url.endsWith("/ORDER-1") ? { ...original, current } : catalog));
+  const renderPage = () => {
+    hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true });
+    hooks.pending.splice(0).forEach((effect) => effect());
+  };
+  renderPage();
+  await vi.advanceTimersByTimeAsync(14_999);
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/ORDER-1"))).toHaveLength(0);
+  await vi.advanceTimersByTimeAsync(1); renderPage();
+  const updated = "Updated: now Tue, Nov 10, 05:15 PM";
+  expect(elements(tree).some((element) => element.props.children === updated)).toBe(true);
+  expect(find(tree, (element) => element.props["aria-live"] === "polite").props.children).toContain(updated);
+  const originalTime = find(tree, (element) => element.type === "p" && element.props.className === "muted" && Array.isArray(element.props.children) && element.props.children[0] === "Originally: ");
+  expect(originalTime.props.children).toContain("Mon, Nov 9, 05:15 PM");
+  expect(elements(tree).some((element) => element.props.children === "Add to calendar")).toBe(true);
+  await vi.advanceTimersByTimeAsync(15_000); renderPage();
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/ORDER-1"))).toHaveLength(2);
+});
+
+it.each(["refunded", "refund_pending", "cancelled"])("shows %s accurately and hides the calendar download", (status) => {
+  hooks.slots[0] = { studio: { name: "Studio", timezone: "UTC" }, sessions: [] };
+  hooks.slots[4] = { ...receipt, class: "Dance Flow", start: "2026-11-09T17:15:00Z", end: "2026-11-09T18:15:00Z", amount: "22.00", currency: "USD",
+    current: { class: "Dance Flow", start: "2026-11-10T17:15:00Z", end: "2026-11-10T18:15:00Z", status, changed: true } };
+  tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true });
+  expect(elements(tree).some((element) => element.props.children === "Add to calendar")).toBe(false);
+  const statusText = status === "refunded" ? "Refunded" : status === "refund_pending" ? "Refund pending" : "Cancelled";
+  expect(find(tree, (element) => element.props["aria-live"] === "polite").props.children).toContain(statusText);
+  expect(elements(tree).some((element) => element.props.children === statusText)).toBe(true);
 });
 
 it("shows paused classes disabled, then allows selection when a refreshed catalog resumes bookings", async () => {

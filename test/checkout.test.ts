@@ -10,6 +10,9 @@ import { limits } from "../lib/api/limits";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { executePlan } from "../lib/executor/executePlan";
 import { replan } from "../lib/solver/replan";
+import { applyPlan, validate } from "../lib/solver/validate";
+import { calculateTotals } from "../lib/solver/score";
+import { customerChoice } from "../lib/choices/service";
 import { processWebhook } from "../lib/paypal/webhook";
 import { eligibleCheckoutMethods, calendarFile, payLaterButtonTag } from "../lib/client/paypal-v6";
 import { POST as postOrder } from "../app/api/workspaces/[id]/checkout/orders/route";
@@ -31,6 +34,7 @@ let loseCreationResponse = false;
 let calls: { url: string; init: RequestInit }[];
 let captureBehavior: ((orderId: string) => Response | Promise<Response>) | undefined;
 let readUnavailable = false;
+let beforeRead: ((orderId: string) => void) | undefined;
 const input = () => ({ sessionId, customer: { name: "Jamie Rivera", email: "jamie@example.com" } });
 const body = (init: RequestInit) => JSON.parse(init.body as string);
 const complete = (id: string) => {
@@ -50,7 +54,7 @@ beforeEach(() => {
   const state = seedStudio(); state.bookings = []; state.customers = [];
   workspaceId = repository.createWorkspace(state).id; sessionId = state.sessions[0].id;
   orders.clear(); createdRequests.clear(); loseCreationResponse = false;
-  calls = []; captureBehavior = undefined; readUnavailable = false; limits.reset();
+  calls = []; captureBehavior = undefined; readUnavailable = false; beforeRead = undefined; limits.reset();
   setSdkTransport(async (url, init) => {
     calls.push({ url, init });
     if (url.endsWith("/token")) return Response.json({ access_token: "mock-token", token_type: "Bearer", expires_in: 3600 });
@@ -68,7 +72,8 @@ beforeEach(() => {
     if (url.endsWith("/capture")) return captureBehavior ? captureBehavior(id) : Response.json(complete(id));
     if (url.includes("/v2/checkout/orders/") && init.method === "GET") {
       if (readUnavailable) throw new Error("Order read unavailable");
-      return Response.json(orders.get(id));
+      const snapshot = structuredClone(orders.get(id)); beforeRead?.(id);
+      return Response.json(snapshot);
     }
     if (url.includes("/v2/payments/captures/") && url.endsWith("/refund")) return Response.json({ id: "REAL-REFUND", status: "COMPLETED", amount: body(init).amount });
     throw new Error(`Unexpected SDK request ${init.method} ${url}`);
@@ -222,9 +227,170 @@ describe("customer checkout", () => {
     expect(repository.listCheckout(workspaceId)[0].status).toBe("failed");
     expect((await createOrder(workspaceId, input(), randomUUID(), repository)).orderId).not.toBe(orderId);
   });
+  it.each(["CREATED", "SAVED", "PAYER_ACTION_REQUIRED"])("releases a definitive unapproved %s capture and permits cancellation", async (status) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    orders.get(orderId)!.status = status;
+    captureBehavior = () => Response.json({ name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_NOT_APPROVED" }] }, { status: 422 });
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ status: 422,
+      message: "PayPal hasn't approved this payment yet. Approve it in PayPal or choose another method." });
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("pending");
+    expect(await cancelCheckout(workspaceId, orderId, repository)).toEqual({ cancelled: true });
+    expect(bookingCatalog(workspaceId, repository).sessions.find((session) => session.id === sessionId)?.seatsLeft).toBe(repository.requireWorkspace(workspaceId).state.sessions[0].capacity);
+  });
+  it("fails an unapproved hold that expires during capture and permits recovery approval", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => {
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      return Response.json({ name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_NOT_APPROVED" }] }, { status: 422 });
+    };
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ status: 422, code: "ORDER_NOT_APPROVED" });
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("failed");
+    expect(bookingCatalog(workspaceId, repository).sessions[0].seatsLeft).toBe(repository.requireWorkspace(workspaceId).state.sessions[0].capacity);
+    const plan = repository.createPlan(workspaceId, replan(repository.requireWorkspace(workspaceId).state, demoDisruption));
+    expect((await executePlan(workspaceId, plan.id, repository)).plan.status).toBe("executed");
+  });
+  it.each([false, true])("keeps an uncertain earlier capture reserved even when the order now reads CREATED (expired: %s)", async (expired) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("Network unavailable"); }; readUnavailable = true;
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow("Network unavailable");
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("capturing");
+    if (expired) vi.setSystemTime(Date.now() + 11 * 60_000);
+    readUnavailable = false;
+    captureBehavior = () => Response.json({ name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_NOT_APPROVED" }] }, { status: 422 });
+    // The first request may still complete upstream, so a CREATED snapshot never releases the seat.
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject(expired ? { code: "CHECK_PAYMENT_STATUS" } : { status: 422 });
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("capturing");
+    const captures = calls.filter((call) => call.url.endsWith("/capture"));
+    expect(captures).toHaveLength(expired ? 1 : 2);
+    expect(new Set(captures.map((call) => new Headers(call.init.headers).get("PayPal-Request-Id"))).size).toBe(1);
+  });
+  it.each(["CREATED", "SAVED", "PAYER_ACTION_REQUIRED", "VOIDED", "COMPLETED"])("reconciles a capturing %s order once on cancellation", async (status) => {
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("Network unavailable"); }; readUnavailable = true;
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    readUnavailable = false;
+    if (status === "COMPLETED") complete(orderId); else orders.get(orderId)!.status = status;
+    const reads = calls.filter((call) => call.init.method === "GET").length;
+    const result = cancelCheckout(workspaceId, orderId, repository);
+    if (status === "COMPLETED") await expect(result).resolves.toMatchObject({ cancelled: false, receipt: { status: "confirmed" } });
+    else if (status === "VOIDED") await expect(result).resolves.toEqual({ cancelled: true });
+    else await expect(result).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS" });
+    expect(calls.filter((call) => call.init.method === "GET")).toHaveLength(reads + 1);
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe(status === "COMPLETED" ? "confirmed" : status === "VOIDED" ? "failed" : "capturing");
+  });
+  it.each(["cancel", "retry"])("never overwrites a webhook confirmation that lands during the order read (%s)", async (path) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("Network unavailable"); }; readUnavailable = true;
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    readUnavailable = false; orders.get(orderId)!.status = "VOIDED";
+    // The read returns a stale VOIDED snapshot while the completion webhook confirms the booking.
+    beforeRead = (id) => { const row = repository.checkoutByOrder(workspaceId, id)!; const done = complete(id); confirmOrder(row, done as never, repository, false, true); };
+    const result = path === "cancel" ? await cancelCheckout(workspaceId, orderId, repository) : { receipt: await captureCheckout(workspaceId, orderId, repository) };
+    expect(result).toMatchObject({ receipt: { status: "confirmed" } });
+    expect(repository.checkoutByOrder(workspaceId, orderId)).toMatchObject({ status: "confirmed", captureId: `capture-${orderId}`, webhookConfirmed: true });
+    expect(repository.requireWorkspace(workspaceId).state.bookings).toHaveLength(1);
+  });
+  it("retains an unapproved snapshot containing a capture", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    complete(orderId); orders.get(orderId)!.status = "CREATED";
+    captureBehavior = () => Response.json({ name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_NOT_APPROVED" }] }, { status: 422 });
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    await expect(cancelCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS" });
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("capturing");
+  });
+  it("allows unrelated recovery while an unknown capture still blocks its own class", async () => {
+    sessionId = "session-011";
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    captureBehavior = () => { throw new Error("Network unavailable"); }; readUnavailable = true;
+    await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
+    const state = repository.requireWorkspace(workspaceId).state;
+    const unrelated = repository.createPlan(workspaceId, replan(state, demoDisruption));
+    expect(unrelated.sessionChanges.some((change) => change.sessionId === sessionId)).toBe(false);
+    expect((await executePlan(workspaceId, unrelated.id, repository)).plan.status).toBe("executed");
+    const current = repository.requireWorkspace(workspaceId).state;
+    const session = current.sessions.find((item) => item.id === sessionId)!;
+    const touched = repository.createPlan(workspaceId, replan(current, { kind: "closure", from: session.start, to: session.end }));
+    await expect(executePlan(workspaceId, touched.id, repository)).rejects.toMatchObject({ code: "CHECK_PAYMENT_STATUS", message: expect.stringContaining(session.title) });
+    expect(repository.checkoutByOrder(workspaceId, orderId)?.status).toBe("capturing");
+  });
+  it("reuses normalized customer emails so recovery respects their other booking without exposing it", async () => {
+    sessionId = "session-002";
+    const dance = await createOrder(workspaceId, { ...input(), customer: { name: "Jamie Rivera", email: " Jamie@EXAMPLE.com " } }, randomUUID(), repository);
+    const first = await captureCheckout(workspaceId, dance.orderId, repository);
+    sessionId = "session-011";
+    const hiit = await createOrder(workspaceId, { ...input(), customer: { name: "Jamie", email: "jamie@example.com" } }, randomUUID(), repository);
+    const second = await captureCheckout(workspaceId, hiit.orderId, repository);
+    const state = repository.requireWorkspace(workspaceId).state;
+    expect(state.customers).toHaveLength(1);
+    expect(state.bookings[0].customerId).toBe(state.bookings[1].customerId);
+    const plan = replan(state, demoDisruption);
+    expect(validate(state, plan).ok).toBe(true);
+    const next = applyPlan(state, plan);
+    const busy = state.sessions.find((session) => session.id === sessionId)!;
+    const moved = next.sessions.find((session) => session.id === "session-002");
+    expect(next.bookings[0].status === "refund_pending" || !moved || moved.start !== busy.start).toBe(true);
+    const forged = structuredClone(plan);
+    const change = forged.sessionChanges.find((item) => item.sessionId === "session-002")!;
+    change.remedy = "move_time"; change.after = { ...change.before, start: busy.start, end: busy.end };
+    forged.bookingActions.find((action) => action.bookingId === first.bookingId)!.action = "move";
+    forged.totals = calculateTotals(forged.sessionChanges.length, forged.bookingActions);
+    expect(validate(state, forged).errors).toContain(`Customer double booking: ${first.bookingId}`);
+    const stored = repository.createPlan(workspaceId, plan);
+    await executePlan(workspaceId, stored.id, repository);
+    const link = repository.listCustomerLinks(workspaceId).find((item) => item.bookingId === first.bookingId)!;
+    const views = [await customerChoice(repository.customerToken(link), repository), receipt(workspaceId, dance.orderId, repository), bookingCatalog(workspaceId, repository)];
+    for (const view of views) {
+      const text = JSON.stringify(view);
+      for (const secret of [second.bookingId, second.orderId, second.captureId!, "jamie@example.com", "Jamie@EXAMPLE.com", state.bookings[0].customerId]) expect(text).not.toContain(secret);
+    }
+  });
+  it("reuses a workspace customer with mixed case in their existing email", async () => {
+    const state = seedStudio(); state.bookings = [];
+    state.customers[0].email = "Jamie@EXAMPLE.com"; repository.saveState(workspaceId, state);
+    sessionId = "session-002";
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    await captureCheckout(workspaceId, orderId, repository);
+    const next = repository.requireWorkspace(workspaceId).state;
+    expect(next.customers).toHaveLength(state.customers.length);
+    expect(next.bookings[0].customerId).toBe(state.customers[0].id);
+    const plan = repository.createPlan(workspaceId, replan(next, demoDisruption));
+    await executePlan(workspaceId, plan.id, repository);
+    const link = repository.listCustomerLinks(workspaceId).find((item) => item.bookingId === next.bookings[0].id)!;
+    const view = await customerChoice(repository.customerToken(link), repository);
+    expect(view.message.body).toContain("Hi Jamie Rivera,");
+    expect(JSON.stringify(view)).not.toContain(state.customers[0].name);
+  });
+  it("keeps the purchase snapshot while receipts and calendars follow recovery and refunds", async () => {
+    sessionId = "session-002";
+    const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    const purchase = await captureCheckout(workspaceId, orderId, repository);
+    expect(purchase.current).toMatchObject({ status: "confirmed", changed: false, start: purchase.start });
+    const state = repository.requireWorkspace(workspaceId).state;
+    const plan = repository.createPlan(workspaceId, replan(state, demoDisruption));
+    await executePlan(workspaceId, plan.id, repository);
+    const updated = receipt(workspaceId, orderId, repository);
+    const current = repository.requireWorkspace(workspaceId).state.sessions.find((session) => session.id === sessionId)!;
+    expect(updated).toMatchObject({ class: purchase.class, start: purchase.start, end: purchase.end, amount: purchase.amount,
+      current: { class: current.title, start: current.start, end: current.end, status: "moved", changed: true } });
+    expect(updated.current?.start).not.toBe(purchase.start);
+    const calendar = calendarFile(updated, "Studio");
+    const instant = (value: string) => new Date(value).toISOString().replaceAll(/[-:]/g, "").replace(".000Z", "Z");
+    expect(calendar).toContain(`DTSTART:${instant(current.start)}`);
+    expect(calendar).toContain(`DTEND:${instant(current.end)}`);
+    expect(calendar).not.toContain(`DTSTART:${instant(purchase.start)}`);
+    const refund = repository.createPlan(workspaceId, replan(repository.requireWorkspace(workspaceId).state, { kind: "closure", from: state.studio.weekStart, to: "2026-11-23T05:00:00Z" }));
+    await executePlan(workspaceId, refund.id, repository);
+    expect(receipt(workspaceId, orderId, repository)).toMatchObject({ start: purchase.start, current: { status: "refunded", changed: true } });
+  });
   it("preserves PayPal error handling when an upstream error has a null body", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    orders.get(orderId)!.status = "APPROVED";
     captureBehavior = () => Response.json(null, { status: 422 });
     await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toMatchObject({ status: 422, name: "PAYPAL_ERROR" });
     expect(repository.listCheckout(workspaceId)[0].status).toBe("capturing");
@@ -251,6 +417,7 @@ describe("customer checkout", () => {
   });
   it("retains an inconclusive empty capture snapshot and recovers a late completion webhook", async () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
+    orders.get(orderId)!.status = "APPROVED";
     captureBehavior = () => { throw new Error("Timeout before capture"); };
     await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
     expect(repository.listCheckout(workspaceId)[0].status).toBe("capturing");
@@ -289,7 +456,7 @@ describe("customer checkout", () => {
     expect(repository.requireWorkspace(workspaceId).state.bookings).toHaveLength(1);
     expect(calls.filter((call) => call.url.endsWith("/capture"))).toHaveLength(1);
   });
-  it("releases an unresolved hold only when PayPal authoritatively voids the order", async () => {
+  it("releases an unresolved hold when PayPal authoritatively voids the order", async () => {
     const { orderId } = await createOrder(workspaceId, input(), randomUUID(), repository);
     captureBehavior = () => { throw new Error("unknown capture"); };
     await expect(captureCheckout(workspaceId, orderId, repository)).rejects.toThrow();
@@ -438,6 +605,7 @@ describe("checkout routes and client helpers", () => {
         "captureId",
         "class",
         "currency",
+        "current",
         "end",
         "orderId",
         "start",

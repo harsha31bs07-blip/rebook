@@ -79,9 +79,10 @@ export function Payments({ id, session, customer, validate, clientId, sandbox, o
       const receipt = await request<Receipt>(`${base}/${orderId}/capture`, { method: "POST" });
       setRetryCapture(false); current.current.onSuccess(receipt);
     } catch (cause) {
+      const unapproved = cause instanceof CheckoutError && ["ORDER_NOT_APPROVED", "PAYER_ACTION_REQUIRED"].includes(cause.code ?? "");
       const restart = cause instanceof CheckoutError && ["INSTRUMENT_DECLINED", "RESTART_CHECKOUT"].includes(cause.code ?? "");
       if (restart) { order.current = undefined; key.current = ""; setHasOrder(false); current.current.onLockChange(false); }
-      setRetryCapture(!restart);
+      setRetryCapture(!restart && !unapproved);
       throw cause;
     }
   }, [base]);
@@ -191,8 +192,8 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     return () => { controller.abort(); clearInterval(timer); };
   }, [id]);
   useEffect(() => {
-    if (!receipt?.webhookConfigured || receipt.webhookConfirmed) return;
-    const timer = setInterval(() => { void request<Receipt>(`/api/bookings/${id}/checkout/orders/${receipt.orderId}`).then(setReceipt).catch(() => {}); }, 3000);
+    if (!receipt?.orderId) return;
+    const timer = setInterval(() => { void request<Receipt>(`/api/bookings/${id}/checkout/orders/${receipt.orderId}`).then(setReceipt).catch(() => {}); }, receipt.webhookConfigured && !receipt.webhookConfirmed ? 3000 : 15_000);
     return () => clearInterval(timer);
   }, [id, receipt?.orderId, receipt?.webhookConfigured, receipt?.webhookConfirmed]);
   const currentSelection = catalog?.sessions.find((session) => session.id === selected?.id);
@@ -200,6 +201,10 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   const selectedClass = currentSelection ?? (customerLocked ? selected : undefined);
   const timezone = catalog?.studio.timezone ?? "America/Los_Angeles";
   const time = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(instant));
+  const placement = receipt?.current ?? receipt;
+  const bookingStatus = receipt?.current?.status;
+  const inactive = bookingStatus === "refunded" || bookingStatus === "refund_pending" || bookingStatus === "cancelled";
+  const statusText = bookingStatus === "refunded" ? "Refunded" : bookingStatus === "refund_pending" ? "Refund pending" : bookingStatus === "cancelled" ? "Cancelled" : "Booking confirmed";
   function selectClass(session: Class, prefill?: { name?: string; email?: string }) {
     if (customerLocked || receipt || !session.seatsLeft || session.bookingPaused) throw new Error("Checkout is unavailable or already in progress.");
     setSelected(session);
@@ -212,14 +217,16 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     const link = document.createElement("a"); link.href = url; link.download = "rebook-class.ics"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <main id="main-content" tabIndex={-1} className="customer-booking">
-    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{receipt ? `Booking confirmed. ${classTitle(receipt.class)}. ${time(receipt.start)}.` : selectedClass ? `${classTitle(selectedClass.title)} selected. Continue to checkout below the class list.` : ""}</p>
+    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{receipt && placement ? `${statusText}. ${classTitle(placement.class)}. ${!inactive && receipt.current?.changed ? "Updated: now " : ""}${time(placement.start)}.` : selectedClass ? `${classTitle(selectedClass.title)} selected. Continue to checkout below the class list.` : ""}</p>
     <header className="booking-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span></Link><AgentReadyChip /><span className="pill sandbox">{sandbox ? "PayPal sandbox" : "PayPal checkout"}</span></header>
     <p className="eyebrow">Make time for yourself</p><h1>{catalog?.studio.name ?? "Northstar Movement Studio"} · Book a class</h1>
     <p className="muted booking-intro">Find your next good hour. All class times are local to the studio ({timezone}).</p>
     {error && <p className="error" role="alert">{error}</p>}
-    {receipt ? <section className="booking-receipt"><span className="pill success-pill">Booking confirmed</span><h2>You’re on the list.</h2><h3>{classTitle(receipt.class)}</h3><p>{time(receipt.start)}</p><p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
+    {receipt && placement ? <section className="booking-receipt"><span className="pill success-pill">{statusText}</span><h2>{inactive ? statusText : "You’re on the list."}</h2><h3>{classTitle(placement.class)}</h3>
+      {receipt.current?.changed ? <><p>{inactive ? statusText : `Updated: now ${time(placement.start)}`}</p><p className="muted">Originally: {time(receipt.start)}</p></> : <p>{time(receipt.start)}</p>}
+      <p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
       {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
-      <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button></div></section>
+      {!inactive && <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button></div>}</section>
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
         {!catalog && !error && <p role="status">Loading classes…</p>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}

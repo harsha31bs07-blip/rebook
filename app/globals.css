@@ -51,6 +51,14 @@
 .choice-actions > button { min-height: 60px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 16px 20px; font-size: 15px; text-align: left; border-radius: 10px; }
 .choice-actions > button span { font-size: 12px; }
 .choice-small { font-size: 12px; line-height: 1.6; }
+.choice-assistant { display: grid; gap: 12px; margin: 24px 0; min-width: 0; }
+.choice-assistant label { font-weight: 600; }
+.choice-assistant textarea { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; resize: vertical; padding: 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px; }
+.choice-assistant button { min-height: 44px; }
+.choice-proposal { display: grid; gap: 12px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere; }
+.choice-proposal h2 { font-size: 20px; line-height: 1.4; }
+.choice-proposal p { line-height: 1.6; }
+.choice-proposal-buttons { display: flex; flex-wrap: wrap; gap: 12px; }
 .choice-simulation { background: #fff3d6; color: #6b4608; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; }
 .choice-status:has(h2) { background: #edf4eb; border: 1px solid #c9d9c3; padding: 24px; border-radius: 12px; }
 .choice-status h2 { font-size: 20px; margin-bottom: 12px; }

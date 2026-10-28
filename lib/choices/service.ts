@@ -35,7 +35,7 @@ export function createCustomerLinks(plan: StoredPlan, before: State, after: Stat
   }
 }
 
-function requireLink(token: string, repository: Repository): CustomerLink {
+export function requireLink(token: string, repository: Repository): CustomerLink {
   const link = repository.customerLinkByToken(ChoiceTokenSchema.parse(token));
   if (!link) throw new StoreError(404, "This private link is unavailable.");
   if (customerLinkReadableUntil(link) <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
@@ -77,7 +77,7 @@ function receiptFor(link: CustomerLink, repository: Repository) {
   return event ? { amount: event.amount, status: event.status, paypalId: event.paypalId, error: event.error } : undefined;
 }
 
-function view(link: CustomerLink, repository: Repository) {
+export function view(link: CustomerLink, repository: Repository) {
   const { state } = repository.requireReadyWorkspace(link.workspaceId);
   const booking = state.bookings.find((item) => item.id === link.bookingId);
   if (!booking) throw new StoreError(410, "This booking is no longer available.");

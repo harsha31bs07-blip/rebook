@@ -1,12 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgAiStudioTools, AgAiTool } from "ag-studio";
 import { seedStudio } from "../lib/seed/seed";
-import { bookingTools, localClass, ownerTools } from "../lib/webmcp/tools";
+import { bookingTools, choiceTools, localClass, ownerTools } from "../lib/webmcp/tools";
 import { studioReadOnlyTools, studioTools } from "../lib/webmcp/studio";
 import { createWebMcpBridge, type WebMcpTool } from "../lib/webmcp/bridge";
 
 const context = { signal: new AbortController().signal };
 describe("Rebook tool contracts", () => {
+  it("only exposes the proposal tool for an open idle choice and validates its message", async () => {
+    const proposal = { action: "keep" as const, refund: "0.00", reply: "Keep your class?", checked: 29, source: "gemini", model: "test" };
+    const ask = vi.fn(async () => proposal), tool = choiceTools({ canChoose: true, busy: false, ask })[0];
+    expect(tool.name).toBe("ask_rebook_assistant"); expect(tool.description).toContain("human must click Confirm");
+    expect(await tool.execute({ message: " keep " }, context)).toEqual(proposal); expect(ask).toHaveBeenCalledWith("keep", context.signal);
+    for (const message of [undefined, "", "a".repeat(301)]) expect(() => tool.execute({ message }, context)).toThrow("Invalid message");
+    expect(choiceTools({ canChoose: false, busy: false, ask })).toEqual([]); expect(choiceTools({ canChoose: true, busy: true, ask })).toEqual([]);
+  });
   it("reports studio-local times and active booking occupancy without customer/payment data", () => {
     const state = seedStudio();
     const tools = ownerTools({ state, plans: [], busy: false, report: vi.fn(), requestApproval: vi.fn() });

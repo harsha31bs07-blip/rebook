@@ -2,8 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement, ReactNode } from "react";
 import type { CustomerChoiceView } from "../lib/choices/service";
+import type { WebMcpTool } from "../lib/webmcp/bridge";
 
-const hooks = vi.hoisted(() => ({ cursor: 0, slots: [] as unknown[], pending: [] as (() => void)[], cleanups: new Map<number, (() => void) | void>() }));
+const hooks = vi.hoisted(() => ({ cursor: 0, slots: [] as unknown[], pending: [] as (() => void)[], cleanups: new Map<number, (() => void) | void>(), tools: [] as WebMcpTool[] }));
+vi.mock("../lib/webmcp/use-webmcp", () => ({ useWebMcp: (tools: WebMcpTool[] | (() => WebMcpTool[])) => { hooks.tools = typeof tools === "function" ? tools() : tools; } }));
 // Follow the checkout component tests: exercise request/effect behavior without a DOM dependency.
 vi.mock("react", async (original) => {
   const actual = await original<typeof import("react")>();
@@ -69,6 +71,55 @@ it("shows old/new class details, drafted message and three choices; offers the l
   (button("Gentle Yoga").props.onClick as () => void)(); await settle();
   const call = send.mock.calls.find((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")! as unknown as [string, RequestInit];
   expect(call[0]).toBe(`/api/choices/${"a".repeat(43)}`); expect(JSON.parse(call[1].body as string)).toEqual({ action: "move", sessionId: "other" });
+});
+
+it("asks for a proposal, focuses it, and confirms only through the existing choice API", async () => {
+  render(); await settle();
+  const textarea = elements(tree).find((element) => element.type === "textarea")!;
+  expect(textarea.props.maxLength).toBe(300);
+  (textarea.props.onChange as (event: unknown) => void)({ target: { value: "Wednesday yoga" } }); render();
+  let resolve!: (response: Response) => void;
+  send.mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }));
+  (button("Ask").props.onClick as () => void)(); render();
+  expect(renderToStaticMarkup(tree)).toContain("Checking this week’s classes…");
+  resolve(Response.json({ action: "move", sessionId: "other", class: data.alternatives[0], refund: "4.00", reply: "This class fits.", checked: 29, source: "gemini", model: "test" })); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Checked 29 classes"); expect(html).toContain("$4.00 back to your PayPal");
+  expect(html).toContain("Keep my new time"); expect(html).toContain("Pick another class"); expect(html).toContain("Refund me");
+  expect(focusHeading).toHaveBeenCalledOnce(); expect(focusHeading.mock.calls[0][0]).toContain("Gentle Yoga");
+  expect(send.mock.calls.filter((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")).toHaveLength(1);
+  (button("Confirm").props.onClick as () => void)(); await settle();
+  const posts = send.mock.calls.filter((args: unknown[]) => (args[1] as RequestInit)?.method === "POST") as unknown as [string, RequestInit][];
+  expect(posts[0][0]).toBe(`/api/choices/${"a".repeat(43)}/assistant`); expect(JSON.parse(posts[0][1].body as string)).toEqual({ message: "Wednesday yoga" });
+  expect(posts[1][0]).toBe(`/api/choices/${"a".repeat(43)}`); expect(JSON.parse(posts[1][1].body as string)).toEqual({ action: "move", sessionId: "other" });
+});
+
+it("shows a clarification question with the textarea and manual controls", async () => {
+  render(); await settle();
+  send.mockResolvedValueOnce(Response.json({ action: "clarify", refund: "0.00", reply: "Which day works for you?", checked: 29, source: "gemini", model: "test" }));
+  await hooks.tools[0].execute({ message: "another class" }, { signal: new AbortController().signal }); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Which day works for you?"); expect(html).toContain("textarea"); expect(html).toContain("Keep my new time"); expect(html).not.toContain(">Confirm<");
+  expect(elements(tree).find((element) => element.type === "textarea")!.props.value).toBe("another class");
+});
+
+it("WebMCP displays a proposal without submitting a choice, and Not quite clears it", async () => {
+  render(); await settle();
+  expect(hooks.tools.map((tool) => tool.name)).toEqual(["ask_rebook_assistant"]);
+  const proposal = { action: "keep", refund: "0.00", reply: "Keep this class?", checked: 29, source: "gemini", model: "test" };
+  send.mockResolvedValueOnce(Response.json(proposal));
+  expect(await hooks.tools[0].execute({ message: "keep" }, { signal: new AbortController().signal })).toEqual(proposal); await settle();
+  expect(renderToStaticMarkup(tree)).toContain("Keep this class?");
+  expect(send.mock.calls.filter((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")).toHaveLength(1);
+  (button("Not quite").props.onClick as () => void)(); render(); expect(renderToStaticMarkup(tree)).not.toContain("Keep this class?");
+  data = { ...data, canChoose: false }; await vi.advanceTimersByTimeAsync(5000); await settle(); expect(hooks.tools).toEqual([]);
+});
+
+it("keeps manual choices available after assistant unavailability", async () => {
+  render(); await settle();
+  send.mockResolvedValueOnce(Response.json({ error: "The assistant is busy right now. You can still choose below." }, { status: 503 }));
+  await expect(hooks.tools[0].execute({ message: "help" }, { signal: new AbortController().signal })).rejects.toThrow("busy"); await settle();
+  expect(renderToStaticMarkup(tree)).toContain("The assistant is busy"); expect(button("Refund me").props.disabled).toBe(false);
 });
 
 it("suppresses double taps, shows pending status, then polls the receipt to completion", async () => {

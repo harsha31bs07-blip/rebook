@@ -29,9 +29,10 @@ export default function BookingGrid({ plan, state }: { plan: Plan; state: State 
   const [filter, setFilter] = useState("");
   const rows = useMemo<ActionRow[]>(() => plan.bookingActions.map((action) => {
     const booking = state.bookings.find((item) => item.id === action.bookingId);
-    return { id: action.bookingId, customer: state.customers.find((item) => item.id === action.customerId)?.name ?? "Customer",
+    const customer = state.customers.find((item) => item.id === action.customerId);
+    return { id: action.bookingId, customer: customer?.name ?? "Customer",
       class: state.sessions.find((item) => item.id === booking?.sessionId)?.title ?? "Cancelled class",
-      action: action.action, reason: action.reason, amount: Number(action.amount) };
+      action: action.action, reason: `${customer?.prefs.availabilityKnown === false ? "availability not given · " : ""}${action.reason}`, amount: Number(action.amount) };
   }), [plan, state]);
   return <section className="booking-section" aria-label="Booking actions">
     <div className="section-label"><h3>Booking actions</h3><span>{rows.length}</span></div>

@@ -60,6 +60,7 @@ export type CheckoutReservation = {
   id: string; workspaceId: string; requestId: string; sessionId: string;
   requestAliases?: string[];
   customer: { name: string; email: string }; amount: string; currency: "USD";
+  availability?: { times?: ("mornings" | "afternoons" | "evenings")[]; days?: ("weekdays" | "weekends")[]; acceptsSubstitute?: boolean };
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
   paypalCustomId?: string;
   status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;

@@ -48,6 +48,7 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
     const customer = state.customers.find((item) => item.id === booking?.customerId);
     return <div className="refund-row" key={result.bookingId}>
       <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{result.status === "SIMULATED" ? "Simulated" : result.status === "NEEDS_REVIEW" ? "Needs review" : result.status.toLowerCase()}</span></div>
+      {customer?.prefs.availabilityKnown === false && <small className="muted">availability not given</small>}
       {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{result.status === "NEEDS_REVIEW" ? result.error : ["REQUESTED", "UNKNOWN", "PENDING"].includes(result.status) ? "PayPal hasn't confirmed this refund yet. Retry checks its status before another attempt." : "This refund needs attention. Retry to reconcile with PayPal."}</p>}
     </div>;
   })}</section>;

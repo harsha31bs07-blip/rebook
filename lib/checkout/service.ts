@@ -10,6 +10,11 @@ import { envLimit, limits } from "../api/limits";
 export const CheckoutInputSchema = z.strictObject({
   sessionId: z.string().min(1).max(100),
   customer: z.strictObject({ name: z.string().trim().min(1).max(100), email: z.string().trim().pipe(z.email().max(254)) }),
+  availability: z.strictObject({
+    times: z.array(z.enum(["mornings", "afternoons", "evenings"])).max(3).refine((values) => new Set(values).size === values.length, "Choose distinct times").optional(),
+    days: z.array(z.enum(["weekdays", "weekends"])).max(2).refine((values) => new Set(values).size === values.length, "Choose distinct days").optional(),
+    acceptsSubstitute: z.boolean().optional(),
+  }).optional(),
 });
 export type CheckoutInput = z.infer<typeof CheckoutInputSchema>;
 export const BOOKING_PAUSED_MESSAGE = "Schedule change in progress — booking paused";
@@ -44,7 +49,8 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
   input = CheckoutInputSchema.parse(input);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId || item.requestAliases?.includes(requestId));
-    if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer))) throw new StoreError(409, "This checkout key belongs to another booking");
+    if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer)
+      || JSON.stringify(row.availability) !== JSON.stringify(input.availability))) throw new StoreError(409, "This checkout key belongs to another booking");
     if (row?.status === "failed" || (row?.status === "pending" && row.expiresAt <= Date.now())) throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
     if (row?.orderId) return { orderId: row.orderId };
     if (pausedSessionIds(workspaceId, repository).has(input.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
@@ -52,7 +58,8 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
       const unresolved = repository.listCheckout(workspaceId).find((item) => item.status === "capturing" &&
         item.sessionId === input.sessionId && item.customer.email.toLowerCase() === input.customer.email.toLowerCase());
       if (unresolved?.orderId) {
-        if (JSON.stringify(unresolved.customer) !== JSON.stringify(input.customer) || (unresolved.requestAliases?.length ?? 0) >= 32) {
+        if (JSON.stringify(unresolved.customer) !== JSON.stringify(input.customer) || JSON.stringify(unresolved.availability) !== JSON.stringify(input.availability)
+          || (unresolved.requestAliases?.length ?? 0) >= 32) {
           throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
         }
         // Remember every accepted key before responding, even if a webhook settles the order next.
@@ -68,7 +75,7 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
         limits.take([{ key: "captures", max: envLimit("MAX_REAL_CAPTURES_PER_HOUR", 1500), ms: 3_600_000 }]);
         const reservationId = randomUUID();
         const reservation: CheckoutReservation = { id: reservationId, workspaceId, requestId, sessionId: session.id,
-          customer: input.customer, amount: session.price, currency: state.studio.currency, session,
+          customer: input.customer, availability: input.availability, amount: session.price, currency: state.studio.currency, session,
           paypalCustomId: `${bookingId}:${reservationId}`, expiresAt: Date.now() + 10 * 60_000, status: "pending" };
         repository.saveCheckout(reservation);
         return reservation;
@@ -91,6 +98,16 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
       throw error;
     }
   });
+}
+
+function checkoutPreferences(availability: CheckoutInput["availability"]) {
+  if (!availability) return { acceptsSubstitute: true, availabilityKnown: false,
+    windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) };
+  const periods = { mornings: { from: "07:00", to: "12:00" }, afternoons: { from: "12:00", to: "17:00" }, evenings: { from: "17:00", to: "21:00" } };
+  const days = availability.days?.flatMap((day) => day === "weekdays" ? [1, 2, 3, 4, 5] : [0, 6]) ?? [0, 1, 2, 3, 4, 5, 6];
+  const times = availability.times?.map((time) => periods[time]) ?? [{ from: "07:00", to: "21:00" }];
+  return { acceptsSubstitute: availability.acceptsSubstitute ?? true, availabilityKnown: true,
+    windows: days.sort().flatMap((weekday) => times.map((time) => ({ weekday, ...time }))) };
 }
 
 function validateCapture(row: CheckoutReservation, order: PayPalOrder) {
@@ -119,8 +136,8 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
     if (!state.bookings.some((booking) => booking.id === row.id)) {
       const customer = state.customers.find((item) => item.email.trim().toLowerCase() === row.customer.email.trim().toLowerCase());
       const customerId = customer?.id ?? `customer-${row.id}`;
-      if (!customer) state.customers.push({ id: customerId, ...row.customer, prefs: { acceptsSubstitute: true,
-        windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) } });
+      if (!customer) state.customers.push({ id: customerId, ...row.customer, prefs: checkoutPreferences(row.availability) });
+      else if (row.availability) customer.prefs = { ...customer.prefs, ...checkoutPreferences(row.availability) };
       state.bookings.push({ id: row.id, customerId, sessionId: row.sessionId, amount: row.amount, status: "confirmed",
         bookedAt: new Date().toISOString(),
         payment: { orderId: row.orderId!, captureId: capture.id, simulated: false } });

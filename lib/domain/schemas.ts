@@ -41,7 +41,7 @@ export const CustomerSchema = z.object({
       weekday: z.number().int().min(0).max(6), from: ClockSchema, to: ClockSchema,
     }).refine((window) => window.from < window.to, "Preference window must have positive duration")),
     preferredInstructorIds: z.array(z.string()).optional(),
-    acceptsSubstitute: z.boolean(), refundOnly: z.boolean().optional(),
+    acceptsSubstitute: z.boolean(), refundOnly: z.boolean().optional(), availabilityKnown: z.boolean().optional(),
   }),
 });
 export const BookingSchema = z.object({

@@ -132,6 +132,13 @@ afterEach(() => {
 });
 
 describe("card checkout lifecycle", () => {
+  it("sends the latest availability with order creation without reinitializing hosted fields", async () => {
+    await load();
+    props = { ...props, availability: { times: ["evenings"], days: ["weekdays"], acceptsSubstitute: false } };
+    render(); await settle(); clickPay(); await settle();
+    expect(fetchMock).toHaveBeenCalledWith(base, expect.objectContaining({ body: JSON.stringify({ sessionId: props.session.id, customer: props.customer, availability: props.availability }) }));
+    expect(createInstance).toHaveBeenCalledTimes(1); expect(props.onSuccess).toHaveBeenCalledWith(receipt);
+  });
   it("retains the SDK, session and typed fields through parent/catalog and customer re-renders, using the latest callbacks", async () => {
     await load();
     const originalFields = [...fields];
@@ -262,6 +269,37 @@ it("renders singular seats and HIIT titles in the booking catalog", async () => 
   const text = elements(tree).flatMap((element) => typeof element.props.children === "string" ? [element.props.children] : []);
   expect(text).toContain("HIIT Flow");
   expect(text).toContain("1 seat left");
+});
+
+it("offers collapsed optional availability, passes checkbox answers to Payments and locks the fieldset during checkout", () => {
+  hooks.slots[0] = { studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] };
+  hooks.slots[1] = props.session;
+  const renderPage = () => { hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true }); };
+  const checkbox = (name: string, value?: string) => find(tree, (element) => element.type === "input" && element.props.name === name && (value === undefined || element.props.value === value));
+  const change = (name: string, value: string | undefined, checked: boolean) => {
+    (checkbox(name, value).props.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked } }); renderPage();
+  };
+  renderPage();
+  expect(find(tree, (element) => element.type === "details").props.open).toBeUndefined();
+  expect(find(tree, (element) => element.type === "summary").props.children).toBe("If this class has to move, when can you usually come?");
+  expect(find(tree, (element) => element.type === "legend").props.children).toBe("Usual availability (optional)");
+  expect(elements(tree).filter((element) => element.type === "input" && element.props.type === "checkbox")).toHaveLength(6);
+  expect(checkbox("acceptsSubstitute").props.checked).toBe(true);
+  expect(find(tree, (element) => element.type === Payments).props.availability).toBeUndefined();
+  change("times", "mornings", true); change("times", "evenings", true); change("times", "mornings", false);
+  change("days", "weekdays", true); change("days", "weekends", true); change("days", "weekends", false);
+  change("acceptsSubstitute", undefined, false);
+  let payment = find(tree, (element) => element.type === Payments);
+  expect(payment.props.availability).toEqual({ times: ["evenings"], days: ["weekdays"], acceptsSubstitute: false });
+  (payment.props.onLockChange as (locked: boolean) => void)(true); renderPage();
+  expect(find(tree, (element) => element.type === "fieldset").props.disabled).toBe(true);
+  expect(elements(tree).filter((element) => element.type === "input" && element.props.readOnly === true)).toHaveLength(2);
+  payment = find(tree, (element) => element.type === Payments);
+  (payment.props.onLockChange as (locked: boolean) => void)(false); renderPage();
+  expect(find(tree, (element) => element.type === "fieldset").props.disabled).toBe(false);
+  change("times", "evenings", false); change("days", "weekdays", false);
+  expect(find(tree, (element) => element.type === Payments).props.availability).toEqual({ times: undefined, days: undefined, acceptsSubstitute: false });
+  hooks.pending = [];
 });
 
 it("never links a public checkout receipt to the owner console", () => {

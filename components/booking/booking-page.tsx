@@ -3,7 +3,7 @@
 import Script from "next/script";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { bookingCatalog, Receipt } from "@/lib/checkout/service";
+import type { bookingCatalog, CheckoutInput, Receipt } from "@/lib/checkout/service";
 import { calendarFile, eligibleCheckoutMethods, payLaterButtonTag, type CardSession, type EligibleMethods, type PayPalV6 } from "@/lib/client/paypal-v6";
 import AgentReadyChip from "../webmcp/agent-ready-chip";
 import { useWebMcp } from "../../lib/webmcp/use-webmcp";
@@ -19,14 +19,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 function classTitle(title: string) { return title.replace(/\bhiit\b/gi, "HIIT"); }
-export function Payments({ id, session, customer, validate, clientId, sandbox, onSuccess, onLockChange }: {
+export function Payments({ id, session, customer, availability, validate, clientId, sandbox, onSuccess, onLockChange }: {
   id: string; session: Class; customer: { name: string; email: string }; validate(): boolean;
+  availability?: CheckoutInput["availability"];
   clientId: string; sandbox: boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<CardSession | undefined>(undefined);
-  const current = useRef({ customer, validate, onSuccess, onLockChange });
-  useEffect(() => { current.current = { customer, validate, onSuccess, onLockChange }; }, [customer, validate, onSuccess, onLockChange]);
+  const current = useRef({ customer, availability, validate, onSuccess, onLockChange });
+  useEffect(() => { current.current = { customer, availability, validate, onSuccess, onLockChange }; }, [customer, availability, validate, onSuccess, onLockChange]);
   useEffect(() => () => current.current.onLockChange(false), []);
   const order = useRef<{ orderId: string } | undefined>(undefined);
   const key = useRef("");
@@ -50,7 +51,7 @@ export function Payments({ id, session, customer, validate, clientId, sandbox, o
     key.current ||= crypto.randomUUID();
     try {
       order.current ??= await request<{ orderId: string }>(base, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
-        body: JSON.stringify({ sessionId: session.id, customer: current.current.customer }) });
+        body: JSON.stringify({ sessionId: session.id, customer: current.current.customer, availability: current.current.availability }) });
       setHasOrder(true);
       return order.current;
     } catch (cause) {
@@ -185,6 +186,7 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   const [receipt, setReceipt] = useState<Receipt>();
   const [error, setError] = useState("");
   const form = useRef<HTMLFormElement>(null);
+  const [availability, setAvailability] = useState<CheckoutInput["availability"]>();
   useEffect(() => {
     const controller = new AbortController();
     const load = () => request<Catalog>(`/api/bookings/${id}/checkout`, { signal: controller.signal }).then(setCatalog).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
@@ -231,9 +233,20 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
         {!catalog && !error && <p role="status">Loading classes…</p>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}
         {catalog?.sessions.map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={session.bookingPaused || !session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => selectClass(session)}><span><strong>{classTitle(session.title)}</strong><span>{time(session.start)}</span><span>{session.instructor} · {session.room}</span>{session.bookingPaused && <span>Schedule change in progress — booking paused</span>}</span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}
-      </section><aside className="booking-checkout" aria-label="Class checkout">{selectedClass ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selectedClass.title)}</h2><p>{time(selectedClass.start)}</p><p className="muted">{selectedClass.room} · ${selectedClass.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
+      </section><aside className="booking-checkout" aria-label="Class checkout">{selectedClass ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selectedClass.title)}</h2><p>{time(selectedClass.start)}</p><p className="muted">{selectedClass.room} · ${selectedClass.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>
+        <details className="booking-availability"><summary>If this class has to move, when can you usually come?</summary><fieldset disabled={customerLocked}><legend>Usual availability (optional)</legend><p className="muted">Times are local to the studio. Leave a group blank for any.</p>
+          {(["mornings", "afternoons", "evenings"] as const).map((time) => <label key={time}><input type="checkbox" name="times" value={time} checked={availability?.times?.includes(time) ?? false} onChange={(event) => { const checked = event.target.checked; setAvailability((previous) => {
+            const times = checked ? [...(previous?.times ?? []), time] : previous?.times?.filter((item) => item !== time) ?? [];
+            return { acceptsSubstitute: true, ...previous, times: times.length ? times : undefined };
+          }); }} />{time[0].toUpperCase() + time.slice(1)}</label>)}
+          {(["weekdays", "weekends"] as const).map((day) => <label key={day}><input type="checkbox" name="days" value={day} checked={availability?.days?.includes(day) ?? false} onChange={(event) => { const checked = event.target.checked; setAvailability((previous) => {
+            const days = checked ? [...(previous?.days ?? []), day] : previous?.days?.filter((item) => item !== day) ?? [];
+            return { acceptsSubstitute: true, ...previous, days: days.length ? days : undefined };
+          }); }} />{day[0].toUpperCase() + day.slice(1)}</label>)}
+          <label><input type="checkbox" name="acceptsSubstitute" checked={availability?.acceptsSubstitute ?? true} onChange={(event) => setAvailability({ ...availability, acceptsSubstitute: event.target.checked })} />I&apos;m happy with a substitute instructor</label>
+        </fieldset></details>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
         {selectionPaused && <p role="status">Schedule change in progress — booking paused</p>}
-        {(customerLocked || (currentSelection && !selectionPaused)) && <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />}
+        {(customerLocked || (currentSelection && !selectionPaused)) && <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />}
       </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}
   </main>;
 }

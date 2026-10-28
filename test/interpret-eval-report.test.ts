@@ -28,6 +28,7 @@ it("reports category accuracy, dangerous results, rules/outage rates, coverage, 
   expect(report).toContain("fallback rate: 25.00%");
   expect(report).toContain("latency: 250.0 ms");
   expect(report).toContain("Errors: 1");
+  expect(report).toContain("Median latency when a model answered (2 items): 150.0 ms. Results by source: gemini 1, groq 1, rules 1.");
   expect(report).toContain("| plain | 1/2 | 50.00% | 0 | 50.00% |");
   expect(report).toContain("a subset, not a whole-corpus estimate");
 });

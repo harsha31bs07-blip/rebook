@@ -36,4 +36,4 @@ node --env-file=.env.local scripts/eval-interpret.mjs --max-items 177 --budget-m
 
 The runner uses the production interpreter, concurrency one, a delay between items, a maximum item count and a total wall-time budget. It reserves a full 12-second interpretation deadline before starting each item. Defaults are 30 items, 120 seconds, and a 500 ms delay. Small runs sample categories round-robin. It writes `docs/interpretation-eval.md` with category accuracy, dangerous false positives, rules result rate, provider outage/timeout fallback rate, errors, coverage, per-item provider/model, and median end-to-end latency. Rules results include safety clarifications before a provider call; they must not be misreported as model accuracy. Existing provider quota and cooldown rules remain in force.
 
-The live evaluation has intentionally not been run as part of this task.
+The latest live run, on October 28, 2026 with Gemini and Groq configured, scored 174/177 (98.31%) with 0 dangerous false positives; see [the live report](interpretation-eval.md).

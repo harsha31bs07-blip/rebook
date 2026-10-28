@@ -23,7 +23,7 @@ export function scoreCase(item, result, state) {
   return { correct: resource && local(disruption.from) === expected.window.from && local(disruption.to) === expected.window.to, dangerous: false };
 }
 
-export function evaluationReport(rows, total, elapsedMs) {
+export function evaluationReport(rows, total, elapsedMs, providers = []) {
   const categories = new Map();
   for (const row of rows) {
     const bucket = categories.get(row.category) ?? { total: 0, correct: 0, dangerous: 0, fallback: 0 };
@@ -32,7 +32,10 @@ export function evaluationReport(rows, total, elapsedMs) {
   }
   const percent = (count, denominator) => denominator ? `${(100 * count / denominator).toFixed(2)}%` : "n/a";
   const latencies = rows.map((row) => row.latencyMs).sort((a, b) => a - b);
-  const median = latencies.length ? (latencies[Math.floor((latencies.length - 1) / 2)] + latencies[Math.floor(latencies.length / 2)]) / 2 : 0;
+  const middle = (values) => values.length ? (values[Math.floor((values.length - 1) / 2)] + values[Math.floor(values.length / 2)]) / 2 : 0;
+  const median = middle(latencies);
+  const answered = rows.filter((row) => row.source && row.source !== "rules").map((row) => row.latencyMs).sort((a, b) => a - b);
+  const bySource = ["gemini", "groq", "rules"].map((source) => `${source} ${rows.filter((row) => row.source === source).length}`).join(", ");
   return `# Live interpretation evaluation
 
 Generated: ${new Date().toISOString()}. Evaluated ${rows.length}/${total} corpus items in ${(elapsedMs / 1000).toFixed(1)} s. Fixed studio clock: 2026-11-09 00:15 America/New_York; demo week: November 9–15, 2026.
@@ -43,6 +46,7 @@ Rules result rate: ${percent(rows.filter((row) => row.source === "rules").length
 Rules fallback rate after a provider attempt: ${percent(rows.filter((row) => row.fallbackReason).length, rows.length)} (model mismatch or provider unavailable).
 Provider outage/timeout fallback rate: ${percent(rows.filter((row) => row.aiBusy).length, rows.length)}.
 Median end-to-end interpretation latency: ${median.toFixed(1)} ms. Errors: ${rows.filter((row) => row.error).length}.
+Median latency when a model answered (${answered.length} items): ${middle(answered).toFixed(1)} ms. Results by source: ${bySource}.${providers.length ? ` Providers configured for this run: ${providers.join(", ")}.` : ""}
 
 | Category | Correct / evaluated | Accuracy | Dangerous false positives | Rules results |
 | --- | --- | --- | --- | --- |
@@ -106,7 +110,8 @@ async function main() {
     if (performance.now() - started + config.delayMs + 12_000 > config.budgetMs) break;
     await delay(config.delayMs);
   }
-  writeFileSync(resolve(root, "docs/interpretation-eval.md"), evaluationReport(rows, corpus.length, performance.now() - started));
+  writeFileSync(resolve(root, "docs/interpretation-eval.md"), evaluationReport(rows, corpus.length, performance.now() - started,
+    ["GEMINI_API_KEY", "GROQ_API_KEY"].filter((key) => process.env[key]?.trim()).map((key) => key.split("_")[0].toLowerCase())));
   console.info(`Wrote docs/interpretation-eval.md (${rows.length}/${corpus.length} items).`);
 }
 

@@ -10,7 +10,7 @@ import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../..
 import type { summarizeOutbox } from "../../lib/choices/outbox";
 import { planCovers } from "../../lib/recovery/covers";
 
-const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" aria-label="Loading booking actions" /> });
+const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" role="status" aria-label="Loading booking actions" /> });
 
 export function CoverRecord({ plan, state }: { plan: PublicPlan; state: State }) {
   const covers = planCovers(plan, state);

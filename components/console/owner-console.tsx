@@ -28,7 +28,7 @@ import { useScheduleView } from "./use-schedule-view";
 
 const Schedule = dynamic(() => import("./schedule"), { ssr: false, loading: () => <ScheduleSkeleton /> });
 function ScheduleSkeleton() {
-  return <div className="schedule-skeleton" aria-label="Loading schedule"><div className="skeleton-header skeleton" />{Array.from({ length: 6 }, (_, i) => <div className="skeleton-row" key={i}><div className="skeleton" /><span className="skeleton" /><span className="skeleton" /></div>)}</div>;
+  return <div className="schedule-skeleton" role="status" aria-label="Loading schedule"><div className="skeleton-header skeleton" />{Array.from({ length: 6 }, (_, i) => <div className="skeleton-row" key={i}><div className="skeleton" /><span className="skeleton" /><span className="skeleton" /></div>)}</div>;
 }
 
 export default function OwnerConsole({ id }: { id: string }) {

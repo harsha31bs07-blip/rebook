@@ -1,7 +1,7 @@
 // Browser end-to-end check of the judge path on a deployed Rebook (real PayPal sandbox).
 //   node scripts/e2e-judge-path.mjs [base-url]      (needs Chromium: npx playwright install chromium)
 // Owner (desktop): interpret -> plan -> approve (refunds) -> outbox. Customer (phone): private link -> refund ->
-// receipt. Dashboard reflects the customer's refund. Public booking page: card checkout. Every page: axe audit of
+// receipt. Substitute (phone): accept the cover, then a sandbox PayPal payout. Dashboard reflects the customer's refund. Public booking page: card checkout. Every page: axe audit of
 // our own markup (Bryntum grid and AG Charts internals are reported but not fatal; AG Studio's trial watermark is excluded). Exits non-zero on any failure.
 import { chromium, devices } from "playwright-core";
 import { readFileSync } from "node:fs";
@@ -104,6 +104,21 @@ try {
     const confirm = customer.getByRole("button", { name: /Confirm|Yes, refund/i }).first();
     if (await confirm.isVisible({ timeout: 3000 }).catch(() => false)) await confirm.click();
     await customer.getByText(/Refund completed/i).first().waitFor({ timeout: 90000 });
+  });
+  await step("substitute accepts the cover and is paid with PayPal Payouts (phone)", async () => {
+    const cover = (await api("GET", `/api/workspaces/${id}`)).covers?.[0];
+    if (!cover) throw new Error("no cover link after approval");
+    await customer.goto(BASE + cover.path);
+    await customer.getByRole("button", { name: /cover it/i }).waitFor({ timeout: 30000 });
+    await audit(customer, "cover");
+    await customer.getByRole("button", { name: /cover it/i }).click();
+    await customer.getByText(/You’re teaching this class/).waitFor({ timeout: 20000 });
+    const response = await fetch(`${BASE}/api/workspaces/${id}/covers/pay`, { method: "POST", headers: { "Content-Type": "application/json", Origin: BASE },
+      body: JSON.stringify({ planId: cover.planId, sessionId: cover.sessionId }) });
+    if (!response.ok) throw new Error(`pay cover: HTTP ${response.status}`);
+    const paid = (await response.json()).find((item) => item.sessionId === cover.sessionId);
+    if (!["PENDING", "SUCCESS"].includes(paid?.payout?.status)) throw new Error(`payout status ${paid?.payout?.status}`);
+    return { payout: paid.payout.status };
   });
   await step("dashboard reflects the customer's refund", async () => {
     await owner.goto(`${BASE}/w/${id}/dashboard`);

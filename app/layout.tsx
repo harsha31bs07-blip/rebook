@@ -12,7 +12,7 @@ const geistSans = localFont({
 
 export const metadata: Metadata = {
   title: "Rebook — a calmer week for your studio",
-  description: "When your schedule breaks, rebook everyone in one click. Preview a recovery plan and handle refunds with PayPal sandbox.",
+  description: "When your schedule breaks, rebook everyone in one approval. Preview a recovery plan and handle refunds with PayPal sandbox.",
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {

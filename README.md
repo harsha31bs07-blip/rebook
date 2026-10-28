@@ -1,6 +1,6 @@
 # Rebook
 
-When your schedule breaks, rebook everyone in one click: a recovery desk for class studios, with owner-approved PayPal sandbox refunds.
+When your schedule breaks, rebook everyone in one approval: a recovery desk for class studios, with owner-approved PayPal sandbox refunds.
 
 **[Open the live demo](https://rebook-by9u.onrender.com)** | [How it is built](https://rebook-by9u.onrender.com/built-with) | [Agent-ready flow](https://rebook-by9u.onrender.com/agent-ready)
 
@@ -16,8 +16,9 @@ The walkthrough takes about 60 seconds once your studio is ready (first load can
 2. Pick **Maya has the flu and can't teach Monday**, then **Understand disruption > Plan recovery**.
 3. Review **9 kept / 16 moved / 6 refunded**, with **$577 kept vs $135 refunded**. Alex covers yoga; dance and barre move to Tuesday. Optionally use **Move** or drag a recovery class; totals update after validation.
 4. Click **Approve and refund**. Review the six sandbox refund receipts. If PayPal is slow, **Retry** reconciles existing refunds before another attempt.
-5. In **Customer messages and links**, open a card labelled **Private choice link** and choose **Keep** or **Refund**.
-6. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?", "Which class type earns the most revenue?" or "Add a bar chart of revenue by class type".
+5. In **Customer messages and links**, open a card labelled **Private choice link**. Tell the assistant what works ("anything after 6 this week, otherwise refund me") or choose **Keep**, **Pick another class** or **Refund**.
+6. Under **Cover instructors**, open Alex's cover link and accept, then press **Pay Alex $35 with PayPal**: a sandbox PayPal payout.
+7. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?", "Which class type earns the most revenue?" or "Add a bar chart of revenue by class type".
 
 ## What is real
 
@@ -26,6 +27,16 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 ## Built with
 
 [See every integration in the product: /built-with](https://rebook-by9u.onrender.com/built-with). PayPal handles sandbox checkout and refunds; Bryntum Scheduler presents the recovery for review; AG Studio reports on workspace records. The APIMatic-generated PayPal Server SDK handles server payment calls. Gemini interprets disruptions and powers the Recovery analyst; Rebook's deterministic solver calculates the plan and amounts. WebMCP exposes page-scoped tools; owner approval and payment confirmation remain human actions.
+
+## What the AI does
+
+| Try in the live demo | What the AI adds | Guardrail | Code |
+| --- | --- | --- | --- |
+| Paste a forwarded message: "Fwd from Maya: so sorry, fever since last night, can't teach today" | Reads forwarded texts, Hinglish ("Maya bimaar hai, kal class nahi le paayegi") and shorthand that the rules parser cannot | Negations, maybes, corrections, past events and questions never reach the model; its reading must match the names, days and times you wrote; you confirm "AI read this as…" before anything is planned | [interpret.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/ai/interpret.ts#L215-L292), [live report](docs/interpretation-messy-eval.md) |
+| On a customer's private link, type what works | Turns "anything after 6 this week, otherwise refund me" into one concrete class or refund | Proposes only; the class must be one of that customer's real options, every amount and the reply about money come from the server, and the customer confirms | [assistant.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/choices/assistant.ts#L17-L54), [live report](docs/customer-assistant-eval.md) |
+| Dashboard > Ask Recovery analyst | Answers cost and refund questions from the workspace ledger and edits the AG Studio report | Tool-backed, timestamped answers | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L54-L87) |
+
+Models: Gemini first, Groq as fallback; the deterministic solver, server validation and PayPal decide every booking and amount.
 
 ## Sponsor evidence
 
@@ -36,6 +47,7 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 | Open Book a class; pay with a sandbox wallet or hosted card fields | JS SDK v6 checkout creates and captures an Orders v2 order on the server | [booking-page.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/booking/booking-page.tsx#L74-L168), [client.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/client.ts#L210-L227) |
 | Complete checkout; inspect the receipt | Booking is recorded only after matching completed capture, order, booking references, currency and amount; class availability is checked before capture | [service.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/checkout/service.ts#L84-L118), [capture checks](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/checkout/service.ts#L133-L187) |
 | Approve the Monday recovery; inspect refund results | Payments v2 refunds against original captures; retries reuse `PayPal-Request-Id` = `planId:bookingId` | [client.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/client.ts#L257-L263), [executePlan.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/executor/executePlan.ts#L50-L58) |
+| Accept a cover on its link, then **Pay Alex $35 with PayPal** | Payouts API pays the substitute's cover fee. The payout is recorded before the call, its request id doubles as `sender_batch_id` so a lost response replays the same batch, and status comes from PayPal. Cover pay is kept apart from customer money | [cover-pay.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/recovery/cover-pay.ts#L76-L108), [payouts.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/payouts.ts#L10-L24) |
 | Open a private choice link and choose Refund | Customer refund has its own stable `PayPal-Request-Id` = `choice:<linkId>` | [service.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/choices/service.ts#L118-L155) |
 | After a sandbox payment/refund, refresh its receipt or Dashboard | Verified webhook deliveries update the ledger; arrival depends on PayPal delivery and webhook configuration | [signature gate](https://github.com/harsha31bs07-blip/rebook/blob/main/app/api/paypal/webhook/route.ts#L23-L38), [ledger update](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/webhook.ts#L37-L103) |
 | Open a studio and inspect payment preparation | New scenarios use sandbox captures. When a previous attempt is uncertain and its replay window has expired, Transaction Search checks matching references and amounts; inconclusive outcomes stay labelled | [createWorkspace.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/demo/createWorkspace.ts#L76-L107), [lookup and search](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/client.ts#L230-L254) |
@@ -134,6 +146,7 @@ A browser end-to-end check walks the whole judge path on a deployment (interpret
 ## Honest limits
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.
+- Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.
 - The owner workspace URL acts as the owner capability for this demo; a real deployment needs owner sign-in. The separate public booking URL (`/b/<bookingId>`) is read/checkout-only and grants no owner access. Customer choice links use separate per-customer tokens.
 - Recovery stays within one studio week. Moves respect qualifications, availability, clashes and capacity; customers who cannot move need refunds.
 - Transaction Search can lag; uncertain seeded captures fall back to visibly labelled simulations. Refund retries reconcile through Payments; a timeout is never reported as a completed refund, and a refund whose outcome stays unknown is held for owner review instead of being sent again.

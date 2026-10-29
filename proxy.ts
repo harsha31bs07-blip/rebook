@@ -9,10 +9,12 @@ export function proxy(request: NextRequest) {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""} ${paypal} ${objects}`,
     "style-src 'self' 'unsafe-inline'",
-    `connect-src 'self' ${paypal}`, `frame-src ${paypal}`,
+    `connect-src 'self' ${paypal}`, `frame-src 'self' ${paypal}`,
     `img-src 'self' data: blob: ${paypal} ${objects}`,
     "font-src 'self' data:", "worker-src 'self' blob:",
-    "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
+    "object-src 'none'", "base-uri 'self'", "form-action 'self'",
+    // Only the private customer and cover pages may be framed, and only by the owner console on this site.
+    /^\/(?:c|i)\//.test(request.nextUrl.pathname) ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
   ].join("; ");
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);

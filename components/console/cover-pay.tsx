@@ -23,7 +23,7 @@ export default function CoverPay({ workspaceId, covers, onUpdated }: { workspace
     try { await navigator.clipboard.writeText(new URL(cover.path, window.location.origin).href); setNotice(`Copied ${cover.instructor}’s cover link.`); }
     catch { setNotice("Copy failed. Open the link and copy it from the address bar."); }
   }
-  return <section className="refund-results cover-pay" aria-label="Cover instructors"><h3>Cover instructors</h3>
+  return <section id="cover-instructors" className="refund-results cover-pay" aria-label="Cover instructors"><h3>Cover instructors</h3>
     {covers.map((cover) => {
       const payable = cover.status === "accepted" && cover.payee && (!cover.payout || ["REQUESTED", "FAILED", "RETURNED", "BLOCKED", "DENIED", "REFUNDED", "REVERSED"].includes(cover.payout.status));
       return <div className="refund-row" key={`${cover.planId}:${cover.sessionId}`}>

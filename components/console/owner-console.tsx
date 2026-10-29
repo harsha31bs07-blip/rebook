@@ -11,6 +11,7 @@ import DisruptionPanel from "./disruption-panel";
 import PlanPanel, { CoverRecord } from "./plan-panel";
 import PaymentsAttention from "./payments-attention";
 import CoverPay from "./cover-pay";
+import PartyPreview from "./party-preview";
 import { ScheduleBoundary, ScheduleFallback } from "./schedule-boundary";
 import MoveToPopover from "./move-to-popover";
 import { draftCustomerMessages } from "../../lib/ai/messages";
@@ -50,6 +51,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const [day, setDay] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
+  const [previewParty, setPreviewParty] = useState<"customer" | "instructor">();
   const [ended, setEnded] = useState(false);
   const [approvalRequested, setApprovalRequested] = useState("");
   const actionInFlight = useRef(false);
@@ -202,7 +204,8 @@ export default function OwnerConsole({ id }: { id: string }) {
         {ready && state ? <>
           {(error || loadError) && (retryRefunds ? <div className="error error-box" role="alert">{error || loadError}<button disabled={Boolean(busy)} onClick={() => void approve()}>Retry</button></div> : <p className="error error-box" role="alert">{error || loadError}</p>)}
           {restoreError && <div className="warning" role="alert">{restoreError}<button disabled={Boolean(busy)} onClick={() => void restore()}>Retry</button></div>}
-          {details && plan ? <><PlanPanel details={details} plan={plan} coverLinks={workspace.covers} disruptionText={text} state={basis ?? state} outboxSummary={workspace.customerChoices?.outbox ? summarizeOutbox(workspace.customerChoices.outbox.filter((row) => row.planId === plan.id)) : undefined} outcomes={workspace.plans.some((item) => item.id === plan.id && item.status !== "proposed") ? workspace.customerChoices?.outcomes?.filter((item) => item.plan_id === plan.id) : undefined} busy={Boolean(busy)} approving={busy === "approve"} results={results} approvalRequested={approvalRequested === plan.id} onUndo={plan.lastAdjustment ? () => void adjust({ undo: true }).catch(() => {}) : undefined} onMove={setMoveSession} onApprove={(confirmedIds) => void approve(confirmedIds)} onDiscard={() => void discard()} onMessages={() => setMessagesOpen(true)} />{!["proposed", "executing"].includes(plan.status) && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
+          {details && plan ? <><PlanPanel details={details} plan={plan} coverLinks={workspace.covers} onPreview={setPreviewParty}
+            customerPath={workspace.customerChoices?.links.find((link) => link.planId === plan.id && link.kind === "choice")?.path} disruptionText={text} state={basis ?? state} outboxSummary={workspace.customerChoices?.outbox ? summarizeOutbox(workspace.customerChoices.outbox.filter((row) => row.planId === plan.id)) : undefined} outcomes={workspace.plans.some((item) => item.id === plan.id && item.status !== "proposed") ? workspace.customerChoices?.outcomes?.filter((item) => item.plan_id === plan.id) : undefined} busy={Boolean(busy)} approving={busy === "approve"} results={results} approvalRequested={approvalRequested === plan.id} onUndo={plan.lastAdjustment ? () => void adjust({ undo: true }).catch(() => {}) : undefined} onMove={setMoveSession} onApprove={(confirmedIds) => void approve(confirmedIds)} onDiscard={() => void discard()} onMessages={() => setMessagesOpen(true)} />{!["proposed", "executing"].includes(plan.status) && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
             : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={(value) => run("interpret", () => interpretText(value))} onReport={reportDisruption} onEdit={() => setInterpretation(undefined)} onPlan={createPlan} />}
           <CoverPay workspaceId={id} covers={workspace.covers?.filter((cover) => cover.planId === plan?.id)} onUpdated={() => { void refresh().catch(() => {}); }} />
           <PaymentsAttention workspaceId={id} payments={workspace.paymentsNeedingAttention} onUpdated={() => { void refresh().catch(() => setError("Refund checked. Refresh the workspace to see its latest status.")); }} />
@@ -223,6 +226,9 @@ export default function OwnerConsole({ id }: { id: string }) {
     <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{busy === "approve" ? `Processing refunds. ${plan?.refundProgress?.done ?? 0} of ${plan?.totals.refunded ?? 0} results received.` : busy === "reconcile" ? "Checking refund status." : busy ? "Working on your request." : toast || (plan ? plan.status === "proposed" ? "Recovery plan ready. Review the changes before approving." : `${results.filter((result) => result.status === "COMPLETED").length} refunds completed. ${results.filter((result) => ["PENDING", "REQUESTED", "NEEDS_REVIEW"].includes(result.status)).length} refunds pending.` : "")}</div>
     {toast && <div className="toast">{toast}<button aria-label="Dismiss notification" onClick={() => setToast("")}>×</button></div>}
     {bookingNotice && !toast && <div className="toast" role="status">{bookingNotice.message}</div>}
+    {previewParty && details && <PartyPreview initial={previewParty} onClose={() => { setPreviewParty(undefined); void refresh().catch(() => {}); }}
+      customerPath={workspace?.customerChoices?.links.find((link) => link.planId === details.plan.id && link.kind === "choice")?.path}
+      coverPath={workspace?.covers?.find((cover) => cover.planId === details.plan.id)?.path} instructor={workspace?.covers?.find((cover) => cover.planId === details.plan.id)?.instructor} />}
     {messagesOpen && details && <MessagesDrawer workspaceId={id} messages={details.messages} links={workspace?.customerChoices?.links.filter((link) => link.planId === details.plan.id)} outbox={details.plan.status !== "proposed" ? workspace?.customerChoices?.outbox?.filter((row) => row.planId === details.plan.id) : undefined} onUpdated={() => { void refresh().catch(() => setError("Outbox saved. The workspace refresh failed; updates will retry shortly.")); }} onClose={() => setMessagesOpen(false)} />}
   </main>;
 }

@@ -21,6 +21,12 @@ it.each(["/w/demo", "/w/demo/book", "/b/public-booking-id", "/c/private-token", 
   expect(csp).toContain("style-src 'self' 'unsafe-inline'");
 });
 
+it.each([["/c/private-token", "'self'"], ["/i/cover-token", "'self'"], ["/w/demo", "'none'"], ["/b/public-booking-id", "'none'"], ["/", "'none'"]])("frames %s only from %s", (path, ancestors) => {
+  const csp = proxy(new NextRequest(`http://localhost${path}`)).headers.get("content-security-policy")!;
+  expect(csp).toContain(`frame-ancestors ${ancestors}`);
+  expect(csp).toMatch(/frame-src 'self' https:\/\/\*\.paypal\.com/);
+});
+
 it("permits development debugging without enabling inline scripts", () => {
   vi.stubEnv("NODE_ENV", "development");
   const csp = proxy(new NextRequest("http://localhost/")).headers.get("content-security-policy")!;

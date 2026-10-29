@@ -5,8 +5,8 @@ import type { Interpretation } from "@/lib/client/api";
 import type { State } from "@/lib/domain/types";
 import { disruptionLabel, interpretationSource } from "@/lib/client/scheduler-mapping";
 import { overlaps, localParts } from "../../lib/domain/time";
+import { disruptionExamples } from "../../lib/ai/examples";
 
-const examples = ["Maya has the flu and can't teach Monday", "The Cycle Lab AC is broken Wednesday afternoon", "Studio closed Saturday morning for a burst pipe"];
 
 export default function DisruptionPanel({ state, text, setText, interpretation, onInterpret, onReport, onEdit, onPlan, busy }: {
   state: State; text: string; setText: (text: string) => void; interpretation?: Interpretation;
@@ -63,7 +63,7 @@ export default function DisruptionPanel({ state, text, setText, interpretation, 
       <textarea ref={textarea} id="disruption" name="text" {...{ toolparamdescription: "What changed: instructor absence, unavailable room, or studio closure, including the local day and time." }} maxLength={500} rows={4} placeholder="An instructor is out, a room is unavailable…" value={text} onChange={(event) => setText(event.target.value)} disabled={busy} required />
       <div className="input-caption"><span>Use your own words</span><span>{text.length}/500</span></div>
       <button className="primary full-width" type="submit" disabled={busy || !text.trim()}>{busy ? "Understanding disruption…" : "Understand disruption"}</button>
-      <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
+      <p className="try-label">Or try an example</p><div className="examples" id="judge-examples">{disruptionExamples(state).map((example) => <button type="button" key={example} disabled={busy} onClick={() => { setText(example); textarea.current?.focus(); }}>{example}<span aria-hidden="true">↗</span></button>)}</div>
     </form> : <div className="understood-card">
       <div className="section-label"><span className="eyebrow">Understood</span><span className="pill" tabIndex={understood.aiBusy ? 0 : undefined} title={understood.aiBusy ? "AI is busy or unavailable, so the local rules parser interpreted this disruption. Review it below; planning and refunds still use deterministic checks." : undefined}>{`${understood.aiBusy ? "Rules (AI busy)" : interpretationSource(understood.source, understood.model)}${understood.needsConfirmation ? " · needs your confirmation" : ""}`}</span></div>
       <h3 ref={understoodHeading} tabIndex={-1}>{understood.needsConfirmation ? `AI read this message as: ${label?.subject} · ${label?.window} — Is that right?` : label?.subject}</h3>{!understood.needsConfirmation && <p>{label?.window}</p>}<p className="muted">{state.studio.timezone}</p>

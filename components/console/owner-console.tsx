@@ -24,6 +24,7 @@ import ExpiredDemo from "./expired-demo";
 import { useWebMcp } from "../../lib/webmcp/use-webmcp";
 import { ownerTools, planSummary } from "../../lib/webmcp/tools";
 import JudgeHint from "./judge-hint";
+import { isSeededDemo } from "../../lib/ai/examples";
 import { usePlanPreview } from "./use-plan-preview";
 import ScheduleAgenda from "./schedule-agenda";
 import { useScheduleView } from "./use-schedule-view";
@@ -202,7 +203,7 @@ export default function OwnerConsole({ id }: { id: string }) {
         <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · 7am–9pm · Scroll to explore</span></footer>
       </section>;
   const recoveryPanel = <aside className="disruption-panel" aria-label="Recovery assistant" aria-busy={Boolean(busy)}>
-        <JudgeHint id={id} ready={ready && !busy} preview={Boolean(preview) && !busy} hasPlan={Boolean(plan) && !busy} onStep={tourStep} />
+        {state && isSeededDemo(state) && <JudgeHint id={id} ready={ready && !busy} preview={Boolean(preview) && !busy} hasPlan={Boolean(plan) && !busy} onStep={tourStep} />}
         {ready && state ? <>
           {(error || loadError) && (retryRefunds ? <div className="error error-box" role="alert">{error || loadError}<button disabled={Boolean(busy)} onClick={() => void approve()}>Retry</button></div> : <p className="error error-box" role="alert">{error || loadError}</p>)}
           {restoreError && <div className="warning" role="alert">{restoreError}<button disabled={Boolean(busy)} onClick={() => void restore()}>Retry</button></div>}

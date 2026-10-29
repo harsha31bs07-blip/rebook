@@ -16,6 +16,7 @@ it("offers the next qualified instructor in one click after a decline, and keeps
   expect(none).toContain("no other qualified instructor is free then. Plan a new recovery for this class."); expect(none).not.toContain("instead</button>");
   const passed = renderToStaticMarkup(<CoverPay workspaceId="ws" covers={[cover({ status: "declined", current: false }), cover({ instructor: "Priya Shah", status: "asked", path: "/i/next" })]} onUpdated={vi.fn()} />);
   expect(passed).toContain("Alex Rivera covers Yoga Flow"); expect(passed).toContain("Priya Shah covers Yoga Flow"); expect(passed).not.toContain("instead</button>");
+  expect(passed.split('href="/i/').length - 1).toBe(1); expect(passed).toContain('href="/i/next"'); expect(passed).not.toContain('href="/i/cover-token"');
   const steps = renderToStaticMarkup(<NextSteps workspaceId="ws" covers={[cover({ status: "declined", current: false }), cover({ instructor: "Priya Shah", status: "asked" })]} onMessages={vi.fn()} onPreview={vi.fn()} />);
   expect(steps).toContain("Priya Shah covers Yoga Flow"); expect(steps).not.toContain("Alex Rivera covers");
 });

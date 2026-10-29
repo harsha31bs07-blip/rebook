@@ -39,12 +39,12 @@ export default function CoverPay({ workspaceId, covers, onUpdated }: { workspace
           ? <p className="warning">{cover.instructor} declined. {cover.next} is qualified, free then and suits everyone booked.</p>
           : <p className="warning">{cover.instructor} declined{cover.next === null ? " and no other qualified instructor is free then" : ""}. Plan a new recovery for this class.</p>)}
         {cover.payout?.error && <p className="error">{cover.payout.error}</p>}
-        <div className="button-row">
+        {cover.current !== false && <div className="button-row">
           <a href={cover.path} target="_blank" rel="noopener noreferrer" aria-label={`Open ${cover.instructor}’s cover link`}>Open cover link</a>
           <button onClick={() => void copy(cover)} aria-label={`Copy ${cover.instructor}’s cover link`}>Copy link</button>
           {cover.status === "declined" && cover.current && cover.next && <button className="primary" disabled={!!busy} onClick={() => void askNext(cover)}>{busy === cover.sessionId ? `Asking ${cover.next}…` : `Ask ${cover.next} instead`}</button>}
-          {payable && <button className="primary" disabled={!!busy} onClick={() => void pay(cover)}>{busy === cover.sessionId ? "Paying with PayPal…" : cover.payout?.status === "REQUESTED" ? `Check payout to ${cover.instructor}` : `Pay ${cover.instructor} $${cover.fee} with PayPal`}</button>}
-        </div>
+          {payable && <button className="primary" disabled={!!busy} onClick={() => void pay(cover)}>{busy === cover.sessionId ? "Paying with PayPal…" : cover.payout?.status === "REQUESTED" ? `Check payout to ${cover.instructor}` : `Pay ${cover.instructor} ${cover.fee} with PayPal`}</button>}
+        </div>}
         {cover.status === "accepted" && !cover.payout && <p className="muted">Studios usually pay after the class; you choose when.</p>}
         {cover.status === "accepted" && !cover.payee && <p className="muted">Payouts need a sandbox payee configured on the server.</p>}
       </div>;

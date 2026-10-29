@@ -140,7 +140,14 @@ try {
     };
     await fill("number", "4111111111111111"); await fill("expiry", "1230"); await fill("cvv", "123");
     await page.getByRole("button", { name: /^Pay \$/ }).click();
-    await page.getByText(/Booking confirmed|You.re on the list/i).first().waitFor({ timeout: 90000 });
+    try { await page.getByText(/Booking confirmed|You.re on the list/i).first().waitFor({ timeout: 90000 }); }
+    catch (error) {
+      // Report what the buyer saw (error text, PayPal challenge frames) instead of a bare timeout.
+      const alerts = await page.getByRole("alert").allInnerTexts().catch(() => []);
+      const frames = page.frames().map((frame) => new URL(frame.url() || "about:blank").hostname).filter(Boolean);
+      if (process.env.E2E_ARTIFACTS) await page.screenshot({ path: `${process.env.E2E_ARTIFACTS}/checkout-failure.png`, fullPage: true }).catch(() => {});
+      throw new Error(`checkout not confirmed; alerts: ${JSON.stringify(alerts).slice(0, 300)}; frames: ${[...new Set(frames)].join(",")}; ${String(error.message).split("\n")[0]}`);
+    }
     return audit(page, "booking");
   });
   console.log(JSON.stringify({ ok: true, base: BASE, workspaceId: id, steps }));

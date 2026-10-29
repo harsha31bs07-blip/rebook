@@ -19,4 +19,11 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npx playwright-core install --with-deps chromium
-      - run: node scripts/e2e-judge-path.mjs
+      - run: mkdir -p e2e-artifacts && node scripts/e2e-judge-path.mjs
+        env:
+          E2E_ARTIFACTS: e2e-artifacts
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: e2e-artifacts

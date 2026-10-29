@@ -20,22 +20,22 @@ export function creditEmail({ studio, customerName, amount, url, className, clas
   const text = [`Hi ${firstName},`, intro, `Studio credit: $${amount}`, `Redeem your credit: ${url}`, care, why].join("\n\n");
   const e = escapeHtml, font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(`Your studio credit at ${studio}`)}</title></head>`
-    + `<body style="margin:0;padding:0;background:#f4f5f7;">`
+    + `<body style="margin:0;padding:0;background:#f6f2eb;">`
     + `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${e(`Your $${amount} credit is ready to use on any class.`)}</div>`
-    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;"><tr><td align="center" style="padding:32px 16px;">`
-    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid #e3e6ea;border-radius:12px;">`
-    + `<tr><td style="padding:28px 32px 0;${font}font-size:16px;font-weight:600;color:#111827;">${e(studio)}</td></tr>`
-    + `<tr><td style="padding:24px 32px 0;${font}font-size:15px;line-height:24px;color:#374151;">Hi ${e(firstName)},</td></tr>`
-    + `<tr><td style="padding:12px 32px 0;${font}font-size:15px;line-height:24px;color:#374151;">${e(intro)}</td></tr>`
-    + `<tr><td style="padding:24px 32px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e3e6ea;border-radius:10px;">`
-    + `<tr><td style="padding:18px 20px 4px;${font}font-size:13px;color:#6b7280;">Studio credit</td></tr>`
-    + `<tr><td style="padding:0 20px 18px;${font}font-size:30px;line-height:36px;font-weight:700;color:#111827;">$${e(amount)}</td></tr></table></td></tr>`
+    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f2eb;"><tr><td align="center" style="padding:32px 16px;">`
+    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid #e8e1d5;border-radius:12px;">`
+    + `<tr><td style="padding:28px 32px 0;${font}font-size:16px;font-weight:600;color:#2b2622;">${e(studio)}</td></tr>`
+    + `<tr><td style="padding:24px 32px 0;${font}font-size:15px;line-height:24px;color:#4a433c;">Hi ${e(firstName)},</td></tr>`
+    + `<tr><td style="padding:12px 32px 0;${font}font-size:15px;line-height:24px;color:#4a433c;">${e(intro)}</td></tr>`
+    + `<tr><td style="padding:24px 32px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf6ef;border:1px solid #e8e1d5;border-radius:10px;">`
+    + `<tr><td style="padding:18px 20px 4px;${font}font-size:13px;color:#7a7067;">Studio credit</td></tr>`
+    + `<tr><td style="padding:0 20px 18px;${font}font-size:30px;line-height:36px;font-weight:700;color:#2b2622;">$${e(amount)}</td></tr></table></td></tr>`
     + `<tr><td align="left" style="padding:24px 32px 0;"><table role="presentation" cellpadding="0" cellspacing="0"><tr>`
-    + `<td style="background:#1d4ed8;border-radius:8px;"><a href="${e(url)}" style="display:inline-block;padding:13px 26px;${font}font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">Redeem your credit</a></td>`
+    + `<td style="background:#3f6b4f;border-radius:8px;"><a href="${e(url)}" style="display:inline-block;padding:13px 26px;${font}font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">Redeem your credit</a></td>`
     + `</tr></table></td></tr>`
-    + `<tr><td style="padding:20px 32px 28px;${font}font-size:13px;line-height:20px;color:#6b7280;">${e(care)}</td></tr>`
+    + `<tr><td style="padding:20px 32px 28px;${font}font-size:13px;line-height:20px;color:#7a7067;">${e(care)}</td></tr>`
     + `</table>`
-    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;"><tr><td style="padding:16px 32px 0;${font}font-size:12px;line-height:18px;color:#9ca3af;">${e(why)}</td></tr></table>`
+    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;"><tr><td style="padding:16px 32px 0;${font}font-size:12px;line-height:18px;color:#857b71;">${e(why)}</td></tr></table>`
     + `</td></tr></table></body></html>`;
   return { subject: `Your $${amount} studio credit at ${studio}`, text, html, senderName: `${studio} via Rebook` };
 }

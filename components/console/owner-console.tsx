@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Interpretation } from "@/lib/client/api";
-import { classColors, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
+import { classColors, hourLabel, weekBounds, workingHours, type RowMode } from "@/lib/client/scheduler-mapping";
 import type { Plan } from "@/lib/domain/types";
 import { useWorkspace } from "./use-workspace";
 import DisruptionPanel from "./disruption-panel";
@@ -200,7 +200,7 @@ export default function OwnerConsole({ id }: { id: string }) {
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2 role="status">{workspace?.status === "failed" ? "We couldn’t prepare this demo" : startupMessage}</h2><p className="muted">{workspace?.status === "failed" ? "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
           {preview && plan && timelineState && moveSession && <MoveToPopover key={moveSession} state={timelineState} plan={plan} sessionId={moveSession} busy={Boolean(busy)} onAdjust={adjust} onClose={() => setMoveSession(undefined)} />}
         </div>
-        <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · 7am–9pm · Scroll to explore</span></footer>
+        <footer className="schedule-footer"><div className="class-legend">{Object.entries(classColors).map(([name, colors]) => <span key={name}><i style={{ backgroundColor: colors[0], borderColor: colors[1] }} />{name === "hiit" ? "HIIT" : name}</span>)}</div><span>{state?.studio.timezone ?? "Studio local time"} · {state ? `${hourLabel(workingHours(state).fromHour)}–${hourLabel(workingHours(state).toHour)}` : "7am–9pm"} · Scroll to explore</span></footer>
       </section>;
   const recoveryPanel = <aside className="disruption-panel" aria-label="Recovery assistant" aria-busy={Boolean(busy)}>
         {state && isSeededDemo(state) && <JudgeHint id={id} ready={ready && !busy} preview={Boolean(preview) && !busy} hasPlan={Boolean(plan) && !busy} onStep={tourStep} />}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classColors, disruptionLabel, formatDisruptionWindow, formatTime, interpretationSource, mapSchedule, recoveryBounds, visibleWorkingTime, weekBounds } from "../lib/client/scheduler-mapping";
-import { localParts } from "../lib/domain/time";
+import { classColors, disruptionLabel, formatDisruptionWindow, formatTime, hourLabel, interpretationSource, mapSchedule, recoveryBounds, scheduleRange, visibleWorkingTime, weekBounds, workingHours } from "../lib/client/scheduler-mapping";
+import { localParts, zonedTimeToUtc } from "../lib/domain/time";
 import { demoDisruption, seedStudio } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { applyPlan } from "../lib/solver/validate";
@@ -118,6 +118,17 @@ describe("scheduler presentation mapping", () => {
       expect(start.minutesOfDay).toBeGreaterThanOrEqual(visibleWorkingTime.fromHour * 60);
       expect(end.minutesOfDay).toBeLessThanOrEqual(visibleWorkingTime.toHour * 60);
     }
+  });
+  it("widens the axis to an imported 6am class and a class ending at 10pm, and keeps the demo at 7am-9pm", () => {
+    const demo = seedStudio();
+    expect(workingHours(demo)).toEqual(visibleWorkingTime);
+    const state = structuredClone(demo), tz = state.studio.timezone, [early, late] = state.sessions;
+    const day = localParts(early.start, tz).dateKey;
+    Object.assign(early, { start: zonedTimeToUtc(day, "06:00", tz), end: zonedTimeToUtc(day, "06:45", tz) });
+    Object.assign(late, { start: zonedTimeToUtc(day, "21:00", tz), end: zonedTimeToUtc(day, "21:45", tz) });
+    expect(workingHours(state)).toEqual({ fromHour: 6, toHour: 22 });
+    expect(localParts(scheduleRange(state, "day", 0).start, tz).minutesOfDay).toBe(6 * 60);
+    expect([hourLabel(6), hourLabel(12), hourLabel(22)]).toEqual(["6am", "12pm", "10pm"]);
   });
   it("focuses preview and approved recovery on all affected days and retains only Updated badges after approval", () => {
     const state = seedStudio();

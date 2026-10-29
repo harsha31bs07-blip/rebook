@@ -8,7 +8,7 @@ import Schedule from "../components/console/schedule";
 import PlanPanel from "../components/console/plan-panel";
 import { replan } from "../lib/solver/replan";
 import { localParts } from "../lib/domain/time";
-import { recoveryDropStart, scheduleRange } from "../lib/client/scheduler-mapping";
+import { recoveryDropStart, scheduleRange, workingHours } from "../lib/client/scheduler-mapping";
 import { adjustmentFixture, disruption } from "./adjust-fixture";
 import { demoDisruption, seedStudio } from "../lib/seed/seed";
 
@@ -175,7 +175,8 @@ it("preview and applied-plan focus scroll inside the fixed workspace week, inclu
     expect(props.endDate).toBe("2026-11-02T05:00:00.000Z");
     expect(harness.commit).toHaveBeenCalled();
     expect(harness.setSpan).toHaveBeenLastCalledWith(new Date("2026-10-26T00:00:00"), new Date("2026-11-02T00:00:00"));
-    expect(harness.coordinate).toHaveBeenLastCalledWith(new Date("2026-10-28T07:00:00"), { local: true });
+    // The axis opens at the earliest class in studio time (this fixture has classes before 7am in New York).
+    expect(harness.coordinate).toHaveBeenLastCalledWith(new Date(`2026-10-28T${String(workingHours(zoned).fromHour).padStart(2, "0")}:00:00`), { local: true });
     expect(harness.horizontal).toHaveBeenLastCalledWith(480, { animate: false });
     expect(harness.scrollToDate).not.toHaveBeenCalled();
     expect(harness.zoomToLevel).not.toHaveBeenCalled();

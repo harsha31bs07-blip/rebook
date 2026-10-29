@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CustomerMessage } from "@/lib/ai/messages";
 import type { OwnerCustomerChoices } from "@/lib/choices/service";
 import { api } from "../../lib/client/api";
-import { draftOutbox, messageDeepLinks, outboxMessage, outboxState, summarizeOutbox, waitingCustomers, type OutboxCustomer } from "../../lib/choices/outbox";
+import { draftOutbox, messageDeepLinks, outboxMessage, outboxState, revisedAt, summarizeOutbox, waitingCustomers, type OutboxCustomer } from "../../lib/choices/outbox";
 
 export default function MessagesDrawer({ messages, links = [], outbox, workspaceId, onUpdated, onClose }: {
   messages: CustomerMessage[]; links?: OwnerCustomerChoices["links"]; outbox?: OutboxCustomer[];
@@ -117,7 +117,7 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
       return <li className="outbox-customer" key={row.customerId}>
         <h3>{row.customerName}</h3>
         <div className="outbox-status" aria-live="polite" aria-atomic="true">
-          <p>{status.replied ? "Replied" : status.sent ? "Sent" : "Not sent"}{status.waiting ? " · No reply yet" : status.closed ? " · Choice closed without a reply" : ""}</p>
+          <p>{status.replied ? "Replied" : status.sent ? "Sent" : revisedAt(row) ? "Updated · send again" : "Not sent"}{status.waiting ? " · No reply yet" : status.closed ? " · Choice closed without a reply" : ""}</p>
           {status.sentAt && <p className="muted">Sent by owner · <time dateTime={status.sentAt}>{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(status.sentAt))}</time></p>}
         </div>
         {emailLabel && <p className="email-status" role="status" aria-live="polite" aria-atomic="true">Email {reminders ? "reminder " : ""}for {row.customerName}: {emailLabel}</p>}

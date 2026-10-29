@@ -237,6 +237,15 @@ it("passes a declined cover to the next qualified, free instructor in one step, 
   const after = repository.requireWorkspace(workspaceId).state, session = after.sessions.find((item) => item.id === sessionId)!;
   expect(after.instructors.find((item) => item.id === session.instructorId)!.name).toBe(next);
   expect(pausedSessionIds(workspaceId, repository).has(sessionId)).toBe(false);
+  // Customers still booked get the new instructor's name, and the outbox asks the owner to send the update again.
+  const revised = repository.listCustomerLinks(workspaceId).filter((link) => link.planId === planId && kept.includes(link.bookingId));
+  expect(revised).toHaveLength(kept.length);
+  for (const link of revised) {
+    expect(link.sentAt).toBeUndefined();
+    expect(link).toMatchObject({ revisedAt: expect.any(String), after: expect.objectContaining({ instructorId: session.instructorId }),
+      message: { subject: expect.stringContaining("New instructor"), body: expect.stringContaining(`Update: ${next} is now teaching this class instead of Alex Rivera.`) } });
+    expect(link.message.body).not.toContain("Alex Rivera will be teaching");
+  }
   expect(session.start).toBe(before.sessions.find((item) => item.id === sessionId)!.start);
   expect(after.bookings.filter((booking) => booking.sessionId === sessionId && ["confirmed", "moved"].includes(booking.status)).map((booking) => booking.id)).toEqual(kept);
   // Alex's old link now says someone else has the class; the new instructor answers on their own link and is the one paid.
@@ -248,6 +257,15 @@ it("passes a declined cover to the next qualified, free instructor in one step, 
   expect(ownerCovers(workspaceId, repository).map((cover) => [cover.instructor, cover.payout?.status ?? "-"])).toEqual([["Alex Rivera", "-"], [next, "PENDING"]]);
   // Only a current decline can be passed on; repeating the click does nothing new.
   await expect(askNextCover(workspaceId, planId, sessionId, repository)).rejects.toThrow("Only a declined cover");
+});
+
+it("lets the owner email a revised message even after the first version was emailed", async () => {
+  await approved();
+  const key = { workspaceId, planId, customerId: "customer-01", kind: "message" as const };
+  const first = repository.queueDelivery(key);
+  repository.saveDelivery({ ...first, status: "sent" });
+  expect(() => repository.queueDelivery(key)).toThrow(/already has a send attempt/);
+  expect(() => repository.queueDelivery(key, false, () => {}, new Date(Date.parse(first.createdAt) + 1000).toISOString())).not.toThrow();
 });
 
 it("never asks the same instructor twice and says so when nobody else qualifies", async () => {

@@ -6,7 +6,7 @@ import { StringHelper, TimeZoneHelper, type EventModel, type ResourceModel } fro
 import { checkAdjustment, type OwnerAdjustment } from "@/lib/solver/adjust";
 import type { Plan, State } from "@/lib/domain/types";
 import { addLocalDays } from "@/lib/domain/time";
-import { mapSchedule, recoveryDropStart, resourceUtilisation, scheduleRange, visibleWorkingTime, weekBounds, type RowMode } from "@/lib/client/scheduler-mapping";
+import { mapSchedule, recoveryDropStart, resourceUtilisation, scheduleRange, weekBounds, workingHours, type RowMode } from "@/lib/client/scheduler-mapping";
 
 export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, highlightedSessionId, busy, onAdjust, onMove }: {
   state: State; mode: RowMode; zoom: "day" | "week"; day: number; plan?: Plan; updatedPlan?: Plan; highlightedSessionId?: string; busy?: boolean; onAdjust?: (input: OwnerAdjustment) => Promise<void>; onMove?: (sessionId: string) => void;
@@ -26,11 +26,12 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
   const bounds = weekBounds(state);
   // Initial axis bounds are instants: the project's timeZone converts them along with events.
   const range = scheduleRange(state, zoom, day, plan ?? updatedPlan);
+  const from = String(workingHours(state).fromHour).padStart(2, "0");
   const [config] = useState<BryntumSchedulerProps>(() => ({
     height: "100%", width: "100%", snap: true, multiEventSelect: false,
     rowHeight: 112, barMargin: 5, eventLayout: "stack", eventStyle: "filled",
     // Week cards fill day cells; their labels retain exact times. Day view uses true hourly widths.
-    fillTicks: zoom === "week", weekStartDay: 1, workingTime: visibleWorkingTime,
+    fillTicks: zoom === "week", weekStartDay: 1, workingTime: workingHours(state),
     autoAdjustTimeAxis: false,
     startDate: range.start,
     endDate: range.end,
@@ -78,18 +79,18 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
     // Initial timezone conversion can shift midnight across a day. Runtime bounds are studio wall dates.
     axisReady.current = project.commitAsync().then(async () => {
       if (cancelled || scheduler.isDestroyed) return;
-      const start = new Date(`${range.startKey}T${zoom === "day" ? "07:00:00" : "00:00:00"}`);
+      const start = new Date(`${range.startKey}T${zoom === "day" ? `${from}:00:00` : "00:00:00"}`);
       const end = new Date(`${range.endKey}T00:00:00`);
       scheduler.minDate = start;
       scheduler.maxDate = end;
       await scheduler.setTimeSpan(start, end);
       if (cancelled || scheduler.isDestroyed || zoom !== "week") return;
       // Pixel scrolling cannot extend the fixed range.
-      const x = scheduler.getCoordinateFromDate(new Date(`${focusStart}T07:00:00`), { local: true });
+      const x = scheduler.getCoordinateFromDate(new Date(`${focusStart}T${from}:00:00`), { local: true });
       if (x >= 0) void scheduler.scrollHorizontallyTo(x, { animate: false });
     });
     return () => { cancelled = true; };
-  }, [focusStart, zoom, range.startKey, range.endKey]);
+  }, [focusStart, zoom, range.startKey, range.endKey, from]);
   useEffect(() => {
     const scheduler = schedulerRef.current?.instance;
     if (!scheduler || !highlightedSessionId) return;

@@ -6,7 +6,7 @@ import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
 import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
-import { type OutboxCustomer } from "./outbox";
+import { revisedAt, type OutboxCustomer } from "./outbox";
 import { deliverableAddress } from "./email-content";
 import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type Credit, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
@@ -212,7 +212,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     const reply = link.reply;
     const receipt = receiptFor(link, repository);
     row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind,
-      path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
+      path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt, ...(link.revisedAt ? { revisedAt: link.revisedAt } : {}),
       reply: receipt?.status === "CREDIT_RESTORED" ? { at: reply?.at ?? link.createdAt, status: "returned to your studio credit" }
         : reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
@@ -222,7 +222,8 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     row.emailDeliverable = !!customer && deliverableAddress(customer.email, row.changes.map((change) => change.bookingId), checkouts);
     for (const kind of ["message", "reminder"] as const) {
       const delivery = deliveries.find((item) => item.planId === row.planId && item.customerId === row.customerId && item.kind === kind);
-      if (delivery) row[kind === "message" ? "delivery" : "reminderDelivery"] = { status: delivery.status, updatedAt: delivery.updatedAt };
+      const revised = revisedAt(row);
+      if (delivery && !(revised && delivery.createdAt < revised)) row[kind === "message" ? "delivery" : "reminderDelivery"] = { status: delivery.status, updatedAt: delivery.updatedAt };
     }
   }
   const creditPaidBookingIds = checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id);

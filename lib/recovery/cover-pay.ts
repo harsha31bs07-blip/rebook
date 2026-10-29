@@ -89,9 +89,18 @@ export async function askNextCover(workspaceId: string, planId: string, sessionI
     if (links.find((item) => item.instructorId === session.instructorId)?.status !== "declined") throw new StoreError(409, "Only a declined cover can be passed to another instructor.");
     const next = nextCover(state, plan, session, links.map((item) => item.instructorId));
     if (!next) throw new StoreError(409, "No other qualified instructor is free for this class. Plan a new recovery for it.");
+    const previous = state.instructors.find((item) => item.id === session.instructorId)?.name;
     session.instructorId = next.id;
     repository.saveState(workspaceId, state);
     repository.createCoverLink({ workspaceId, planId, sessionId, instructorId: next.id, status: "asked", fee: COVER_FEE });
+    // Customers still booked were told who would teach. Rewrite their message and mark it unsent so the owner sends the update.
+    const revisedAt = new Date().toISOString();
+    for (const link of repository.listCustomerLinks(workspaceId).filter((item) => item.planId === planId
+      && state.bookings.some((booking) => booking.id === item.bookingId && booking.sessionId === sessionId && isActiveBooking(booking)))) {
+      const body = previous ? link.message.body.split(previous).join(next.name) : link.message.body;
+      repository.saveCustomerLink({ ...link, sentAt: undefined, revisedAt, ...(link.after ? { after: { ...link.after, instructorId: next.id } } : {}),
+        message: { subject: `New instructor for your ${session.title} class`, body: body.replace(/^(Hi [^\n]*,\n\n)/, `$1Update: ${next.name} is now teaching this class${previous ? ` instead of ${previous}` : ""}. `) } });
+    }
   }));
   return ownerCovers(workspaceId, repository);
 }

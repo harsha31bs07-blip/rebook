@@ -6,7 +6,7 @@ export type DeliveryView = { status: DeliveryStatus; updatedAt: string };
 export type OutboxChange = {
   bookingId: string; subject: string; body: string;
   kind?: "choice" | "receipt"; path?: string; expiresAt?: number;
-  sentAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded" | "returned to your studio credit" | `kept a $${number} studio credit`; at: string };
+  sentAt?: string; revisedAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded" | "returned to your studio credit" | `kept a $${number} studio credit`; at: string };
 };
 export type OutboxCustomer = {
   customerId: string; customerName: string; planId: string; changes: OutboxChange[];
@@ -15,6 +15,9 @@ export type OutboxCustomer = {
 
 /** An unanswered choice whose link has closed (class started or a week passed) can no longer be reminded about. */
 const open = (change: OutboxChange, now: number) => change.kind === "choice" && !change.reply && !(change.expiresAt && change.expiresAt <= now);
+
+/** The latest time a message in this row was rewritten after approval, if ever. */
+export const revisedAt = (row: OutboxCustomer) => row.changes.map((change) => change.revisedAt).filter(Boolean).sort().at(-1);
 
 export function outboxState(row: OutboxCustomer, now = Date.now()) {
   const choices = row.changes.filter((change) => change.kind === "choice");

@@ -2,7 +2,7 @@ import { limits } from "../api/limits";
 import { emailConfigured, emailEvents, sendEmail } from "../notify/email";
 import { getRepository, StoreError, type Repository } from "../store";
 import { creditEmail, deliverableAddress, outboxEmail } from "./email-content";
-import { outboxState } from "./outbox";
+import { outboxState, revisedAt } from "./outbox";
 import { creditPath, ownerCustomerChoices, requireLink } from "./service";
 
 export function requireEmail(): void {
@@ -19,7 +19,7 @@ export async function sendCustomerEmail(workspaceId: string, input: { planId: st
   if (input.reminder && !outboxState(row).waiting) throw new StoreError(409, "This customer is not waiting for a reply.");
   const customer = state.customers.find((item) => item.id === row.customerId)!;
   const content = outboxEmail(row, state.studio.name, origin, input.reminder);
-  const delivery = repository.queueDelivery({ workspaceId, planId: input.planId, customerId: input.customerId, kind: input.reminder ? "reminder" : "message" }, input.resend, () => limits.email(client, workspaceId));
+  const delivery = repository.queueDelivery({ workspaceId, planId: input.planId, customerId: input.customerId, kind: input.reminder ? "reminder" : "message" }, input.resend, () => limits.email(client, workspaceId), revisedAt(row));
   const result = await sendEmail({ ...content, to: customer.email, name: customer.name, tags: ["rebook"] });
   repository.transaction(() => {
     const current = repository.listDeliveries(workspaceId).find((item) => item.planId === delivery.planId && item.customerId === delivery.customerId && item.kind === delivery.kind);

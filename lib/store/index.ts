@@ -38,6 +38,8 @@ export type CustomerLink = {
   message: { subject: string; body: string };
   before: State["sessions"][number]; after?: State["sessions"][number];
   sentAt?: string;
+  // Set when the message changed after it may have been sent (e.g. a new substitute); the owner sends it again.
+  revisedAt?: string;
   reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
 export type Credit = {
@@ -175,10 +177,11 @@ export class Repository {
     this.db.prepare("INSERT INTO deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, plan_id, customer_id, kind) DO UPDATE SET data = excluded.data")
       .run(delivery.workspaceId, delivery.planId, delivery.customerId, delivery.kind, JSON.stringify(delivery));
   }
-  queueDelivery(key: Pick<Delivery, "workspaceId" | "planId" | "customerId" | "kind">, resend = false, beforeQueue: () => void = () => {}): Delivery {
+  queueDelivery(key: Pick<Delivery, "workspaceId" | "planId" | "customerId" | "kind">, resend = false, beforeQueue: () => void = () => {}, revisedAt?: string): Delivery {
     return this.transaction(() => {
       const previous = this.listDeliveries(key.workspaceId).find((row) => row.planId === key.planId && row.customerId === key.customerId && row.kind === key.kind);
-      if (previous && previous.status !== "failed" && !(resend && ["unknown", "bounced"].includes(previous.status))) {
+      // An email of an older version of the message never blocks sending the revised one.
+      if (previous && !(revisedAt && previous.createdAt < revisedAt) && previous.status !== "failed" && !(resend && ["unknown", "bounced"].includes(previous.status))) {
         throw new StoreError(409, "This email already has a send attempt. Check its status before sending again.");
       }
       beforeQueue();

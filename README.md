@@ -59,7 +59,7 @@ Models: Gemini first, Groq as fallback; the deterministic solver, server validat
 
 ### Bryntum Scheduler
 
-Rebook's solver does the re-planning: a fast first pass, then, only when that pass is not provably best, a bounded search over other instructor, room and time assignments, so a booking is refunded only when nothing fits. A test compares it with a brute-force search over every valid plan on random small studios ([solver-optimality.test.ts](test/solver-optimality.test.ts)). Bryntum Scheduler is the interactive review surface.
+Rebook's solver does the re-planning: a fast first pass, then, only when that pass is not provably best, a bounded search over other instructor, room and time assignments. When the plan reaches a proven lower bound (as every demo scenario does), no valid plan keeps more bookings; when it cannot prove that, the plan says so before you approve. Tests compare it with a brute-force search over every valid plan on random small studios, including several rooms and classes of different lengths ([solver-optimality.test.ts](test/solver-optimality.test.ts)). Bryntum Scheduler is the interactive review surface.
 
 | Try in the live demo | What you see | Code |
 | --- | --- | --- |

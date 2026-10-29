@@ -7,10 +7,8 @@ import { activeConstraints } from "./constraints";
 
 export { applyPlan } from "./validate";
 
-/** Placements the exact pass may evaluate before keeping its best plan so far (deterministic, about a second). */
+/** Placements the exact pass may evaluate before keeping its best plan so far (deterministic; a few seconds at worst). */
 const WORK_BUDGET = 250_000;
-/** Equally good placements per class the exact pass branches on, closest to the original first. */
-const MAX_TIED_OPTIONS = 24;
 
 const placement = (session: Session): Placement => ({
   instructorId: session.instructorId, roomId: session.roomId, start: session.start, end: session.end,
@@ -246,8 +244,9 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
   const suffix = alone.map((_, index) => alone.slice(index).reduce((sum, value) => sum + value, 0));
   if (refundsOf(chosen) > (suffix[0] ?? 0)) {
     // Greedy order gave a shared resource (an instructor, a room, a time) to the wrong class. Branch and bound
-    // over each class's alternatives: every placement with its fewest refunds (closest first) plus each
-    // instructor's best, fewest refunds first, under a fixed work budget so results stay deterministic.
+    // over each class's alternatives: the best placement at every start time for each instructor and for each room,
+    // at any refund count (keeping one booking here can free the slot that keeps two elsewhere), fewest refunds
+    // first, under a fixed work budget so results stay deterministic.
     let bestRefunds = refundsOf(chosen), found: Step[] | undefined;
     const visit = (depth: number, current: State, path: Step[], refunds: number) => {
       if (depth === affected.length) { bestRefunds = refunds; found = path; return; }
@@ -255,15 +254,12 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       const all: Candidate[] = [];
       search(session, current, all);
       const byObjective = (x: Candidate, y: Candidate) => compareObjectives(x.objective, y.objective);
-      const fewest = Math.min(...all.map((option) => option.objective.refunds));
-      const options = new Map<string, Candidate>();
-      for (const option of all.filter((item) => item.objective.refunds === fewest).sort(byObjective).slice(0, MAX_TIED_OPTIONS)) options.set(option.objective.key, option);
-      const perInstructor = new Map<string, Candidate>();
-      for (const option of all) {
-        const id = option.after?.instructorId ?? "~cancel", previous = perInstructor.get(id);
-        if (!previous || byObjective(option, previous) < 0) perInstructor.set(id, option);
+      const byPlace = new Map<string, Candidate>();
+      for (const option of all.sort(byObjective)) {
+        const at = option.after?.start ?? "~cancel";
+        for (const key of [`${at}|i:${option.after?.instructorId}`, `${at}|r:${option.after?.roomId}`]) if (!byPlace.has(key)) byPlace.set(key, option);
       }
-      for (const option of perInstructor.values()) options.set(option.objective.key, option);
+      const options = new Map([...byPlace.values()].map((option) => [option.objective.key, option]));
       for (const option of [...options.values()].sort(byObjective)) {
         if (work > WORK_BUDGET) return;
         if (refunds + option.objective.refunds + (suffix[depth + 1] ?? 0) >= bestRefunds) break;
@@ -284,6 +280,8 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
     if (best.remedy === "cancel") plan.warnings.push(`${session.title}: cancelled within the recovery horizon.`);
     if (best.after && best.after.capacity < session.capacity) plan.warnings.push(`${session.title}: replacement capacity is ${best.after.capacity}.`);
   }
+  // Proven fewest refunds only when the plan meets the lower bound; otherwise say so rather than imply nothing fits.
+  if (refundsOf(chosen) > (suffix[0] ?? 0)) plan.warnings.push("Rebook found no plan with fewer refunds but cannot prove none exists. Check the refunded classes before approving.");
   plan.bookingActions.sort((a, b) => compare(a.bookingId, b.bookingId));
   plan.totals = calculateTotals(affected.length, plan.bookingActions);
   return plan;

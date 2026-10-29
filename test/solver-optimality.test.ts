@@ -17,14 +17,15 @@ function studio(parts: Pick<State, "instructors" | "rooms" | "sessions" | "custo
 }
 
 /** Every combination of placements on the 15-minute grid (never earlier than the original class), checked by the independent validator. */
-function fewestValidRefunds(state: State): number {
+function fewestValidRefunds(state: State, disruption = sick): number {
   const affected = state.sessions.filter((session) => session.instructorId === "i1" && session.start >= NOW);
   const options = affected.map((session) => {
     const list: Plan["sessionChanges"] = [{ sessionId: session.id, remedy: "cancel", before: session, reason: "Cancel" }];
     for (const instructor of state.instructors.filter((item) => item.skills.includes(session.classType))) {
       for (const room of state.rooms.filter((item) => item.supports.includes(session.classType))) {
-        for (let minutes = 9 * 60; minutes + 60 <= 13 * 60; minutes += 15) {
-          const start = hour(Math.floor(minutes / 60), minutes % 60), end = hour(Math.floor(minutes / 60) + 1, minutes % 60);
+        const length = (Date.parse(session.end) - Date.parse(session.start)) / 60_000;
+        for (let minutes = 9 * 60; minutes + length <= 13 * 60; minutes += 15) {
+          const start = hour(Math.floor(minutes / 60), minutes % 60), end = hour(Math.floor((minutes + length) / 60), (minutes + length) % 60);
           // Policy: a recovery never moves a class earlier than customers planned for.
           if (start < session.start) continue;
           const sameTime = start === session.start;
@@ -40,7 +41,7 @@ function fewestValidRefunds(state: State): number {
   const visit = (index: number, changes: Plan["sessionChanges"]) => {
     if (index === options.length) {
       const bookingActions = recoveryActions(state, changes);
-      const plan: Plan = { disruption: sick, now: NOW, sessionChanges: changes, bookingActions,
+      const plan: Plan = { disruption, now: NOW, sessionChanges: changes, bookingActions,
         totals: calculateTotals(changes.length, bookingActions), warnings: [] };
       if (validate(state, plan).ok) best = Math.min(best, plan.totals.refunded);
       return;
@@ -73,6 +74,66 @@ describe("solver optimality", () => {
     expect(plan.sessionChanges.map((change) => [change.sessionId, change.after?.instructorId])).toEqual([["s1", "i3"], ["s2", "i2"]]);
     expect(fewestValidRefunds(state)).toBe(0);
   });
+
+  it("keeps a later time open for the class that needs it when rooms are interchangeable", () => {
+    // Both classes fit only around Monday morning. Three equivalent rooms used to crowd every later start time out of the
+    // options searched, so the workshop customer was refunded although the short class could simply go second.
+    const morning = (to: string) => [{ weekday: 1, from: "09:00", to }];
+    const state = studio({
+      instructors: [{ id: "i1", name: "Sick", skills: ["yoga"], maxSessionsPerDay: 3 }, { id: "i2", name: "Cover", skills: ["yoga"], maxSessionsPerDay: 3 }],
+      rooms: ["r1", "r2", "r3"].map((id) => ({ id, name: id, supports: ["yoga" as const], capacity: 10 })),
+      sessions: [
+        { id: "s1", title: "Class", classType: "yoga", instructorId: "i1", roomId: "r1", start: hour(9), end: hour(10), capacity: 10, price: "20.00" },
+        { id: "s2", title: "Workshop", classType: "yoga", instructorId: "i1", roomId: "r2", start: hour(9), end: hour(11), capacity: 10, price: "20.00" }],
+      customers: [{ id: "c1", name: "C1", email: "c1@example.com", prefs: { acceptsSubstitute: true, windows: morning("13:00") } },
+        { id: "c2", name: "C2", email: "c2@example.com", prefs: { acceptsSubstitute: true, windows: morning("11:00") } }],
+      bookings: [{ id: "b1", customerId: "c1", sessionId: "s1", status: "confirmed", amount: "20.00" }, { id: "b2", customerId: "c2", sessionId: "s2", status: "confirmed", amount: "20.00" }],
+    });
+    const plan = replan(state, sick, { now: NOW, horizonEnd: HORIZON });
+    expect(validate(state, plan)).toEqual({ ok: true, errors: [] });
+    expect(plan.totals.refunded).toBe(0);
+    expect(fewestValidRefunds(state)).toBe(0);
+    expect(plan.warnings.join(" ")).not.toContain("cannot prove");
+  });
+
+  it("says so when it cannot prove a refund was unavoidable", () => {
+    // Each class alone keeps everyone with the one free substitute, so the lower bound is 0; together one must refund.
+    const state = studio({
+      instructors: [{ id: "i1", name: "Sick", skills: ["yoga"], maxSessionsPerDay: 3 }, { id: "i2", name: "Cover", skills: ["yoga"], maxSessionsPerDay: 3 }],
+      rooms: ["r1", "r2"].map((id) => ({ id, name: id, supports: ["yoga" as const], capacity: 10 })),
+      sessions: ["r1", "r2"].map((roomId, index) => ({ id: `s${index + 1}`, title: "Class", classType: "yoga" as const, instructorId: "i1", roomId, start: hour(9), end: hour(10), capacity: 10, price: "20.00" })),
+      customers: [1, 2].map((n) => ({ id: `c${n}`, name: `C${n}`, email: `c${n}@example.com`, prefs: { acceptsSubstitute: true, windows: [{ weekday: 1, from: "09:00", to: "10:00" }] } })),
+      bookings: [1, 2].map((n) => ({ id: `b${n}`, customerId: `c${n}`, sessionId: `s${n}`, status: "confirmed" as const, amount: "20.00" })),
+    });
+    const plan = replan(state, sick, { now: NOW, horizonEnd: HORIZON });
+    expect(plan.totals.refunded).toBe(1);
+    expect(fewestValidRefunds(state)).toBe(1);
+    expect(plan.warnings).toContain("Rebook found no plan with fewer refunds but cannot prove none exists. Check the refunded classes before approving.");
+  });
+
+  it("matches the exhaustive search with several rooms and classes of different lengths", () => {
+    let seed = 11;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const pick = <T,>(items: T[]) => items[Math.floor(random() * items.length)];
+    const types: State["sessions"][number]["classType"][] = ["yoga", "pilates"];
+    for (let round = 0; round < 25; round++) {
+      const instructors = [{ id: "i1", name: "Sick", skills: types, maxSessionsPerDay: 3 },
+        { id: "i2", name: "I2", skills: pick<typeof types>([["yoga"], types]), maxSessionsPerDay: pick([1, 2, 3]) }];
+      // The week starts valid: each class sits in a room that supports it and holds its capacity; the third room varies.
+      const rooms = ["r1", "r2", "r3"].map((id) => ({ id, name: id, supports: id === "r3" ? pick<typeof types>([["yoga"], ["pilates"], types]) : types, capacity: pick([2, 3]) }));
+      const sessions = [9, 9].map((h, index) => {
+        const length = pick([1, 2]);
+        return { id: `s${index + 1}`, title: "Class", classType: pick(types), instructorId: "i1", roomId: `r${index + 1}`, start: hour(h), end: hour(h + length), capacity: rooms[index].capacity, price: "20.00" };
+      });
+      const customers = Array.from({ length: 4 }, (_, index) => ({ id: `c${index}`, name: `C${index}`, email: `c${index}@example.com`,
+        prefs: { acceptsSubstitute: true, windows: [{ weekday: 1, from: "09:00", to: pick(["10:00", "11:00", "12:00", "13:00"]) }] } }));
+      const bookings = customers.map((customer, index) => ({ id: `b${index}`, customerId: customer.id, sessionId: index < 2 ? "s1" : "s2", status: "confirmed" as const, amount: "20.00" }));
+      const state = studio({ instructors, rooms, sessions, customers, bookings });
+      const plan = replan(state, sick, { now: NOW, horizonEnd: HORIZON });
+      expect(validate(state, plan).errors).toEqual([]);
+      expect({ round, refunded: plan.totals.refunded }).toEqual({ round, refunded: fewestValidRefunds(state) });
+    }
+  }, 120_000);
 
   it("never refunds more than the best validator-accepted plan on random small studios", () => {
     let seed = 7;

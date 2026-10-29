@@ -50,7 +50,8 @@ export async function emailCreditLink(token: string, origin: string, client: str
     delivery = repository.queueDelivery({ workspaceId: link.workspaceId, planId: link.planId, customerId: credit.customerId, kind: `credit:${link.id}` },
       false, () => limits.email(client, link.workspaceId));
   } catch (error) { if (error instanceof StoreError) return; throw error; }
-  const content = creditEmail(state.studio.name, credit.amount, new URL(creditPath(credit, repository), origin).href, link.before.title);
+  const content = creditEmail({ studio: state.studio.name, customerName: customer.name, amount: credit.amount, url: new URL(creditPath(credit, repository), origin).href,
+    className: link.before.title, classStart: link.before.start, timezone: state.studio.timezone });
   const result = await sendEmail({ ...content, to: customer.email, name: customer.name, tags: ["rebook", "credit"] });
   repository.transaction(() => {
     const current = repository.listDeliveries(link.workspaceId).find((item) => item.planId === delivery.planId && item.customerId === delivery.customerId && item.kind === delivery.kind);

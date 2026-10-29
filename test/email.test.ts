@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { emailConfigured, emailEvents, mapEmailEvents, sendEmail } from "../lib/notify/email";
-import { deliverableAddress, escapeHtml, outboxEmail } from "../lib/choices/email-content";
+import { creditEmail, deliverableAddress, escapeHtml, outboxEmail } from "../lib/choices/email-content";
 import type { CheckoutReservation } from "../lib/store";
 
 const input = { to: "customer@studio.org", name: "Customer", subject: "New class", text: "Message", html: "<p>Message</p>", tags: ["rebook"] };
@@ -72,4 +72,15 @@ it("escapes studio and customer content while keeping absolute private links and
   expect(content.html).not.toContain("<script>"); expect(content.html).toContain("&lt;script&gt;"); expect(content.html).toContain("&lt;Studio &quot;A&quot;&gt;");
   expect(content.html).toContain('<a href="https://studio.org/c/private">https://studio.org/c/private</a>');
   expect(escapeHtml("&<>\"'")).toBe("&amp;&lt;&gt;&quot;&#39;");
+});
+
+it("renders the credit email as a clean card with one Redeem button, escaping every studio-supplied value", () => {
+  const url = "https://studio.org/b/public#credit=abc";
+  const email = creditEmail({ studio: "Flow & <Co>", customerName: "Maya \"M\" Chen", amount: "22.00", url, className: "Yoga <b>Flow</b>",
+    classStart: "2026-11-02T12:00:00Z", timezone: "America/New_York" });
+  expect(email.subject).toBe("Your $22.00 studio credit at Flow & <Co>");
+  expect(email.html).toContain(`<a href="${url}"`); expect(email.html.match(/<a /g)).toHaveLength(1); expect(email.html).toContain(">Redeem your credit</a>");
+  expect(email.html).toContain("Flow &amp; &lt;Co&gt;"); expect(email.html).toContain("Yoga &lt;b&gt;Flow&lt;/b&gt;"); expect(email.html).not.toContain("<b>Flow");
+  expect(email.html).toContain("Mon, Nov 2, 7:00 AM"); expect(email.html).toContain("Hi Maya,");
+  expect(email.text).toContain(`Redeem your credit: ${url}`); expect(email.text).toContain("doesn't expire");
 });

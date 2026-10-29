@@ -11,6 +11,7 @@ import type { summarizeOutbox } from "../../lib/choices/outbox";
 import { planCovers } from "../../lib/recovery/covers";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
 import NextSteps from "./next-steps";
+import PayPalVerification from "./paypal-verification";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" role="status" aria-label="Loading booking actions" /> });
 
@@ -42,8 +43,8 @@ export function ApprovalDialog({ unconfirmed, busy, onApprove, onClose }: { unco
   </dialog>;
 }
 
-export function RefundResults({ results, state }: { results: ExecutionResult[]; state: State }) {
-  if (!results.length) return null;
+export function RefundResults({ results, state, workspaceId }: { results: ExecutionResult[]; state: State; workspaceId?: string }) {
+  if (!results.length && !workspaceId) return null;
   return <section className="refund-results" aria-label="Refund progress"><h3>Refund results</h3>{results.map((result) => {
     const booking = state.bookings.find((item) => item.id === result.bookingId);
     const customer = state.customers.find((item) => item.id === booking?.customerId);
@@ -52,7 +53,7 @@ export function RefundResults({ results, state }: { results: ExecutionResult[]; 
       {customer?.prefs.availabilityKnown === false && <small className="muted">availability not given</small>}
       {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{result.status === "NEEDS_REVIEW" ? result.error : ["REQUESTED", "UNKNOWN", "PENDING"].includes(result.status) ? "PayPal hasn't confirmed this refund yet. Retry checks its status before another attempt." : "This refund needs attention. Retry to reconcile with PayPal."}</p>}
     </div>;
-  })}</section>;
+  })}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
 }
 
 export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
@@ -134,7 +135,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
-    <RefundResults results={results} state={state} />
+    <RefundResults key={plan.id} results={results} state={state} workspaceId={["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
     <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <BookingGrid plan={plan} state={state} />
   </>;

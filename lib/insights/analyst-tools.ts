@@ -1,6 +1,8 @@
 import type { Insights } from "./data";
 import { summarizeRecovery } from "../recovery/outcomes";
 import { localTimeLabel, titleCase } from "./formatting";
+import { api } from "../client/api";
+import { verificationSummary } from "../paypal/verification-result";
 
 export type RefundGroup = "reason" | "class" | "status";
 export type RevenueGroup = "class_type" | "instructor" | "day";
@@ -8,6 +10,12 @@ const money = (values: number[]) => values.reduce((sum, value) => sum + Math.rou
 // Readable provenance: the model quotes asOf verbatim, so it must not be a raw ISO timestamp.
 export const readableAsOf = (data: Insights) => new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(data.as_of));
 const stamp = (data: Insights) => ({ asOf: readableAsOf(data), asOfIso: data.as_of, timezone: data.studio.timezone, currency: data.studio.currency, scope: "Loaded workspace week; independent of report filters" });
+
+export async function verifyWithPayPal(workspaceId: string, data: Insights, signal?: AbortSignal) {
+  const result = await api.verifyMoney(workspaceId, signal);
+  return { ...result, ...stamp({ ...data, as_of: result.checkedAt }), verification: verificationSummary(result),
+    note: "Read-only sandbox check through PayPal Agent Toolkit for refunds and Payouts API for cover fees. PayPal-ahead means the money agrees and PayPal has completed a pending record; normal reconciliation updates Rebook. Unavailable records are unverified. Simulated refunds are skipped. No ledger records were changed." };
+}
 
 export function getRecoverySummary(data: Insights) {
   return { ...stamp(data), ...summarizeRecovery(data.recovery_outcomes),

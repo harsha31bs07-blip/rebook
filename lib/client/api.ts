@@ -7,6 +7,7 @@ import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../sto
 import type { OwnerCustomerChoices } from "../choices/service";
 import type { PaymentAttention } from "../recovery/payment-attention";
 import type { OwnerCover } from "../recovery/cover-pay";
+import type { MoneyVerification } from "../paypal/verify";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
 export type WorkspaceResponse = Workspace & {
@@ -43,6 +44,7 @@ async function request<T>(path: string, body?: object, signal?: AbortSignal, met
 
 const workspacePath = (id: string) => `/${encodeURIComponent(id)}`;
 export const api = {
+  verifyMoney: (id: string, signal?: AbortSignal) => request<MoneyVerification>(`${workspacePath(id)}/verify`, {}, signal),
   create: () => request<{ id: string }>("", {}),
   workspace: (id: string, signal?: AbortSignal) => request<WorkspaceResponse>(workspacePath(id), undefined, signal),
   interpret: (id: string, text: string, signal?: AbortSignal) => request<Interpretation>(`${workspacePath(id)}/interpret`, { text }, signal),

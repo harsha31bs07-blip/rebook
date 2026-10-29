@@ -3,9 +3,9 @@ import { request } from "./client";
 // Server SDK 2.5.0 has no Payouts controller, so these use the same OAuth/PayPal-Request-Id REST helper as webhooks.
 type BatchResponse = {
   batch_header?: { payout_batch_id?: string; batch_status?: string };
-  items?: { payout_item_id?: string; transaction_status?: string; errors?: { name?: string; message?: string } }[];
+  items?: { payout_item_id?: string; transaction_status?: string; payout_item?: { amount?: { value: string; currency: string } }; errors?: { name?: string; message?: string } }[];
 };
-export type PayoutState = { batchId?: string; batchStatus?: string; itemId?: string; itemStatus?: string; error?: string };
+export type PayoutState = { batchId?: string; batchStatus?: string; itemId?: string; itemStatus?: string; amount?: { value: string; currency: string }; error?: string };
 
 /** One email payout. The request id doubles as sender_batch_id, so a replay returns the original batch. */
 export async function createPayout(input: { requestId: string; receiver: string; amount: string; subject: string; note: string }): Promise<PayoutState> {
@@ -22,5 +22,5 @@ export async function getPayout(batchId: string): Promise<PayoutState> {
   const body = await request<BatchResponse>(`/v1/payments/payouts/${encodeURIComponent(batchId)}`, { method: "GET" });
   const item = body.items?.[0];
   return { batchId, batchStatus: body.batch_header?.batch_status, itemId: item?.payout_item_id, itemStatus: item?.transaction_status,
-    error: item?.errors?.message ?? item?.errors?.name };
+    amount: item?.payout_item?.amount, error: item?.errors?.message ?? item?.errors?.name };
 }

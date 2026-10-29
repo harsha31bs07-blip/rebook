@@ -270,6 +270,11 @@ textarea { resize: vertical; min-height: 120px; }
 .refund-row > div { display: flex; justify-content: space-between; gap: 8px; }
 .refund-row strong { font-weight: 500; }
 .refund-row code { display: block; font-size: 10px; color: #64748b; overflow-wrap: anywhere; margin-top: 6px; }
+.paypal-verification { min-width: 0; margin-top: 12px; overflow-wrap: anywhere; }
+.paypal-verification button { min-height: 44px; max-width: 100%; white-space: normal; }
+.paypal-verification summary { cursor: pointer; min-height: 44px; padding-block: 12px; }
+.paypal-verification ul { padding-left: 20px; }
+.paypal-verification li { margin-block: 12px; }
 .result-status { text-transform: capitalize; color: #b45309; }
 .status-completed { color: #15803d; }
 .status-failed { color: #b91c1c; }

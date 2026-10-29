@@ -4,6 +4,8 @@ import type { AgAiToolDetailParams, AgAiToolLabelParams } from "ag-studio";
 import type { AgAiToolDisplay } from "ag-studio-react";
 import styles from "./insights.module.css";
 import { titleCase } from "@/lib/insights/formatting";
+import { VerificationResult } from "../console/paypal-verification";
+import type { MoneyVerification } from "../../lib/paypal/verify";
 
 export function toolRows(result: AgAiToolLabelParams["result"], key: "disruptions" | "receipts"): Record<string, unknown>[] {
   if (!result?.success || !result.data || typeof result.data !== "object") return [];
@@ -66,7 +68,17 @@ function analystDisplay(noun: string) {
   return { label: ({ result, status }) => ({ text: status === "cancelled" ? noun : !result ? `Reading ${noun}` : result.success ? noun : `Could not complete ${noun}`, ...(status === "cancelled" ? { pill: "Stopped" } : {}) }), detail: AnalystToolCard } satisfies AgAiToolDisplay;
 }
 
+function VerificationToolCard({ result }: AgAiToolDetailParams) {
+  if (!result) return <div className={styles.toolCard} role="status">Checking PayPal sandbox records…</div>;
+  if (!result.success) return <div className={styles.toolCard}>PayPal verification could not be completed. Please try again.</div>;
+  const data = result.data as (MoneyVerification & { timezone: string; asOf: string }) | undefined;
+  if (!data) return <div className={styles.toolCard}>No verification results.</div>;
+  return <div className={styles.toolCard}><VerificationResult result={data} timezone={data.timezone} />
+    <p>Checked <time dateTime={data.checkedAt}>{data.asOf}</time> · {data.timezone}</p></div>;
+}
+
 export const recoveryToolDisplay = {
+  verify_with_paypal: { ...analystDisplay("PayPal verification"), detail: VerificationToolCard },
   get_recovery_summary: analystDisplay("Recovery summary"),
   get_refund_breakdown: analystDisplay("Refund breakdown"),
   get_revenue_breakdown: analystDisplay("Revenue breakdown"),

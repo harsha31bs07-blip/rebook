@@ -51,6 +51,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
     ? <Link className="built-flow" href={`/w/${id}${destination === "booking" ? "/book" : destination === "dashboard" ? "/dashboard#recovery-analyst" : ""}`}>{label} →</Link>
     : <OpenDemoButton label={label} destination={destination} />;
   const paypal: [string, string, "console" | "booking", string, string][] = [
+    ["PayPal Agent Toolkit: read-only Verify with PayPal", "Compare recorded refunds with PayPal through the Agent Toolkit; cover fees are checked through the Payouts API. Verification never changes the ledger.", "console", "See it: Verify with PayPal", "lib/paypal/verify.ts#L17-L31"],
     ["Orders v2 + JS SDK v6", "Customer checkout creates an order on the server. PayPal buttons and hosted card fields collect sandbox approval in the browser.", "booking", "See it: book a class", "components/booking/booking-page.tsx#L74-L168"],
     ["Server-side captures", "The booking capture route verifies the order, amount and class before recording a paid booking; seeded scenario bookings also use sandbox captures.", "booking", "See it: payment receipt", "lib/checkout/service.ts#L84-L118"],
     ["Payments v2 refunds", "Approve and refund returns money to the original capture. The ledger and stable PayPal-Request-Id protect retries.", "console", "See it: plan and refund", "lib/paypal/client.ts#L257-L263"],

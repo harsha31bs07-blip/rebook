@@ -20,6 +20,7 @@ import { closeRepository, getRepository } from "../lib/store";
 import { createCustomerLinks } from "../lib/choices/service";
 import { recoveryToolDisplay } from "../components/insights/tool-cards";
 import { limits } from "../lib/api/limits";
+import type { MoneyVerification } from "../lib/paypal/verify";
 
 vi.mock("@/lib/insights/formatting", () => import("../lib/insights/formatting"));
 // Keep the real SDK runner/adapter loop; capture only the harness declaration and delegation host.
@@ -72,6 +73,36 @@ function analyst(data: Insights) {
 }
 
 describe("direct analyst answers", () => {
+  it("verifies PayPal directly, uses the live checked timestamp and renders the result card", async () => {
+    const { data } = hero(), { tools, instructions } = analyst(data);
+    const checkedAt = "2026-11-05T10:42:00Z";
+    const verification: MoneyVerification = { checkedAt,
+      items: [{ kind: "refund", label: "Alex · Yoga", amount: "25.00", currency: "USD", rebook: "PENDING", paypal: "COMPLETED", source: "PayPal Agent Toolkit", match: "paypal-ahead" },
+        { kind: "payout", label: "Maya · Spin", amount: "35.00", currency: "USD", rebook: "SUCCESS", paypal: "PENDING", source: "Payouts API", match: "mismatch" }],
+      summary: { checked: 2, matched: 1, mismatched: 1, unavailable: 0 } };
+    const fetch = vi.fn(async () => Response.json(verification)); vi.stubGlobal("fetch", fetch);
+    const ctx: AgAiToolContext = { signal: new AbortController().signal, run: { threadId: "t", runId: "r" },
+      success: (response, result) => ({ success: true, response, data: result }), error: (message) => ({ success: false, issues: [{ message: String(message) }] }) };
+    const tool = tools.find((item) => item.name === "verify_with_paypal")!;
+    const result = await tool.execute!({ name: tool.name, toolCallId: "verify", args: {} }, ctx);
+    const expectedTimestamp = readableAsOf({ ...data, as_of: checkedAt });
+    expect(result).toMatchObject({ success: true, data: { ...verification, asOf: expectedTimestamp, asOfIso: checkedAt, timezone: data.studio.timezone } });
+    expect(fetch).toHaveBeenCalledWith("/api/workspaces/workspace123/verify", expect.objectContaining({ method: "POST", body: "{}", signal: ctx.signal }));
+    expect(instructions).toContain("call verify_with_paypal directly");
+    const schema = { messages: [{ role: "user", content: "Do PayPal's records match ours?" }], harness: { agent: "recovery-analyst", instructions, tools: [tool.schema!()] } };
+    expect(RecoveryHarnessSchema.safeParse(schema).success).toBe(true);
+    const display = recoveryToolDisplay.verify_with_paypal;
+    const html = renderToStaticMarkup(createElement(display.detail!, { name: tool.name, args: {}, status: "done", result }));
+    expect(html).toContain(expectedTimestamp); expect(html).toContain(checkedAt);
+    expect(html).toContain("PayPal is ahead"); expect(html).toContain("Payouts API"); expect(html).toContain("Compare");
+    expect(html).toContain('role="status"'); expect(html).toContain("<details>");
+    expect(display.label({ args: {}, status: "cancelled" } as AgAiToolLabelParams)).toMatchObject({ pill: "Stopped" });
+    expect(renderToStaticMarkup(createElement(display.detail!, { name: tool.name, args: {}, status: "executing", result: undefined }))).toContain("Checking PayPal");
+    fetch.mockRejectedValue(new Error("unavailable"));
+    const failure = await tool.execute!({ name: tool.name, toolCallId: "verify-failed", args: {} }, ctx);
+    expect(failure.success).toBe(false);
+    expect(renderToStaticMarkup(createElement(display.detail!, { name: tool.name, args: {}, status: "done", result: failure }))).toContain("could not be completed");
+  });
   it("uses shared applied outcomes for hero totals and distinguishes no reply", () => {
     const { data } = hero();
     const result = getRecoverySummary(data);

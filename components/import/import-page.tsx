@@ -24,13 +24,14 @@ export default function ImportPage() {
   const router = useRouter();
   const [csv, setCsv] = useState(""), [fileName, setFileName] = useState("");
   const [studioName, setStudioName] = useState(""), [timezone, setTimezone] = useState("America/New_York"), [zoneChosen, setZoneChosen] = useState(false);
+  const [dateOrder, setDateOrder] = useState<"mdy" | "dmy">("mdy");
   const [preview, setPreview] = useState<ImportPreview>(), [busy, setBusy] = useState(""), [error, setError] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
 
-  async function read(text: string, choices?: Choices, zone = timezone) {
+  async function read(text: string, choices?: Choices, zone = timezone, order = dateOrder) {
     setBusy("Reading your week…"); setError("");
     try {
-      setPreview(await post<ImportPreview>("/api/import/preview", { csv: text, timezone: zone, studioName: studioName || undefined, ...choices }));
+      setPreview(await post<ImportPreview>("/api/import/preview", { csv: text, timezone: zone, dateOrder: order, studioName: studioName || undefined, ...choices }));
       if (!choices) requestAnimationFrame(() => heading.current?.focus());
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to read this file."); }
     finally { setBusy(""); }
@@ -54,7 +55,7 @@ export default function ImportPage() {
     const confirmed = choices();
     if (!confirmed) return;
     setBusy("Creating your studio…"); setError("");
-    try { const { id } = await post<{ id: string }>("/api/import", { csv, timezone, studioName: studioName || undefined, ...confirmed }); router.push(`/w/${id}`); }
+    try { const { id } = await post<{ id: string }>("/api/import", { csv, timezone, dateOrder, studioName: studioName || undefined, ...confirmed }); router.push(`/w/${id}`); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create the studio."); setBusy(""); }
   }
   async function sample() {
@@ -78,6 +79,8 @@ export default function ImportPage() {
         <label>Studio name<input value={studioName} maxLength={80} placeholder="Your studio" onChange={(event) => setStudioName(event.target.value)} /></label>
         <label>Time zone<select value={timezone} onChange={(event) => { setTimezone(event.target.value); setZoneChosen(true); if (csv) void read(csv, choices(), event.target.value); }}>
           {[...new Set([timezone, ...ZONES])].map((zone) => <option key={zone} value={zone}>{zone.replace(/_/g, " ")}</option>)}</select></label>
+        {preview?.dateOrder?.ambiguous && <label>Dates are written as<select value={dateOrder} disabled={!!busy} onChange={(event) => { const order = event.target.value as "mdy" | "dmy"; setDateOrder(order); if (csv) void read(csv, choices(), timezone, order); }}>
+          <option value="mdy">Month/day (09/11 = Sep 11)</option><option value="dmy">Day/month (09/11 = 9 Nov)</option></select></label>}
       </div>
       {fileName && <p className="muted">Loaded {fileName}.</p>}
     </section>

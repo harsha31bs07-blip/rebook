@@ -1,7 +1,7 @@
 import type { ClassType } from "../domain/types";
 
 /** The columns Rebook reads from a booking export: one row per booking (or per class with no bookings). */
-export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "customer_name", "customer_email", "accepts_substitute"] as const;
+export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "customer_name", "customer_email", "accepts_substitute", "status"] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 export type ColumnMapping = Partial<Record<ImportField, string>>;
 /** A date column is optional when the start column carries the date too. */
@@ -9,6 +9,7 @@ export const REQUIRED_FIELDS: ImportField[] = ["class", "start", "instructor"];
 export const FIELD_LABELS: Record<ImportField, string> = {
   class: "Class name", date: "Date", start: "Start time", end: "End time", duration: "Duration (minutes)", instructor: "Instructor",
   room: "Room", capacity: "Capacity", price: "Price paid", customer_name: "Customer name", customer_email: "Customer email", accepts_substitute: "Accepts a substitute",
+  status: "Booking status",
 };
 
 const SYNONYMS: Record<ImportField, string[]> = {
@@ -24,6 +25,7 @@ const SYNONYMS: Record<ImportField, string[]> = {
   customer_name: ["customer", "customername", "client", "clientname", "member", "membername", "name", "attendee", "attendeename", "fullname"],
   customer_email: ["email", "customeremail", "clientemail", "memberemail", "emailaddress", "attendeeemail"],
   accepts_substitute: ["acceptssubstitute", "substituteok", "subok", "acceptssub"],
+  status: ["status", "bookingstatus", "attendance", "visitstatus"],
 };
 const normal = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
 

@@ -9,11 +9,12 @@ import { FIELD_LABELS, IMPORT_FIELDS, ruleClassType, ruleMapping, type ColumnMap
 
 export const ImportBodySchema = z.strictObject({
   csv: z.string().min(1).max(600_000), timezone: z.string().min(1).max(64), studioName: z.string().max(80).optional(),
+  dateOrder: z.enum(["mdy", "dmy"]).default("mdy"),
   mapping: z.partialRecord(z.enum(IMPORT_FIELDS), z.string().max(200)).optional(),
   classTypes: z.record(z.string().max(200), ClassTypeSchema).optional(),
 });
 export type Source = "rules" | "ai" | "you";
-export type PreviewInput = { csv: string; timezone: string; studioName?: string; mapping?: ColumnMapping; classTypes?: Record<string, ClassType> };
+export type PreviewInput = { csv: string; timezone: string; studioName?: string; mapping?: ColumnMapping; classTypes?: Record<string, ClassType>; dateOrder?: "mdy" | "dmy" };
 const AiSchema = z.object({
   columns: z.array(z.object({ field: z.string(), header: z.string().nullable() })).max(20),
   classes: z.array(z.object({ name: z.string(), type: z.string().nullable() })).max(200),
@@ -75,9 +76,9 @@ export async function previewImport(input: PreviewInput, identity?: AiIdentity, 
     return { name, type, source: (input.classTypes?.[name] ? "you" : ruleClassType(name) ? "rules" : type ? "ai" : undefined) as Source | undefined };
   });
   const classTypes = Object.fromEntries(classes.filter((item) => item.type).map((item) => [item.name, item.type!]));
-  const result = buildImport(input.csv, { mapping, classTypes, timezone: input.timezone, studioName: input.studioName }, now);
+  const result = buildImport(input.csv, { mapping, classTypes, timezone: input.timezone, studioName: input.studioName, dateOrder: input.dateOrder }, now);
   return { headers, mapping, sources, classes, summary: result.summary, errors: result.errors, warnings: result.warnings,
-    ready: !!result.state, aiUnavailable: !!ai.unavailable };
+    ready: !!result.state, aiUnavailable: !!ai.unavailable, dateOrder: result.dateOrder };
 }
 export type ImportPreview = Awaited<ReturnType<typeof previewImport>>;
 

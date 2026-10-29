@@ -22,6 +22,10 @@ const sample = readFileSync(join(__dirname, "../public/samples/sample-week.csv")
 const NOW = new Date("2026-10-29T12:00:00Z"), TZ = "America/New_York";
 const sampleMapping = ruleMapping(parseCsv(sample)[0]);
 const sampleTypes = { "Sunrise Reformer": "pilates", "Vinyasa Flow": "yoga", "Rhythm Ride": "spin", "Slow Burn": "yoga", "Strength Sculpt": "hiit", "Mat Pilates": "pilates" } as const;
+function readExport(headers: string[], rows: string[][], dateOrder?: "mdy" | "dmy") {
+  const csv = [headers, ...rows].map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(",")).join("\n");
+  return buildImport(csv, { mapping: ruleMapping(headers), classTypes: { Yoga: "yoga" }, timezone: TZ, dateOrder }, NOW);
+}
 let directory: string, repository: Repository;
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "rebook-import-")); vi.stubEnv("DATA_DIR", directory);
@@ -52,6 +56,119 @@ describe("reading an export", () => {
 });
 
 describe("building the studio", () => {
+  it.each(["20", "20.00", "$20.00", "USD 20", "20.00 USD", "  $20.00  ", "0", "0.29", "1,234.50"])("reads the USD amount %s exactly", (price) => {
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Price", "Email"], [["Yoga", "2026-11-09", "07:00", "Ana", price, "one@example.com"]]);
+    expect(result.errors).toEqual([]);
+    const expected = price.includes("1,234") ? "1234.50" : price === "0" ? "0.00" : price === "0.29" ? "0.29" : "20.00";
+    expect(result.state!.studio.currency).toBe("USD");
+    expect(result.state!.sessions[0].price).toBe(expected);
+    expect(result.state!.bookings[0].amount).toBe(expected);
+  });
+  it.each(["-15.00", "-15", "(15.00)", "EUR20,00", "EUR 20", "GBP 20", "INR 20", "€20", "£20", "₹20", "â‚¬20", "Â£20", "â‚¹20", "20,00", "1.234,50", "20 dollars", "20.001", "1,23.50", "NaN", "100000"])("blocks the lossy price %s with its row and value", (price) => {
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Price"], [["Yoga", "2026-11-09", "07:00", "Ana", price]]);
+    expect(result.state).toBeUndefined();
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain(`Row 2: can't read the price "${price}"`);
+    expect(result.errors[0]).toContain("Rebook reads US dollars only");
+  });
+  it("keeps the empty-price assumption visible", () => {
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Price"], [["Yoga", "2026-11-09", "07:00", "Ana", ""]]);
+    expect(result.errors).toEqual([]);
+    expect(result.state!.sessions[0].price).toBe("20.00");
+    expect(result.warnings).toContain("No price: each booking is valued at $20.00.");
+  });
+  it.each([
+    ["2026-11-09T06:00:00Z", "2026-11-09T07:00:00Z", "2026-11-09T06:00:00.000Z", "01:00", "02:00", 1],
+    ["2026-11-09T00:30:00+02:00", "2026-11-09T01:30:00+0200", "2026-11-08T22:30:00.000Z", "17:30", "18:30", 0],
+    ["2026-11-09T06:00:00-0500", "2026-11-09T07:00:00-05:00", "2026-11-09T11:00:00.000Z", "06:00", "07:00", 1],
+  ])("preserves the instant %s in New York", (start, end, instant, open, close, weekday) => {
+    const result = readExport(["Class", "Date", "Start", "End", "Instructor"], [["Yoga", "2026-11-09", start, end, "Ana"]]);
+    expect(result.errors).toEqual([]);
+    expect(result.state!.sessions[0].start).toBe(instant);
+    expect(result.state!.sessions[0].end).toBe(new Date(Date.parse(instant) + 3_600_000).toISOString());
+    expect(result.state!.studio.openHours[weekday]).toEqual([{ open, close }]);
+  });
+  it("keeps offset-free date-times studio-local and converts an offset end independently", () => {
+    const result = readExport(["Class", "Start", "End", "Instructor"], [["Yoga", "2026-11-09T06:00:00", "2026-11-09T12:00:00Z", "Ana"]]);
+    expect(result.errors).toEqual([]);
+    expect(result.state!.sessions[0]).toMatchObject({ start: "2026-11-09T11:00:00.000Z", end: "2026-11-09T12:00:00.000Z" });
+  });
+  it("blocks explicit instants on different local days, invalid dates and seconds that would be lost", () => {
+    for (const [start, end] of [["2026-11-09T23:30:00-05:00", "2026-11-10T00:30:00-05:00"], ["2026-02-30T06:00:00Z", "2026-02-30T07:00:00Z"], ["2026-11-09T06:00:01Z", "2026-11-09T07:00:00Z"]]) {
+      const result = readExport(["Class", "Start", "End", "Instructor"], [["Yoga", start, end, "Ana"]]);
+      expect(result.state).toBeUndefined(); expect(result.errors[0]).toMatch(/^Row 2:/);
+    }
+  });
+  it("asks about ambiguous dates, defaults to month/day, and respects day/month", async () => {
+    const headers = ["Class", "Date", "Start", "Instructor"], rows = [["Yoga", "09/11/2026", "07:00", "Ana"]];
+    const mdy = readExport(headers, rows), dmy = readExport(headers, rows, "dmy");
+    expect(mdy.errors).toEqual([]); expect(dmy.errors).toEqual([]);
+    expect(mdy.dateOrder).toEqual({ value: "mdy", ambiguous: true });
+    expect(dmy.dateOrder).toEqual({ value: "dmy", ambiguous: true });
+    expect(mdy.warnings.join(" ")).toContain("month/day (Sep 11)");
+    expect(dmy.warnings.join(" ")).toContain("day/month (9 Nov)");
+    expect(dmy.state!.sessions[0].start).toBe("2026-11-09T12:00:00.000Z");
+    const csv = "Class,Date,Start,Instructor\nYoga,09/11/2026,07:00,Ana";
+    const preview = await previewImport({ csv, timezone: TZ, mapping: ruleMapping(headers), dateOrder: "dmy" }, undefined, NOW);
+    expect(preview.dateOrder).toEqual({ value: "dmy", ambiguous: true });
+    const { id } = createImportedWorkspace(csv, { mapping: preview.mapping, classTypes: { Yoga: "yoga" }, timezone: TZ, dateOrder: "dmy" }, repository, NOW);
+    expect(repository.requireReadyWorkspace(id).state.sessions[0].start).toBe(dmy.state!.sessions[0].start);
+  });
+  it.each([
+    ["23/11/2026", "24/11/2026", "dmy", "mdy"],
+    ["11/23/2026", "11/24/2026", "mdy", "dmy"],
+  ] as const)("decides one date order from %s despite the owner's other default", (first, second, value, choice) => {
+    const result = readExport(["Class", "Date", "Start", "Instructor"], [["Yoga", first, "07:00", "Ana"], ["Yoga", second, "07:00", "Ana"]], choice);
+    expect(result.errors).toEqual([]);
+    expect(result.dateOrder).toEqual({ value, ambiguous: false });
+    expect(result.state!.sessions.map((session) => session.start)).toEqual(["2026-11-23T12:00:00.000Z", "2026-11-24T12:00:00.000Z"]);
+    expect(result.warnings.join(" ")).not.toContain("Dates like");
+  });
+  it("uses a decisive row for the whole file, including earlier ambiguous rows", () => {
+    const result = readExport(["Class", "Date", "Start", "Instructor"], [["Yoga", "11/09/2026", "07:00", "Ana"], ["Yoga", "13/09/2026", "07:00", "Ana"]]);
+    expect(result.errors).toEqual([]);
+    expect(result.dateOrder).toEqual({ value: "dmy", ambiguous: false });
+    expect(result.summary.classes).toBe(2);
+  });
+  it("blocks mixed date orders and names both rows", () => {
+    const result = readExport(["Class", "Date", "Start", "Instructor"], [["Yoga", "23/11/2026", "07:00", "Ana"], ["Yoga", "11/24/2026", "07:00", "Ana"]]);
+    expect(result.state).toBeUndefined();
+    expect(result.errors[0]).toMatch(/Row 2:.*23\/11\/2026.*row 3:.*11\/24\/2026/);
+  });
+  it("leaves cancelled, waitlisted and removed rows out of bookings but keeps their classes", () => {
+    const statuses = ["Cancelled", "canceled", "Late Cancel", "waitlist", "WAITLISTED", "removed", "confirmed", "attended", "", "unusual", "unusual"];
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Booking status", "Email"], statuses.map((status, index) => ["Yoga", "2026-11-09", index === 0 ? "09:00" : "07:00", "Ana", status, index < 6 ? "bad email" : `person${index}@example.com`]));
+    expect(result.errors).toEqual([]);
+    expect(result.summary).toMatchObject({ classes: 2, bookings: 5, customers: 5 });
+    expect(result.warnings).toContain("Left out 3 cancelled and 2 waitlisted and 1 removed rows: they are not bookings.");
+    expect(result.warnings.filter((warning) => warning.includes("Unrecognized booking statuses"))).toEqual(['Unrecognized booking statuses were counted as bookings: "unusual".']);
+    for (const header of ["status", "booking status", "attendance", "visit status"]) expect(ruleMapping([header])).toEqual({ status: header });
+  });
+  it("caps the unknown status list at five distinct words", () => {
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Status"], ["a", "b", "c", "d", "e", "f"].map((status) => ["Yoga", "2026-11-09", "07:00", "Ana", status]));
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.find((warning) => warning.includes("Unrecognized"))).toBe('Unrecognized booking statuses were counted as bookings: "a", "b", "c", "d", "e", and more.');
+  });
+  it("opens only exported weekdays and explains hours, instructor qualifications and raised capacities", () => {
+    const result = readExport(["Class", "Date", "Start", "End", "Instructor", "Capacity", "Email"], [
+      ["Yoga", "2026-11-09", "07:00", "08:00", "Ana", "1", "one@example.com"],
+      ["Yoga", "2026-11-09", "07:00", "08:00", "Ana", "1", "two@example.com"],
+      ["Yoga", "2026-11-11", "19:30", "20:30", "Ana", "4", ""],
+    ]);
+    expect(result.errors).toEqual([]);
+    expect(result.state!.studio.openHours).toEqual({ 0: [], 1: [{ open: "07:00", close: "20:30" }], 2: [], 3: [{ open: "07:00", close: "20:30" }], 4: [], 5: [], 6: [] });
+    expect(result.state!.instructors[0].skills).toEqual(["yoga"]);
+    expect(result.warnings).toContain("Opening hours aren't in the export: Rebook assumes you open Mon, Wed from 07:00 to 20:30, when your classes run.");
+    expect(result.warnings).toContain("Instructors are assumed to teach only the class types they teach this week, and to be free whenever they are not teaching.");
+    expect(result.warnings).toContain("Row 2: Yoga has more bookings than its capacity; capacity raised to 2.");
+  });
+  it("reports at most five individual capacity increases and then says and more", () => {
+    const rows = Array.from({ length: 6 }, (_, day) => ["one", "two"].map((name) => ["Yoga", `2026-11-${9 + day}`, "07:00", "Ana", "1", `${name}@example.com`])).flat();
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Capacity", "Email"], rows);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.filter((warning) => warning.includes("capacity raised to"))).toHaveLength(5);
+    expect(result.warnings.join(" ")).toContain("and more");
+  });
   it("builds a valid week from the sample, moving a past week forward and explaining every assumption", () => {
     const result = buildImport(sample, { mapping: sampleMapping, classTypes: sampleTypes, timezone: TZ, studioName: "Harbour Movement Co." }, NOW);
     expect(result.errors).toEqual([]);
@@ -139,6 +256,12 @@ describe("an imported studio works end to end", () => {
     const { id } = await created.json();
     expect(repository.requireReadyWorkspace(id).state.studio.name).toBe("Harbour");
     expect((await post(createPost, { csv: sample, timezone: TZ, mapping: preview.mapping, classTypes: {} })).status).toBe(422);
+    // The owner's day/month answer for an ambiguous file reaches creation: 02/11/2026 is Monday 2 November, not Wednesday 11 February.
+    const ambiguous = "Class,Date,Start,Instructor\nMorning Yoga,02/11/2026,09:00,Ana Lopez\n";
+    const dayFirst = await post(createPost, { csv: ambiguous, timezone: TZ, dateOrder: "dmy", mapping: { class: "Class", date: "Date", start: "Start", instructor: "Instructor" }, classTypes: { "Morning Yoga": "yoga" } });
+    expect(dayFirst.status).toBe(200);
+    const [session] = repository.requireReadyWorkspace((await dayFirst.json()).id).state.sessions;
+    expect(new Date(session.start).toLocaleDateString("en-US", { weekday: "long", timeZone: TZ })).toBe("Monday");
   });
 });
 

@@ -97,18 +97,23 @@ describe("durable owner outbox", () => {
   it("counts customers once, keeps partial replies waiting, and excludes unsent messages and receipts from reminders", async () => {
     const { id, plan, rows } = fixture();
     const initial = rows();
-    expect(summarizeOutbox(initial)).toEqual({ sent: 0, replied: 0, waiting: 0, notSent: initial.length });
+    expect(summarizeOutbox(initial)).toEqual({ sent: 0, replied: 0, waiting: 0, closed: 0, notSent: initial.length });
     const choice = initial.find((row) => row.changes.every((change) => change.kind === "choice"))!;
     const receipt = initial.find((row) => row.changes.every((change) => change.kind === "receipt"))!;
     await markCustomerContact(id, plan.id, choice.customerId, true, repository);
     await markCustomerContact(id, plan.id, receipt.customerId, true, repository);
-    expect(summarizeOutbox(rows())).toEqual({ sent: 2, replied: 0, waiting: 1, notSent: initial.length - 2 });
+    expect(summarizeOutbox(rows())).toEqual({ sent: 2, replied: 0, waiting: 1, closed: 0, notSent: initial.length - 2 });
     expect(waitingCustomers(rows()).map((row) => row.customerId)).toEqual([choice.customerId]);
     const partial = { ...choice, changes: [...choice.changes.map((change) => ({ ...change, sentAt: "now", reply: { status: "kept" as const, at: "now" } })), { ...choice.changes[0], sentAt: "now" }] };
     expect(outboxState(partial)).toMatchObject({ replied: false, waiting: true });
     const reminder = outboxMessage(partial, "https://studio.test", true);
     expect(reminder.match(/https:\/\/studio.test\/c\//g)).toHaveLength(1);
     expect(reminder).toContain("just a reminder"); expect(reminder).not.toContain(choice.changes[0].body);
+    // Once the choice closes (class started or a week passed) the customer is no longer waiting or reminded.
+    const closed = { ...choice, changes: choice.changes.map((change) => ({ ...change, sentAt: "now", expiresAt: Date.now() - 1 })) };
+    expect(outboxState(closed)).toMatchObject({ waiting: false, closed: true });
+    expect(waitingCustomers([closed])).toEqual([]);
+    expect(summarizeOutbox([closed])).toMatchObject({ waiting: 0, closed: 1 });
   });
 
   it("validates owner writes, rejects foreign origins and other workspaces, and keeps sent status out of customer responses", async () => {

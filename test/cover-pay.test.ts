@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { POST as instructorPost } from "../app/api/instructor/[token]/route";
 import { POST as payPost } from "../app/api/workspaces/[id]/covers/pay/route";
 import { limits } from "../lib/api/limits";
+import { pausedSessionIds } from "../lib/checkout/service";
 
 let repository: Repository, directory: string, workspaceId: string, planId: string, sessionId: string, token: string;
 let payouts: (init: RequestInit) => Response | Promise<Response>;
@@ -138,6 +139,26 @@ it("never opens a second payout when PayPal answers a replay with a duplicate ba
   expect(new Set(posts().map(requestId)).size).toBe(1);
 });
 
+it("stops replaying an unconfirmed payout before PayPal's 30-day duplicate check lapses, and keeps its workspace", async () => {
+  await approved(true);
+  payouts = () => { throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  repository.saveCoverPayout({ ...payoutRows()[0], createdAt: new Date(Date.now() - 29 * 86_400_000).toISOString() });
+  payouts = () => created("BATCH-TOO-LATE");
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("too old to resend safely") });
+  expect(posts()).toHaveLength(1);
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1 });
+
+  // Pruning keeps a studio whose payout is unresolved, whatever else has expired.
+  const other = repository.createWorkspace(seedStudio()).id, otherPlan = repository.createPlan(other, replan(seedStudio(), demoDisruption)).id;
+  repository.saveCoverPayout({ ...payoutRows()[0], workspaceId: other, planId: otherPlan });
+  repository.pruneOlderThan(-1);
+  expect(repository.getWorkspace(other)).toBeTruthy();
+  repository.saveCoverPayout({ ...repository.listCoverPayouts(other)[0], status: "FAILED" });
+  repository.pruneOlderThan(-1);
+  expect(repository.getWorkspace(other)).toBeFalsy();
+});
+
 it("keeps a payout unresolved when PayPal's success response has no batch id", async () => {
   await approved(true);
   payouts = () => new Response('{"batch_header":', { status: 201, headers: { "content-type": "application/json" } });
@@ -200,6 +221,8 @@ it("passes a declined cover to the next qualified, free instructor in one step, 
   await respondToCover(token, "decline", repository);
   const [declined] = ownerCovers(workspaceId, repository);
   expect(declined).toMatchObject({ instructor: "Alex Rivera", status: "declined", current: true });
+  // Nobody has agreed to teach it, so new bookings pause until the owner asks someone else.
+  expect(pausedSessionIds(workspaceId, repository).has(sessionId)).toBe(true);
   const next = declined.next!;
   expect(["Jordan Lee", "Priya Shah"]).toContain(next);
   // Customers still booked must all accept the new instructor; the class keeps its time, room and bookings.
@@ -213,6 +236,7 @@ it("passes a declined cover to the next qualified, free instructor in one step, 
     .toEqual([["Alex Rivera", "declined", false], [next, "asked", true]]);
   const after = repository.requireWorkspace(workspaceId).state, session = after.sessions.find((item) => item.id === sessionId)!;
   expect(after.instructors.find((item) => item.id === session.instructorId)!.name).toBe(next);
+  expect(pausedSessionIds(workspaceId, repository).has(sessionId)).toBe(false);
   expect(session.start).toBe(before.sessions.find((item) => item.id === sessionId)!.start);
   expect(after.bookings.filter((booking) => booking.sessionId === sessionId && ["confirmed", "moved"].includes(booking.status)).map((booking) => booking.id)).toEqual(kept);
   // Alex's old link now says someone else has the class; the new instructor answers on their own link and is the one paid.

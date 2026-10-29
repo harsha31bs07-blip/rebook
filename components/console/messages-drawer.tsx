@@ -97,10 +97,10 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
     <div className="drawer-header"><div><p className="eyebrow">Customer care</p><h2 id="messages-title">{links.length || outbox?.length ? "Customer outbox" : "Message drafts"}</h2></div><button autoFocus onClick={onClose} aria-label="Close customer messages">Close</button></div>
     <p className="muted">{links.length || outbox?.length ? "Email customers who booked through checkout, or share each private link from your own app and mark it sent. Demo addresses can't receive email. Open as customer to try the reply flow." : `${messages.length} drafts ready to review. Approve the recovery to create private customer links for you to share.`}</p>
     {(links.length > 0 || !!outbox?.length) && <div className="outbox-toolbar">
-      <p role="status" aria-live="polite" aria-atomic="true">{summary.sent} sent · {summary.replied} replied · {summary.waiting} waiting <span className="muted">· {summary.notSent} not sent</span></p>
+      <p role="status" aria-live="polite" aria-atomic="true">{summary.sent} sent · {summary.replied} replied · {summary.waiting} waiting <span className="muted">{summary.closed ? `· ${summary.closed} closed without a reply ` : ""}· {summary.notSent} not sent</span></p>
       {!!emailReady.length && workspaceId && !reminders && <button disabled={!!pending} aria-label={`Email ${emailReady.length} customers with addresses`} onClick={() => void email()}>Email {emailReady.length} customers with addresses</button>}
       <div className="outbox-filters" aria-label="Outbox filters"><button aria-pressed={filter === "all" && !reminders} onClick={() => { setFilter("all"); setReminders(null); }}>All customers</button><button aria-pressed={filter === "waiting" && !reminders} onClick={() => { setFilter("waiting"); setReminders(null); }}>Waiting</button><button disabled={!waiting.length || !!pending} onClick={() => { setReminders(waiting.map((row) => row.customerId)); setReminderIndex(0); setNotice("Reminder ready. Choose a sharing app for each waiting customer, then select Next customer."); }}>Remind waiting</button></div>
-      <p className="muted">Waiting means sent, with a class choice still unanswered. Refund receipts do not need a reply.</p>
+      <p className="muted">Waiting means sent, with a class choice still unanswered and open. A choice closes when the class starts or after a week. Refund receipts do not need a reply.</p>
       {reminders && <div className="outbox-reminder" role="group" aria-label="Waiting customer reminders"><p role="status" aria-live="polite">Reminder {reminderIndex + 1} of {reminders.length}{reminder ? `: ${reminder.customerName}` : ": this customer is no longer waiting."}</p><button disabled={!!pending || reminderIndex === reminders.length - 1} onClick={() => setReminderIndex(reminderIndex + 1)}>Next customer</button><button onClick={() => setReminders(null)}>Finish reminders</button></div>}
     </div>}
     <p role="status" aria-live="polite" aria-atomic="true">{notice}</p>
@@ -117,7 +117,7 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
       return <li className="outbox-customer" key={row.customerId}>
         <h3>{row.customerName}</h3>
         <div className="outbox-status" aria-live="polite" aria-atomic="true">
-          <p>{status.replied ? "Replied" : status.sent ? "Sent" : "Not sent"}{status.waiting ? " · No reply yet" : ""}</p>
+          <p>{status.replied ? "Replied" : status.sent ? "Sent" : "Not sent"}{status.waiting ? " · No reply yet" : status.closed ? " · Choice closed without a reply" : ""}</p>
           {status.sentAt && <p className="muted">Sent by owner · <time dateTime={status.sentAt}>{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(status.sentAt))}</time></p>}
         </div>
         {emailLabel && <p className="email-status" role="status" aria-live="polite" aria-atomic="true">Email {reminders ? "reminder " : ""}for {row.customerName}: {emailLabel}</p>}

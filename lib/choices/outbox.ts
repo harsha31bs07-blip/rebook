@@ -13,18 +13,22 @@ export type OutboxCustomer = {
   emailDeliverable?: boolean; delivery?: DeliveryView; reminderDelivery?: DeliveryView;
 };
 
-export function outboxState(row: OutboxCustomer) {
+/** An unanswered choice whose link has closed (class started or a week passed) can no longer be reminded about. */
+const open = (change: OutboxChange, now: number) => change.kind === "choice" && !change.reply && !(change.expiresAt && change.expiresAt <= now);
+
+export function outboxState(row: OutboxCustomer, now = Date.now()) {
   const choices = row.changes.filter((change) => change.kind === "choice");
   const replied = choices.length > 0 && choices.every((change) => change.reply);
   const sent = row.changes.every((change) => change.sentAt);
-  return { sent, replied, waiting: sent && choices.some((change) => !change.reply),
+  const waiting = sent && choices.some((change) => open(change, now));
+  return { sent, replied, waiting, closed: sent && !waiting && choices.some((change) => !change.reply),
     sentAt: sent ? row.changes.map((change) => change.sentAt!).sort().at(-1) : undefined };
 }
 
 export function summarizeOutbox(rows: OutboxCustomer[]) {
-  const states = rows.map(outboxState);
+  const states = rows.map((row) => outboxState(row));
   return { sent: states.filter((state) => state.sent).length, replied: states.filter((state) => state.replied).length,
-    waiting: states.filter((state) => state.waiting).length, notSent: states.filter((state) => !state.sent).length };
+    waiting: states.filter((state) => state.waiting).length, closed: states.filter((state) => state.closed).length, notSent: states.filter((state) => !state.sent).length };
 }
 
 export function waitingCustomers(rows: OutboxCustomer[]) { return rows.filter((row) => outboxState(row).waiting); }
@@ -41,7 +45,7 @@ export function draftOutbox(messages: CustomerMessage[], links: { bookingId: str
 }
 
 export function outboxMessage(row: OutboxCustomer, origin?: string, reminder = false) {
-  const changes = reminder ? row.changes.filter((change) => change.kind === "choice" && !change.reply) : row.changes;
+  const changes = reminder ? row.changes.filter((change) => open(change, Date.now())) : row.changes;
   const path = (change: OutboxChange) => origin ? new URL(change.path!, origin).href : change.path;
   if (reminder) return `Hi ${row.customerName}, just a reminder to choose what works for your updated class${changes.length === 1 ? "" : "es"}:\n${changes.map((change) => `${change.subject}\n${path(change)}`).join("\n\n")}\n\nThank you!`;
   return changes.map((change) => `${change.body.replace("Doesn't work? Reply for a refund.", "Use your private link to keep your new time, find another class, or take a refund.")}\n\n${change.kind === "receipt" ? "Refund receipt" : "Private choice link"}: ${path(change)}`).join("\n\n");

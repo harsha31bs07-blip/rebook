@@ -68,9 +68,13 @@ export async function redeemCredit(workspaceId: string, input: CreditCheckoutInp
   }));
 }
 export const BOOKING_PAUSED_MESSAGE = "Schedule change in progress — booking paused";
+/** Classes under review in a proposed plan, or whose substitute declined and nobody new has been asked yet. */
 export function pausedSessionIds(workspaceId: string, repository = getRepository()): Set<string> {
-  return new Set(repository.listPlans(workspaceId).filter((plan) => plan.status === "proposed")
-    .flatMap((plan) => plan.sessionChanges.map((change) => change.sessionId)));
+  const sessions = repository.getWorkspace(workspaceId)?.state.sessions ?? [];
+  const uncovered = repository.listCoverLinks(workspaceId).filter((link) => link.status === "declined"
+    && sessions.find((session) => session.id === link.sessionId)?.instructorId === link.instructorId).map((link) => link.sessionId);
+  return new Set([...repository.listPlans(workspaceId).filter((plan) => plan.status === "proposed")
+    .flatMap((plan) => plan.sessionChanges.map((change) => change.sessionId)), ...uncovered]);
 }
 export function sessionAvailable(state: State, session: Session, paused: ReadonlySet<string> = new Set()): boolean {
   return !paused.has(session.id) && Date.parse(session.start) > Date.now() && !activeConstraints(state).some((constraint) =>

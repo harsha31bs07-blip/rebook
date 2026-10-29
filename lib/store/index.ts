@@ -582,6 +582,8 @@ export class Repository {
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
         if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status))) continue;
+        // An unconfirmed or still-open payout keeps the batch reference the owner needs to check it in PayPal.
+        if (this.listCoverPayouts(id).some((payout) => ["REQUESTED", "PENDING", "UNCLAIMED", "ONHOLD"].includes(payout.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       }
       // Keep event IDs for deduplication; only the retained raw payload expires.

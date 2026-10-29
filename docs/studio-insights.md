@@ -44,7 +44,7 @@ Cancelled sessions are recovered from applied plans' persisted basis so their bo
 
 The heatmap queries session-level rows, including session ID, so equal-valued classes remain distinct and capacity is counted once per class. It sums booked and capacity for each instructor/day and divides those totals. Its source ignores cross-filter selections to keep the matrix available while other widgets filter.
 
-`money_events` contains the latest ledger transition for each kind/request. Issued refunds and captures include COMPLETED and labelled SIMULATED amounts; pending/failed requests remain visible in receipts but do not enter issued totals. Net revenue is captures minus issued refunds. Money charts use receipt dates, which may differ from the scheduled class week. Revenue kept measures recovery interventions: repeated disruptions can count the same booking again. The report uses this workspace's ledger.
+`money_events` contains the latest ledger transition for each kind/request. Issued refunds and captures include COMPLETED and labelled SIMULATED amounts; pending/failed requests remain visible in receipts but do not enter issued totals. Net revenue is captures minus issued refunds. Money charts use receipt dates, which may differ from the scheduled class week. Revenue kept counts each booking once, under its latest applied plan, even after repeated disruptions. The report uses this workspace's ledger.
 
 ## AI proxy and configuration
 

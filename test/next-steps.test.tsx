@@ -22,7 +22,7 @@ it("offers the next qualified instructor in one click after a decline, and keeps
 });
 
 it("shows the three follow-ups with live status after approval", () => {
-  const html = renderToStaticMarkup(<NextSteps workspaceId="ws-1234567" summary={{ sent: 3, replied: 2, waiting: 1, notSent: 27 }} covers={[cover()]}
+  const html = renderToStaticMarkup(<NextSteps workspaceId="ws-1234567" summary={{ sent: 3, replied: 2, waiting: 1, closed: 0, notSent: 27 }} covers={[cover()]}
     customerPath="/c/token" onMessages={vi.fn()} onPreview={vi.fn()} />);
   expect(html).toContain("What happens next"); expect(html).toContain("2 of 30 replied · 3 sent");
   expect(html).toContain("Alex Rivera covers Yoga Flow"); expect(html).toContain("$35.00 to pay"); expect(html).toContain('href="#cover-instructors"');

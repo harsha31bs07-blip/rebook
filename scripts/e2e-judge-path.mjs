@@ -9,7 +9,9 @@ import { createRequire } from "node:module";
 
 const BASE = (process.argv[2] || process.env.JUDGE_SMOKE_BASE || "https://rebook-by9u.onrender.com").replace(/\/$/, "");
 const AXE = readFileSync(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
-const LIBRARY_RULES = new Set(["aria-required-children", "landmark-unique"]); // inside Bryntum / AG Charts markup
+// Known findings inside Bryntum / AG Studio markup. Excused only when every flagged node sits inside that markup.
+const LIBRARY_RULES = new Set(["aria-required-children", "landmark-unique"]);
+const LIBRARY_ROOTS = ".b-widget, .b-grid-base, [class^='ag-'], [class*=' ag-']";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const steps = [];
 const step = async (name, run) => {
@@ -25,13 +27,14 @@ const api = async (method, path) => {
 async function audit(page, name) {
   await sleep(2500); // let entry animations settle; mid-fade text briefly fails contrast
   await page.addScriptTag({ content: AXE });
-  const found = await page.evaluate(async () => (await window.axe.run({ exclude: [[".ag-studio-watermark-text"]] }, { resultTypes: ["violations"] })).violations.map((v) => ({ id: v.id, html: v.nodes[0]?.html.slice(0, 160) })));
-  const violations = found.map((v) => v.id);
-  const ours = found.filter((v) => !LIBRARY_RULES.has(v.id)).map((v) => `${v.id} at ${v.html}`);
+  const found = await page.evaluate(async (roots) => (await window.axe.run({ exclude: [[".ag-studio-watermark-text"]] }, { resultTypes: ["violations"] })).violations.map((v) => ({ id: v.id, html: v.nodes[0]?.html.slice(0, 160),
+    vendor: v.nodes.every((node) => typeof node.target[0] === "string" && !!document.querySelector(node.target[0])?.closest(roots)) })), LIBRARY_ROOTS);
+  const library = (v) => LIBRARY_RULES.has(v.id) && v.vendor;
+  const ours = found.filter((v) => !library(v)).map((v) => `${v.id} at ${v.html}`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   if (ours.length) throw new Error(`${name}: accessibility violations ${ours.join(", ")}`);
   if (overflow > 1) throw new Error(`${name}: horizontal overflow ${overflow}px`);
-  return { library: violations.filter((id) => LIBRARY_RULES.has(id)) };
+  return { library: found.filter(library).map((v) => v.id) };
 }
 
 let browser;

@@ -113,6 +113,9 @@ export function ownerCovers(workspaceId: string, repository = getRepository()) {
 }
 export type OwnerCover = ReturnType<typeof ownerCovers>[number];
 
+/** Replays of an unconfirmed payout stop a day inside PayPal's 30-day duplicate check on sender_batch_id. */
+const PAYOUT_REPLAY_DAYS = 29;
+
 /** Owner-initiated PayPal payout. A REQUESTED row is written first; an unknown outcome replays the same request id. */
 export async function payCover(workspaceId: string, planId: string, sessionId: string, repository = getRepository()) {
   const receiver = process.env.PAYPAL_PAYOUT_RECEIVER?.trim();
@@ -129,6 +132,10 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
     const payout = repository.transaction(() => {
       const previous = repository.listCoverPayouts(workspaceId).find((item) => item.planId === planId && item.sessionId === sessionId);
       if (previous && previous.status !== "REQUESTED" && payoutLocks(previous)) throw new StoreError(409, previous.status === "SUCCESS" ? "This cover is already paid." : "This payout is already with PayPal.");
+      // PayPal rejects a repeated sender_batch_id for 30 days. Past that, a replay could pay twice, so stop and ask for a check.
+      if (previous?.status === "REQUESTED" && Date.parse(previous.createdAt) + PAYOUT_REPLAY_DAYS * 86_400_000 <= Date.now()) {
+        throw new StoreError(409, "PayPal never confirmed this payout and it is too old to resend safely. Check PayPal before paying another way.");
+      }
       const now = new Date().toISOString(), attempt = previous?.status === "REQUESTED" ? previous.attempt : (previous?.attempt ?? 0) + 1;
       const next: CoverPayout = previous?.status === "REQUESTED" ? { ...previous, updatedAt: now } : { workspaceId, planId, sessionId, instructorId: link.instructorId,
         amount: link.fee, attempt, requestId: `cover-${planId}-${sessionId}-${attempt}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120), status: "REQUESTED", createdAt: now, updatedAt: now };

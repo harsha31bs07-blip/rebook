@@ -1,26 +1,26 @@
 # Live interpretation evaluation
 
-Generated: 2026-10-28T14:25:53.509Z. Evaluated 45/45 corpus items in 290.8 s. Fixed studio clock: 2026-11-09 00:15 America/New_York; demo week: November 9–15, 2026.
+Generated: 2026-10-29T10:55:57.001Z. Evaluated 45/45 corpus items in 298.6 s. Fixed studio clock: 2026-11-09 00:15 America/New_York; demo week: November 9–15, 2026.
 
-Exact resource/window or clarification accuracy: 88.89%.
+Exact resource/window or clarification accuracy: 95.56%.
 Rules-only baseline: 22/45 (48.89%); dangerous false positives: 0.
 Dangerous false positives (must-clarify input produced a disruption): 0.
-Rules result rate: 55.56% (includes safety clarifications before a provider call).
-Rules fallback rate after a provider attempt: 4.44% (model mismatch or provider unavailable).
-Provider outage/timeout fallback rate: 2.22%.
-Median end-to-end interpretation latency: 1655.9 ms. Errors: 0.
-Median latency when a model answered (20 items): 1925.9 ms. Results by source: gemini 0, groq 20, rules 25. Providers configured for this run: gemini, groq.
+Rules result rate: 44.44% (includes safety clarifications before a provider call).
+Rules fallback rate after a provider attempt: 0.00% (model mismatch or provider unavailable).
+Provider outage/timeout fallback rate: 0.00%.
+Median end-to-end interpretation latency: 1766.3 ms. Errors: 0.
+Median latency when a model answered (25 items): 2455.6 ms. Results by source: gemini 2, groq 23, rules 20. Providers configured for this run: gemini, groq.
 
 | Category | Correct / evaluated | Accuracy | Dangerous false positives | Rules results |
 | --- | --- | --- | --- | --- |
-| forwarded | 3/4 | 75.00% | 0 | 25.00% |
+| forwarded | 4/4 | 100.00% | 0 | 0.00% |
 | third-person | 5/6 | 83.33% | 0 | 16.67% |
-| long | 2/4 | 50.00% | 0 | 75.00% |
-| hinglish | 2/3 | 66.67% | 0 | 33.33% |
+| long | 4/4 | 100.00% | 0 | 0.00% |
+| hinglish | 3/3 | 100.00% | 0 | 0.00% |
 | indian-english | 2/2 | 100.00% | 0 | 0.00% |
 | rooms | 4/4 | 100.00% | 0 | 0.00% |
 | closures | 1/1 | 100.00% | 0 | 0.00% |
-| shorthand | 3/3 | 100.00% | 0 | 33.33% |
+| shorthand | 2/3 | 66.67% | 0 | 33.33% |
 | must-clarify | 18/18 | 100.00% | 0 | 100.00% |
 
 Full corpus size: 45; a bounded run is a subset, not a whole-corpus estimate. Items are selected round-robin across categories. One interpretation at a time; the production Gemini/Groq chain and its 12 s total deadline are used unchanged. No provider quotas or cooldowns are bypassed. Rules fallback can dominate a rate-limited run; inspect that rate before attributing accuracy to a model.
@@ -29,48 +29,48 @@ Full corpus size: 45; a bounded run is a subset, not a whole-corpus estimate. It
 
 | ID | Category | Correct | Dangerous | Source | Model | Latency (ms) | Error |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | forwarded | true | false | groq | openai/gpt-oss-120b | 7657.4 |  |
-| 5 | third-person | true | false | groq | openai/gpt-oss-120b | 1654.6 |  |
-| 11 | long | true | false | groq | openai/gpt-oss-120b | 1915.5 |  |
-| 15 | hinglish | false | false | rules | — | 2931.6 |  |
-| 18 | indian-english | true | false | groq | openai/gpt-oss-120b | 1558.9 |  |
-| 20 | rooms | true | false | groq | openai/gpt-oss-120b | 2697.5 |  |
-| 24 | closures | true | false | groq | openai/gpt-oss-120b | 4139.3 |  |
-| 25 | shorthand | true | false | rules | — | 8016.7 |  |
+| 1 | forwarded | true | false | groq | openai/gpt-oss-120b | 8090.6 |  |
+| 5 | third-person | true | false | groq | openai/gpt-oss-120b | 1803.3 |  |
+| 11 | long | true | false | groq | openai/gpt-oss-120b | 1900.6 |  |
+| 15 | hinglish | true | false | groq | openai/gpt-oss-120b | 1654.8 |  |
+| 18 | indian-english | true | false | groq | openai/gpt-oss-20b | 7117.7 |  |
+| 20 | rooms | true | false | groq | openai/gpt-oss-120b | 7832.6 |  |
+| 24 | closures | true | false | groq | openai/gpt-oss-120b | 1994.7 |  |
+| 25 | shorthand | true | false | groq | openai/gpt-oss-20b | 1431.5 |  |
 | 28 | must-clarify | true | false | rules | — | 0.1 |  |
-| 2 | forwarded | false | false | rules | — | 473.2 |  |
-| 6 | third-person | false | false | rules | — | 447.2 |  |
-| 12 | long | false | false | rules | — | 6520.1 |  |
-| 16 | hinglish | true | false | groq | openai/gpt-oss-120b | 1655.9 |  |
-| 19 | indian-english | true | false | groq | openai/gpt-oss-120b | 1703.4 |  |
-| 21 | rooms | true | false | groq | openai/gpt-oss-120b | 1418.6 |  |
-| 26 | shorthand | true | false | groq | openai/gpt-oss-120b | 2849.0 |  |
-| 29 | must-clarify | true | false | rules | — | 0.7 |  |
-| 3 | forwarded | true | false | groq | openai/gpt-oss-120b | 8539.7 |  |
-| 7 | third-person | true | false | groq | openai/gpt-oss-120b | 1936.2 |  |
-| 13 | long | true | false | rules | — | 3050.3 |  |
-| 17 | hinglish | true | false | groq | openai/gpt-oss-120b | 4116.0 |  |
-| 22 | rooms | true | false | groq | openai/gpt-oss-120b | 1574.2 |  |
-| 27 | shorthand | true | false | groq | openai/gpt-oss-120b | 7540.6 |  |
+| 2 | forwarded | true | false | groq | openai/gpt-oss-120b | 2455.6 |  |
+| 6 | third-person | true | false | groq | openai/gpt-oss-120b | 1952.5 |  |
+| 12 | long | true | false | gemini | gemini-3.5-flash | 11601.9 |  |
+| 16 | hinglish | true | false | groq | openai/gpt-oss-120b | 1766.3 |  |
+| 19 | indian-english | true | false | groq | openai/gpt-oss-20b | 3107.5 |  |
+| 21 | rooms | true | false | groq | openai/gpt-oss-120b | 1653.3 |  |
+| 26 | shorthand | true | false | groq | openai/gpt-oss-120b | 2195.4 |  |
+| 29 | must-clarify | true | false | rules | — | 0.8 |  |
+| 3 | forwarded | true | false | groq | openai/gpt-oss-120b | 8176.3 |  |
+| 7 | third-person | true | false | groq | openai/gpt-oss-120b | 3358.2 |  |
+| 13 | long | true | false | groq | openai/gpt-oss-20b | 5078.3 |  |
+| 17 | hinglish | true | false | groq | openai/gpt-oss-120b | 2521.2 |  |
+| 22 | rooms | true | false | groq | openai/gpt-oss-120b | 1592.9 |  |
+| 27 | shorthand | false | false | rules | — | 7468.3 |  |
 | 30 | must-clarify | true | false | rules | — | 0.1 |  |
-| 4 | forwarded | true | false | groq | openai/gpt-oss-120b | 2620.0 |  |
-| 8 | third-person | true | false | groq | openai/gpt-oss-120b | 1855.6 |  |
-| 14 | long | false | false | rules | — | 7439.1 |  |
-| 23 | rooms | true | false | groq | openai/gpt-oss-120b | 8100.5 |  |
-| 31 | must-clarify | true | false | rules | — | 0.0 |  |
-| 9 | third-person | true | false | groq | openai/gpt-oss-120b | 1900.6 |  |
-| 32 | must-clarify | true | false | rules | — | 2825.5 |  |
-| 10 | third-person | true | false | groq | openai/gpt-oss-120b | 1502.9 |  |
-| 33 | must-clarify | true | false | rules | — | 0.4 |  |
+| 4 | forwarded | true | false | groq | openai/gpt-oss-120b | 3279.8 |  |
+| 8 | third-person | true | false | groq | openai/gpt-oss-120b | 1603.4 |  |
+| 14 | long | true | false | groq | openai/gpt-oss-120b | 2119.5 |  |
+| 23 | rooms | true | false | gemini | gemini-3.5-flash | 4070.0 |  |
+| 31 | must-clarify | true | false | rules | — | 0.1 |  |
+| 9 | third-person | true | false | groq | openai/gpt-oss-120b | 7547.6 |  |
+| 32 | must-clarify | true | false | rules | — | 1627.8 |  |
+| 10 | third-person | false | false | rules | — | 4135.6 |  |
+| 33 | must-clarify | true | false | rules | — | 0.3 |  |
 | 34 | must-clarify | true | false | rules | — | 0.1 |  |
-| 35 | must-clarify | true | false | rules | — | 0.0 |  |
+| 35 | must-clarify | true | false | rules | — | 0.2 |  |
 | 36 | must-clarify | true | false | rules | — | 0.1 |  |
-| 37 | must-clarify | true | false | rules | — | 6857.4 |  |
-| 38 | must-clarify | true | false | rules | — | 0.3 |  |
-| 39 | must-clarify | true | false | rules | — | 0.1 |  |
-| 40 | must-clarify | true | false | rules | — | 4963.9 |  |
-| 41 | must-clarify | true | false | rules | — | 0.1 |  |
+| 37 | must-clarify | true | false | rules | — | 1682.0 |  |
+| 38 | must-clarify | true | false | rules | — | 0.6 |  |
+| 39 | must-clarify | true | false | rules | — | 0.0 |  |
+| 40 | must-clarify | true | false | rules | — | 7458.6 |  |
+| 41 | must-clarify | true | false | rules | — | 0.0 |  |
 | 42 | must-clarify | true | false | rules | — | 0.2 |  |
-| 43 | must-clarify | true | false | rules | — | 0.5 |  |
-| 44 | must-clarify | true | false | rules | — | 1.4 |  |
+| 43 | must-clarify | true | false | rules | — | 0.0 |  |
+| 44 | must-clarify | true | false | rules | — | 0.7 |  |
 | 45 | must-clarify | true | false | rules | — | 0.1 |  |

@@ -4,7 +4,7 @@ import Link from "next/link";
 const repo = "https://github.com/harsha31bs07-blip/rebook/blob/main";
 // Every number links to the published evidence behind it.
 const PROOF = [
-  { value: "40/45", label: "messy owner messages read correctly", detail: "Rules alone: 22. Zero dangerous guesses.", href: `${repo}/docs/interpretation-messy-eval.md`, link: "Live evaluation" },
+  { value: "43/45", label: "messy owner messages read correctly", detail: "Rules alone: 22. Zero dangerous guesses.", href: `${repo}/docs/interpretation-messy-eval.md`, link: "Live evaluation" },
   { value: "22/24", label: "customer requests turned into one real option", detail: "Zero unsafe actions, including injection attempts.", href: `${repo}/docs/customer-assistant-eval.md`, link: "Live evaluation" },
   { value: "~7 s", label: "for six PayPal sandbox refunds after one approval", detail: "Idempotent and reconciled; never sent twice.", href: "/built-with#paypal", link: "How refunds work" },
   { value: "900+", label: "automated tests", detail: "Plus a browser check of the whole flow on every release.", href: `${repo}#tests`, link: "Test notes" },

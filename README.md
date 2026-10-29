@@ -145,6 +145,18 @@ The functional judge smoke wakes the host, creates one demo workspace, requires 
 
 A browser end-to-end check walks the whole judge path on a deployment (interpret, plan, approve with real sandbox refunds, outbox, a customer refund from a phone, the dashboard and a public card checkout) and audits accessibility on each page: `npx playwright-core install chromium` once, then `node scripts/e2e-judge-path.mjs [base-url]`. Before freezing the code, `node scripts/check-permalinks.mjs` lists every code link in this README and on /built-with.
 
+## Pilot readiness
+
+Rebook is built to sit beside a studio's booking system (Mindbody, Glofox, Momence and similar), not replace it: the booking system stays the record of members and payments, and Rebook handles the bad morning. A first real pilot would need:
+
+- **Data in:** import the week's timetable, instructors and bookings from the booking system's export or API, and write the approved changes back.
+- **Owner sign-in** in place of the workspace link, and durable storage (Postgres) in place of per-visitor demo workspaces.
+- **Live PayPal:** the studio connects its own PayPal business account (partner onboarding); refunds and cover payouts then run against live captures with the same idempotency and reconciliation.
+- **Reach:** SMS alongside email, sent from the studio's own number.
+- **Credits:** pack and membership credits synced with the booking system's own ledger.
+
+Everything else (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) works the same way it does in the demo.
+
 ## Honest limits
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.

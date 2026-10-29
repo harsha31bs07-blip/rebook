@@ -1,5 +1,8 @@
+import { isDeepStrictEqual } from "node:util";
 import { applyPlan, planTimeErrors, validate } from "../solver/validate";
-import { activateConstraint } from "../solver/constraints";
+import { activateConstraint, deactivateConstraint } from "../solver/constraints";
+import { planCorrection } from "../solver/correction";
+import { correctionOriginal } from "../recovery/correction";
 import { executeRefund } from "./refund";
 import { reconcileRefund } from "./reconcileRefund";
 import { createCustomerLinks } from "../choices/service";
@@ -37,10 +40,18 @@ export async function executePlan(workspaceId: string, planId: string, repositor
       if (planTimeErrors(plan, Date.now()).length) throw new StoreError(409, "This recovery preview has expired. Plan a fresh recovery before approving.", "PLAN_EXPIRED");
     }
     if (plan.status === "proposed") {
+      if (plan.correctionOf) {
+        const original = correctionOriginal(workspaceId, plan.correctionOf, repository, plan.id);
+        const expected = planCorrection(basis, original, plan.now);
+        if (!isDeepStrictEqual(plan.sessionChanges, expected.sessionChanges) ||
+          !isDeepStrictEqual(plan.bookingActions, expected.bookingActions) || !isDeepStrictEqual(plan.disruption, original.disruption)) {
+          throw new StoreError(409, "The schedule or bookings changed. Discard this correction and preview it again.");
+        }
+      }
       const validation = validate(basis, plan);
       if (!validation.ok) throw new StoreError(409, `Plan is no longer valid: ${validation.errors.join("; ")}`);
       // Preserve existing terminal money states when applying the pure scheduling transformation.
-      const next = activateConstraint(applyPlan(workspace.state, plan), plan.disruption);
+      const next = (plan.correctionOf ? deactivateConstraint : activateConstraint)(applyPlan(workspace.state, plan), plan.disruption);
       for (const booking of next.bookings) {
         const previous = workspace.state.bookings.find((item) => item.id === booking.id)!;
         if (["refunded", "refund_pending", "cancelled"].includes(previous.status)) booking.status = previous.status;
@@ -51,14 +62,25 @@ export async function executePlan(workspaceId: string, planId: string, repositor
         sessionId: cover.sessionId, instructorId: cover.instructorId, confirmedBy: "Workspace owner", confirmedAt: new Date().toISOString(),
       }));
       plan = { ...plan, status: "executing", basis, coverConfirmations };
-      repository.transaction(() => { repository.saveState(workspaceId, next); repository.savePlan(plan!); repository.discardOtherProposals(workspaceId, planId); createCustomerLinks(plan!, basis, next, repository); createCoverLinks(plan!, basis, repository); });
+      repository.transaction(() => {
+        repository.saveState(workspaceId, next); repository.savePlan(plan!); repository.discardOtherProposals(workspaceId, planId);
+        if (plan!.correctionOf) {
+          const original = repository.getPlan(workspaceId, plan!.correctionOf)!;
+          repository.savePlan({ ...original, correctedBy: planId });
+          for (const link of repository.listCoverLinks(workspaceId).filter((item) => item.planId === original.id &&
+            plan!.sessionChanges.some((change) => change.sessionId === item.sessionId))) {
+            repository.saveCoverLink({ ...link, withdrawnBy: planId });
+          }
+        }
+        createCustomerLinks(plan!, basis, next, repository); createCoverLinks(plan!, basis, repository);
+      });
     } else {
       // Scheduling rules apply at approval; retries settle the already-approved money actions.
       plan = { ...plan, status: "executing" };
       repository.savePlan(plan);
     }
     createCustomerLinks(plan, basis, repository.requireWorkspace(workspaceId).state, repository);
-    const actions = plan.bookingActions.filter((item) => item.action === "refund");
+    const actions = plan.correctionOf ? [] : plan.bookingActions.filter((item) => item.action === "refund");
     const ordered: (ExecutionResult | undefined)[] = actions.map(() => undefined);
     let next = 0, done = 0;
     let stopped = false;

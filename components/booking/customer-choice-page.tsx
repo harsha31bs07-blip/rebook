@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChoiceInput, CustomerChoiceView } from "@/lib/choices/service";
 import { entitlementReceipt } from "../../lib/domain/entitlements";
@@ -81,6 +82,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A little change. A choice for you.</span></header>
     <section className="choice-intro"><p className="eyebrow">{data?.studio.name ?? "Your studio"}</p><h1>{data?.kind === "receipt" ? entitlement ? "Your booking receipt." : "Your refund receipt." : "Your class. Your call."}</h1><p className="muted">{data?.kind === "receipt" ? entitlement ? "Your studio has cancelled this booking." : "Your studio has arranged a refund to your original payment." : "Plans change. Let’s find what works for you."}</p></section>
     {error && <p className="error error-box" role="alert">{error}</p>}
+    {error.includes("free server") && <Link href="/">Start a fresh demo</Link>}
     {!data && !error && <p role="status">Opening your private booking…</p>}
     {data && <>
       {data.simulated && <p className="choice-simulation">Simulated payment · Demo only. No real money moves.</p>}

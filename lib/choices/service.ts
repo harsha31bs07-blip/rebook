@@ -42,7 +42,7 @@ export function createCustomerLinks(plan: StoredPlan, before: State, after: Stat
 
 export function requireLink(token: string, repository: Repository): CustomerLink {
   const link = repository.customerLinkByToken(ChoiceTokenSchema.parse(token));
-  if (!link) throw new StoreError(404, "This private link is unavailable.");
+  if (!link) throw new StoreError(404, "This link is no longer available. Rebook's demo runs on a free server that resets when it restarts, so demo links can end early. Nothing was charged: payments run in PayPal's sandbox.");
   if (customerLinkReadableUntil(link) <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
   repository.requireReadyWorkspace(link.workspaceId);
   return link;
@@ -95,7 +95,8 @@ export function view(link: CustomerLink, repository: Repository) {
   const payment = creditPayment(link, repository);
   const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && link.reply?.action !== "credit" && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
-  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: link.message,
+  const newerCorrection = newest && newest.id !== link.id && repository.getPlan(link.workspaceId, newest.planId)?.correctionOf;
+  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: newerCorrection ? newest.message : link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
     kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,

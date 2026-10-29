@@ -29,7 +29,7 @@ function details(link: CoverLink, repository: Repository) {
   const change = plan?.sessionChanges.find((item) => item.sessionId === link.sessionId);
   const name = (id?: string) => state.instructors.find((item) => item.id === id)?.name ?? "Studio team";
   const payout = repository.listCoverPayouts(link.workspaceId).find((item) => item.planId === link.planId && item.sessionId === link.sessionId && item.instructorId === link.instructorId);
-  return { state, session, instructor: name(link.instructorId), original: name(change?.before.instructorId), current: session?.instructorId === link.instructorId,
+  return { state, session, instructor: name(link.instructorId), original: name(change?.before.instructorId), current: !link.withdrawnBy && session?.instructorId === link.instructorId,
     payout: payout && { status: payout.status, amount: payout.amount, itemId: payout.itemId, error: payout.error } };
 }
 const payoutLocks = (payout?: { status: string }) => !!payout && ACTIVE.concat("SUCCESS").includes(payout.status);
@@ -37,14 +37,14 @@ const payoutLocks = (payout?: { status: string }) => !!payout && ACTIVE.concat("
 /** Public instructor view: the class, the fee and the payout. No customer data. */
 export function coverView(token: string, repository = getRepository()) {
   const link = repository.coverLinkByToken(CoverTokenSchema.parse(token));
-  if (!link) throw new StoreError(404, "This cover link is not valid.");
+  if (!link) throw new StoreError(404, "This link is no longer available. Rebook's demo runs on a free server that resets when it restarts, so demo links can end early. Nothing was charged: payments run in PayPal's sandbox.");
   void refreshCoverPayouts(link.workspaceId, repository).catch(() => {});
   return viewOf(link, repository);
 }
 function viewOf(link: CoverLink, repository: Repository) {
   const { state, session, instructor, original, payout, current } = details(link, repository);
   if (!session) throw new StoreError(410, "This class is no longer on the schedule.");
-  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: current ? link.status : "replaced" as const, fee: link.fee, instructor, original,
+  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: link.withdrawnBy ? "withdrawn" as const : current ? link.status : "replaced" as const, fee: link.fee, instructor, original,
     class: { title: session.title, start: session.start, end: session.end, room: state.rooms.find((room) => room.id === session.roomId)?.name ?? "Studio" },
     payout, canRespond: current && !payoutLocks(payout) && Date.parse(session.start) > Date.now() };
 }
@@ -52,11 +52,11 @@ export type CoverView = ReturnType<typeof viewOf>;
 
 export async function respondToCover(token: string, action: "accept" | "decline", repository = getRepository()) {
   const initial = repository.coverLinkByToken(CoverTokenSchema.parse(token));
-  if (!initial) throw new StoreError(404, "This cover link is not valid.");
+  if (!initial) throw new StoreError(404, "This link is no longer available. Rebook's demo runs on a free server that resets when it restarts, so demo links can end early. Nothing was charged: payments run in PayPal's sandbox.");
   await withWorkspaceLock(repository, initial.workspaceId, () => repository.transaction(() => {
     const link = repository.coverLinkByToken(token)!;
     const view = viewOf(link, repository);
-    if (!view.canRespond) throw new StoreError(409, view.status === "replaced" ? "A later schedule change gave this class to someone else." : view.payout ? "This cover has already been paid." : "This class has already started.");
+    if (!view.canRespond) throw new StoreError(409, view.status === "withdrawn" ? "This class went back to its regular instructor." : view.status === "replaced" ? "A later schedule change gave this class to someone else." : view.payout ? "This cover has already been paid." : "This class has already started.");
     const status = action === "accept" ? "accepted" : "declined";
     if (link.status !== status) repository.saveCoverLink({ ...link, status, respondedAt: new Date().toISOString(), respondedBy: "instructor" });
   }));
@@ -115,7 +115,7 @@ export function ownerCovers(workspaceId: string, repository = getRepository()) {
     const plan = current && link.status === "declined" && session && Date.parse(session.start) > Date.now() ? repository.getPlan(workspaceId, link.planId) : undefined;
     const next = plan && session ? nextCover(state, plan, session, links.filter((item) => item.planId === link.planId && item.sessionId === link.sessionId).map((item) => item.instructorId)) : undefined;
     return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when,
-      status: current || link.status === "declined" ? link.status : "replaced" as const, current,
+      status: link.withdrawnBy ? "withdrawn" as const : current || link.status === "declined" ? link.status : "replaced" as const, current,
       respondedBy: link.respondedBy, fee: link.fee, path: `/i/${repository.coverToken(link)}`, payout,
       payee: Boolean(process.env.PAYPAL_PAYOUT_RECEIVER?.trim()), ...(plan ? { next: next?.name ?? null } : {}) };
   });
@@ -134,6 +134,7 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
     const teaching = repository.requireWorkspace(workspaceId).state.sessions.find((item) => item.id === sessionId)?.instructorId;
     const link = asked.find((item) => item.instructorId === teaching) ?? asked.at(-1);
     if (!link) throw new StoreError(404, "Cover not found");
+    if (link.withdrawnBy) throw new StoreError(409, "This class went back to its regular instructor. Existing payouts stay recorded.");
     if (link.status !== "accepted") throw new StoreError(409, "Pay a cover only after the instructor accepts it.");
     const { session, current } = details(link, repository);
     const paidBefore = repository.listCoverPayouts(workspaceId).some((item) => item.planId === planId && item.sessionId === sessionId);

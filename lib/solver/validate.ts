@@ -1,8 +1,8 @@
 import type { Disruption, Plan, Session, State } from "../domain/types";
 import { PlanSchema } from "../domain/schemas";
 import { byId, compare, insideOpenHours, localParts, overlaps } from "../domain/time";
-import { calculateTotals, hasCustomerConflict, isActiveBooking, recoveryActions } from "./score";
-import { activeConstraints } from "./constraints";
+import { calculateTotals, correctionActions, hasCustomerConflict, isActiveBooking, recoveryActions } from "./score";
+import { activeConstraints, deactivateConstraint } from "./constraints";
 
 export function usesDisruptedResource(session: Session, disruption: Disruption): boolean {
   return disruption.kind === "closure" || (disruption.kind === "instructor_unavailable"
@@ -79,14 +79,17 @@ export function planTimeErrors(plan: Plan, now: number): string[] {
 export function validate(state: State, plan: Plan): { ok: boolean; errors: string[] } {
   const parsed = PlanSchema.safeParse(plan);
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).sort(compare) };
+  if (plan.correctionOf) state = deactivateConstraint(state, plan.disruption);
   const errors: string[] = [];
-  const affected = affectedSessions(state, plan.disruption, plan.now);
+  const affected = plan.correctionOf ? state.sessions.filter((session) => plan.sessionChanges.some((change) => change.sessionId === session.id))
+    : affectedSessions(state, plan.disruption, plan.now);
   const affectedIds = new Set(affected.map((session) => session.id));
   const changeIds = new Set<string>();
   for (const change of plan.sessionChanges) {
     if (changeIds.has(change.sessionId)) errors.push(`Duplicate session change: ${change.sessionId}`);
     changeIds.add(change.sessionId);
     if (!affectedIds.has(change.sessionId)) errors.push(`Unexpected session change: ${change.sessionId}`);
+    if (plan.correctionOf && !change.after) errors.push(`Correction cannot cancel a session: ${change.sessionId}`);
     const before = state.sessions.find((session) => session.id === change.sessionId);
     if (before && (before.instructorId !== change.before.instructorId || before.roomId !== change.before.roomId ||
       Date.parse(before.start) !== Date.parse(change.before.start) || Date.parse(before.end) !== Date.parse(change.before.end))) {
@@ -99,15 +102,15 @@ export function validate(state: State, plan: Plan): { ok: boolean; errors: strin
       if (change.remedy === "substitute" && (!sameTime || before.roomId !== change.after.roomId || before.instructorId === change.after.instructorId)) errors.push(`Invalid substitute remedy: ${change.sessionId}`);
       // Owner room overrides may also select a substitute, regardless of the original disruption kind.
       if (change.remedy === "move_room" && (!sameTime || before.roomId === change.after.roomId ||
-        (!change.ownerAdjusted && (before.instructorId !== change.after.instructorId || plan.disruption.kind !== "room_unavailable")))) errors.push(`Invalid room remedy: ${change.sessionId}`);
-      if (change.remedy === "move_time" && sameTime) errors.push(`Invalid time remedy: ${change.sessionId}`);
+        (!change.ownerAdjusted && (before.instructorId !== change.after.instructorId || (!plan.correctionOf && plan.disruption.kind !== "room_unavailable"))))) errors.push(`Invalid room remedy: ${change.sessionId}`);
+      if (change.remedy === "move_time" && sameTime && !(plan.correctionOf && before.roomId !== change.after.roomId && before.instructorId !== change.after.instructorId)) errors.push(`Invalid time remedy: ${change.sessionId}`);
     }
   }
   for (const session of affected) if (!changeIds.has(session.id)) errors.push(`Missing session change: ${session.id}`);
   const next = applyPlan(state, plan);
   for (const session of [...next.sessions].sort(byId)) {
     // Historical sessions are still checked for resource collisions but not a new disruption.
-    const disruption = Date.parse(session.start) >= Date.parse(plan.now) ? plan.disruption : undefined;
+    const disruption = !plan.correctionOf && Date.parse(session.start) >= Date.parse(plan.now) ? plan.disruption : undefined;
     for (const error of feasibilityErrors(next, session, disruption, plan.now)) errors.push(`${session.id}: ${error}`);
     const count = next.bookings.filter((booking) => booking.sessionId === session.id && isActiveBooking(booking)).length;
     if (count > session.capacity) errors.push(`${session.id}: Booking capacity exceeded`);
@@ -122,7 +125,7 @@ export function validate(state: State, plan: Plan): { ok: boolean; errors: strin
     const booking = state.bookings.find((item) => item.id === action.bookingId);
     if (booking && (booking.customerId !== action.customerId || booking.amount !== action.amount)) errors.push(`Booking details do not match: ${action.bookingId}`);
   }
-  for (const action of recoveryActions(state, plan.sessionChanges)) {
+  for (const action of (plan.correctionOf ? correctionActions : recoveryActions)(state, plan.sessionChanges)) {
     const actual = plan.bookingActions.find((item) => item.bookingId === action.bookingId);
     if (!actual) errors.push(`Missing booking action: ${action.bookingId}`);
     else if (actual.action !== action.action) errors.push(`Invalid booking action: ${action.bookingId}`);

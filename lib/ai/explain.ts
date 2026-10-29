@@ -11,6 +11,10 @@ const spelledNumber = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|te
 /** Templates are immediate by default; callers may explicitly request a guarded wording pass. */
 export async function explainPlan(plan: Plan, state: State, opts: { rephrase?: boolean } = {}): Promise<PlanExplanation> {
   const totals = plan.totals;
+  if (plan.correctionOf) return { headline: "Your schedule correction is ready", source: "template", bullets: [
+    `${totals.sessionsAffected} sessions return to their original placement; ${totals.kept} bookings keep their time and ${totals.moved} return to their original time.`,
+    "Approval withdraws the disruption. Refunds, studio credits and cover payouts already issued stay recorded. No new refunds are issued.",
+  ] };
   const refund = formatMoney(totals.refundAmount, state.studio.currency);
   const revenue = formatMoney(totals.revenueKept, state.studio.currency);
   const template: PlanExplanation = {

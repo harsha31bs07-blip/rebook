@@ -24,6 +24,7 @@ export function CoverRecord({ plan, state, links }: { plan: PublicPlan; state: S
     // The substitute's own answer on their cover link supersedes the owner's pre-approval record.
     const asked = links?.filter((item) => item.planId === plan.id && item.sessionId === cover.sessionId) ?? [];
     const latest = asked.findLast((item) => item.current) ?? asked.at(-1);
+    if (latest?.status === "withdrawn") return <li key={cover.sessionId}>{cover.label} — Back with the regular instructor.{latest.payout ? " Existing payout stays recorded." : " Cover withdrawn."}</li>;
     const declined = asked.filter((item) => item.status === "declined" && item !== latest).map((item) => item.instructor);
     const after = declined.length ? ` after ${declined.join(" and ")} declined` : "";
     if (latest && (latest.respondedBy === "instructor" || declined.length)) return <li key={cover.sessionId}>{cover.label} — {latest.status === "accepted" ? `Accepted by ${latest.instructor} on their cover link${after}` : latest.status === "declined" ? `Declined by ${latest.instructor}${after}` : `Asked ${latest.instructor}${after}`}</li>;
@@ -31,7 +32,7 @@ export function CoverRecord({ plan, state, links }: { plan: PublicPlan; state: S
   })}</ul></div>;
 }
 
-export function ApprovalDialog({ unconfirmed, busy, onApprove, onClose }: { unconfirmed: ReturnType<typeof planCovers>; busy: boolean; onApprove: () => void; onClose: () => void }) {
+export function ApprovalDialog({ unconfirmed, busy, correction = false, onApprove, onClose }: { unconfirmed: ReturnType<typeof planCovers>; busy: boolean; correction?: boolean; onApprove: () => void; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -41,9 +42,9 @@ export function ApprovalDialog({ unconfirmed, busy, onApprove, onClose }: { unco
     return () => { element?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
   return <dialog ref={dialog} className="approval-dialog" aria-labelledby="approval-title" aria-describedby="approval-help" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
-    <h2 id="approval-title">Approve this recovery?</h2><p id="approval-help">Approval applies this schedule and starts sandbox refunds.</p>
+    <h2 id="approval-title">{correction ? "Approve this correction?" : "Approve this recovery?"}</h2><p id="approval-help">{correction ? "Approval withdraws the disruption and restores these placements. Settled payments stay recorded; no new refunds are issued." : "Approval applies this schedule and starts sandbox refunds."}</p>
     {unconfirmed.length > 0 && <div className="warning"><h3>{unconfirmed.length} cover{unconfirmed.length === 1 ? "" : "s"} not yet confirmed</h3><ul>{unconfirmed.map((cover) => <li key={cover.sessionId}>{cover.label}</li>)}</ul><p>You can approve now and follow up with these instructors.</p></div>}
-    <div className="button-row"><button ref={cancel} disabled={busy} onClick={onClose}>Keep reviewing</button><button className="primary" disabled={busy} onClick={onApprove}>Confirm approval and refund</button></div>
+    <div className="button-row"><button ref={cancel} disabled={busy} onClick={onClose}>Keep reviewing</button><button className="primary" disabled={busy} onClick={onApprove}>{correction ? "Confirm correction" : "Confirm approval and refund"}</button></div>
   </dialog>;
 }
 
@@ -60,13 +61,14 @@ export function RefundResults({ results, state, workspaceId }: { results: Execut
   })}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   outcomes?: RecoveryOutcome[];
   creditPaidBookingIds?: string[];
   outboxSummary?: ReturnType<typeof summarizeOutbox>;
   coverLinks?: OwnerCover[];
   customerPath?: string; onPreview?: (party: "customer" | "instructor") => void;
+  onWithdraw?: () => void;
   approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: (confirmedCoverSessionIds?: string[]) => void; onDiscard: () => void; onMessages: () => void;
 }) {
   const totals = plan.totals;
@@ -99,6 +101,9 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
     <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
+    {plan.correctionOf && <p className="notice" role="status">Correction of earlier plan {plan.correctionOf}. The disruption is over; review the restored schedule.</p>}
+    {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
+    {onWithdraw && <button className="full-width" disabled={busy} onClick={onWithdraw}>The disruption is over — restore the schedule</button>}
     {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}
     {!proposed && outboxSummary && <p className="muted plan-context" role="status" aria-live="polite">{outboxSummary.sent} sent · {outboxSummary.replied} replied · {outboxSummary.waiting} waiting</p>}
     {plan.status === "executed" && onPreview && <NextSteps workspaceId={plan.workspaceId} summary={outboxSummary} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} customerPath={customerPath} onMessages={onMessages} onPreview={onPreview} />}
@@ -135,13 +140,13 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     </div>}
     <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-    {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button id="judge-approve" className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={() => setApprovalReview(reviewKey)}>{approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">Approval applies this schedule and starts sandbox refunds.</p></div>}
-    {proposed && approvalReview === reviewKey && <ApprovalDialog unconfirmed={covers.filter((cover) => !confirmedIds.includes(cover.sessionId))} busy={busy} onClose={() => setApprovalReview("")} onApprove={() => { setApprovalReview(""); onApprove(confirmedIds); }} />}
+    {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button id="judge-approve" className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={() => setApprovalReview(reviewKey)}>{plan.correctionOf ? approving ? "Restoring schedule…" : "Approve correction" : approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">{plan.correctionOf ? "Approval withdraws the disruption and restores this schedule without new refunds." : "Approval applies this schedule and starts sandbox refunds."}</p></div>}
+    {proposed && approvalReview === reviewKey && <ApprovalDialog correction={!!plan.correctionOf} unconfirmed={covers.filter((cover) => !confirmedIds.includes(cover.sessionId))} busy={busy} onClose={() => setApprovalReview("")} onApprove={() => { setApprovalReview(""); onApprove(confirmedIds); }} />}
     {!proposed && <CoverRecord plan={plan} state={state} links={coverLinks} />}
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
-    <RefundResults key={plan.id} results={results} state={state} workspaceId={["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
+    <RefundResults key={plan.id} results={results} state={state} workspaceId={!plan.correctionOf && ["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
     <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
     <BookingGrid plan={plan} state={state} />
   </>;

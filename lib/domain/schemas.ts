@@ -81,6 +81,7 @@ export const TotalsSchema = z.object({
 });
 export const PlanSchema = z.object({
   disruption: DisruptionSchema,
+  correctionOf: z.string().min(1).optional(),
   // Recorded so validation can distinguish upcoming sessions from historical ones.
   now: IsoSchema,
   sessionChanges: z.array(SessionChangeSchema), bookingActions: z.array(BookingActionSchema),

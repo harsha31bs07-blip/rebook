@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoverView } from "@/lib/recovery/cover-pay";
 
@@ -33,13 +34,14 @@ export default function CoverPage({ token }: { token: string }) {
   }
   const when = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: data?.studio.timezone, weekday: "long", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
-  const title = !data ? "Cover request" : data.payout?.status === "SUCCESS" ? "Paid. Thank you for covering." : data.status === "replaced" ? "This class has been reassigned." : data.status === "accepted" ? "You’re teaching this class."
+  const title = !data ? "Cover request" : data.status === "withdrawn" ? "This class went back to its regular instructor." : data.payout?.status === "SUCCESS" ? "Paid. Thank you for covering." : data.status === "replaced" ? "This class has been reassigned." : data.status === "accepted" ? "You’re teaching this class."
     : data.status === "declined" ? "You declined this cover." : `Can you cover ${data.class.title}?`;
   return <main id="main-content" tabIndex={-1} className="customer-booking customer-choice">
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A cover request from your studio.</span></header>
     <section className="choice-intro"><p className="eyebrow">{data?.studio.name ?? "Your studio"}</p><h1 ref={heading} tabIndex={-1}>{title}</h1>
-      {data && <p className="muted">{data.original} is unavailable. Cover fee ${data.fee}, paid with PayPal.</p>}</section>
+      {data && <p className="muted">{data.status === "withdrawn" ? `The disruption was withdrawn. ${data.original} is back.${data.payout ? " Your existing payout stays recorded." : " This cover can no longer be accepted or paid."}` : `${data.original} is unavailable. Cover fee $${data.fee}, paid with PayPal.`}</p>}</section>
     {error && <p className="error error-box" role="alert">{error}</p>}
+    {error.includes("free server") && <Link href="/">Start a fresh demo</Link>}
     {!data && !error && <p role="status">Opening your cover request…</p>}
     {data && <>
       <section className="choice-change" aria-label="The class"><div><p className="eyebrow">Class</p><h2>{data.class.title}</h2><p>{when(data.class.start)}</p>

@@ -5,6 +5,7 @@ export type CoverConfirmation = {
 };
 
 export function planCovers(plan: Plan, state: State) {
+  if (plan.correctionOf) return [];
   return plan.sessionChanges.flatMap((change) => {
     if (!change.after || change.after.instructorId === change.before.instructorId) return [];
     const instructor = state.instructors.find((item) => item.id === change.after!.instructorId);

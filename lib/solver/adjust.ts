@@ -7,6 +7,7 @@ export type OwnerAdjustment = { sessionId: string; start: string; instructorId?:
 
 /** Shared inexpensive drag pre-check; the server still validates every session and booking. */
 export function checkAdjustment(state: State, plan: Plan, input: OwnerAdjustment): { valid: boolean; message: string; session?: Session } {
+  if (plan.correctionOf) return { valid: false, message: "A correction restores original placements. Discard it to plan a different recovery." };
   const change = plan.sessionChanges.find((item) => item.sessionId === input.sessionId);
   const before = state.sessions.find((item) => item.id === input.sessionId);
   if (!change?.after || !before) return { valid: false, message: "Only a proposed recovery block can be moved." };

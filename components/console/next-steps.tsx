@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { summarizeOutbox } from "../../lib/choices/outbox";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
 
-const COVER = { asked: "hasn’t answered yet", accepted: "accepted", declined: "declined", replaced: "was replaced" } as const;
+const COVER = { asked: "hasn’t answered yet", accepted: "accepted", declined: "declined", replaced: "was replaced", withdrawn: "is no longer needed; the regular instructor is back" } as const;
 const PAID: Record<string, string> = { REQUESTED: "payout sending", PENDING: "payout processing", SUCCESS: "paid with PayPal", UNCLAIMED: "payout unclaimed", FAILED: "payout failed" };
 
 /** After approval: the three follow-ups that finish a recovery, each with live status and a way to see it. */

@@ -51,6 +51,7 @@ export const api = {
   plan: (id: string, disruption: Disruption, signal?: AbortSignal, confirmed?: boolean) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption, ...(confirmed ? { confirmed: true } : {}) }, signal),
   details: (id: string, planId: string, signal?: AbortSignal) => request<PlanDetails>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, signal),
   discard: (id: string, planId: string) => request<{ discarded: true }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, undefined, "DELETE"),
+  withdraw: (id: string, planId: string) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/withdraw`, {}),
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
   approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
   checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),

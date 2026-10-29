@@ -140,6 +140,16 @@ export function recoveryActions(state: State, changes: Plan["sessionChanges"]): 
   return actions.sort((a, b) => byId({ id: a.bookingId }, { id: b.bookingId }));
 }
 
+export function correctionActions(state: State, changes: Plan["sessionChanges"]): BookingAction[] {
+  return state.bookings.filter(isActiveBooking).sort(byId).flatMap((booking) => {
+    const change = changes.find((item) => item.sessionId === booking.sessionId);
+    if (!change?.after) return [];
+    return [{ bookingId: booking.id, customerId: booking.customerId,
+      action: Date.parse(change.before.start) === Date.parse(change.after.start) ? "keep" as const : "move" as const,
+      amount: booking.amount, reason: "Back to the original time." }];
+  });
+}
+
 /** Secondary cost only: refund count and remedy priority are compared first. */
 export function scoreCandidate(
   remedy: Remedy, before: Session, after: Session | undefined,

@@ -19,7 +19,17 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
     const signature = `Thank you for being part of ${state.studio.name}.`;
     let subject: string;
     let body: string;
-    if (action.action === "refund") {
+    if (plan.correctionOf) {
+      if (action.action === "refund" || !change?.after) throw new Error("A correction cannot refund a booking");
+      const instructor = state.instructors.find((item) => item.id === change.after!.instructorId)?.name ?? "Your regular instructor";
+      subject = `Good news about your ${session.title} class`;
+      const update = action.action === "move"
+        ? `Good news: your ${session.title} class is back at its original time, ${formatTime(change.after.start)} (${state.studio.timezone}), with ${instructor}.`
+        : `Good news: ${instructor} is teaching your ${session.title} class again at its usual time.`;
+      const room = state.rooms.find((item) => item.id === change.after!.roomId);
+      const roomUpdate = change.after.roomId !== change.before.roomId ? ` Your class is back in ${room?.name ?? "its original room"}.` : "";
+      body = `${greeting}\n\n${update}${roomUpdate}\n\n${signature}`;
+    } else if (action.action === "refund") {
       subject = booking.entitlement ? `An update to your ${session.title} booking` : `A refund for your ${session.title} booking`;
       body = `${greeting}\n\nWe're sorry we couldn't keep your ${session.title} booking. ${booking.entitlement ? entitlementMessage(booking.entitlement) : `We'll arrange a refund of ${state.studio.currency} ${action.amount}.`} ${action.reason}\n\n${signature}`;
     } else if (action.action === "move") {

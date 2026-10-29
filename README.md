@@ -22,6 +22,12 @@ The walkthrough takes about 60 seconds once your studio is ready (first load can
 
 **Try it on your own week:** [/import](https://rebook-by9u.onrender.com/import) reads one week of a booking-system export (one row per booking), shows every column and class type it understood for you to correct, and builds a private copy of that week to rehearse a recovery on. **Use a sample week** loads a Mindbody-style export if you don't have one to hand. If a substitute says no, the console offers the next qualified instructor who is free and suits everyone booked, in one click.
 
+## Correct an approved recovery
+
+On an approved recovery, choose **The disruption is over — restore the schedule**. Review the proposed correction in the timeline and booking list, then **Approve correction**. `POST /api/workspaces/[id]/plans/[planId]/withdraw` previews it; the existing approve endpoint applies it. Each recovery can have one correction; discarding its preview allows another preview.
+
+Corrections withdraw the disruption constraint and restore upcoming classes only when their recovery placement is unchanged and their original placement still fits. Customers get updated private links and unused substitute covers close. Refunds, studio credits and cover payouts already issued stay recorded; no new refunds are issued. Started classes, cancellations and customer moves to another class stay as they are, with warnings for anything that cannot be restored.
+
 ## What is real
 
 Payments and refunds marked real are actual **PayPal sandbox transactions**; no real money moves. The studio, members and bookings are fictional. By default, the two disruption scenarios prepare 38 sandbox captures (31 Monday bookings and seven Wednesday bookings); the rest of the week is simulated and labelled. Inconclusive prior capture outcomes stay labelled as simulated fallbacks. Customer checkout also creates sandbox payments. `DEMO_REAL_CAPTURES=0` simulates seeded payments and labels them. The server accepts only `PAYPAL_ENV=sandbox` (or unset); every other value is rejected.
@@ -160,7 +166,7 @@ Rebook is built to sit beside a studio's booking system (Mindbody, Glofox, Momen
 - **Reach:** SMS alongside email, sent from the studio's own number.
 - **Credits:** pack and membership credits synced with the booking system's own ledger.
 
-The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) is the same as in the demo. A pilot would still need what a one-week demo leaves out: per-instructor pay rules, waitlists, and a way to correct a recovery after it is approved.
+The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) is the same as in the demo. A pilot would still need what a one-week demo leaves out: per-instructor pay rules and waitlists. Compensating corrections after approval are available within the studio week; they do not reverse settled money.
 
 ## Honest limits
 
@@ -170,6 +176,7 @@ The core flow (interpretation, the solver, review and approval, customer links, 
 - Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.
 - The owner workspace URL acts as the owner capability for this demo; a real deployment needs owner sign-in. The separate public booking URL (`/b/<bookingId>`) is read/checkout-only and grants no owner access. Customer choice links use separate per-customer tokens.
 - Imported weeks carry no customer availability or PayPal payments: customers are assumed to fit any time (and choose on their own page), and refunds are simulated. Class types are limited to six families (yoga, pilates, spin, dance, HIIT, barre).
+- Corrections do not recreate cancelled classes or undo settled money. Restoration skips started classes, later schedule changes and original placements that are no longer feasible.
 - Recovery stays within one studio week. Moves respect qualifications, availability, clashes and capacity; customers who cannot move need refunds.
 - Transaction Search can lag; uncertain seeded captures fall back to visibly labelled simulations. Refund retries reconcile through Payments; a timeout is never reported as a completed refund, and a refund whose outcome stays unknown is held for owner review instead of being sent again.
 - Bryntum and AG Studio use commercial trial licences; trial notices or watermarks may appear. Gemini free-tier quotas can pause chat; the rules parser and deterministic recovery still work.

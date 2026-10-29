@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "../../lib/client/api";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
 
-const STATUS = { asked: "Asked", accepted: "Accepted", declined: "Declined", replaced: "Replaced by a later change" } as const;
+const STATUS = { asked: "Asked", accepted: "Accepted", declined: "Declined", replaced: "Replaced by a later change", withdrawn: "Back with the regular instructor" } as const;
 const PAYOUT: Record<string, string> = { REQUESTED: "Sending to PayPal", PENDING: "Processing with PayPal", SUCCESS: "Paid", UNCLAIMED: "Unclaimed",
   ONHOLD: "On hold", FAILED: "Failed", RETURNED: "Returned", BLOCKED: "Blocked", REFUNDED: "Refunded", REVERSED: "Reversed", DENIED: "Declined" };
 
@@ -35,6 +35,7 @@ export default function CoverPay({ workspaceId, covers, onUpdated }: { workspace
       return <div className="refund-row" key={`${cover.planId}:${cover.sessionId}:${index}`}>
         <div><strong>{cover.instructor} covers {cover.class} · {cover.when}</strong><span className="result-status">{STATUS[cover.status]}{cover.respondedBy === "owner" ? " by you" : ""}</span></div>
         <p className="muted">For {cover.original} · ${cover.fee} cover fee{cover.payout ? ` · ${PAYOUT[cover.payout.status] ?? cover.payout.status}` : ""}{cover.payout?.itemId ? ` · ${cover.payout.itemId}` : ""}</p>
+        {cover.status === "withdrawn" && <p className="muted">The disruption was withdrawn; this class went back to its regular instructor.{cover.payout ? " The existing payout stays recorded." : " This cover can no longer be accepted or paid."}</p>}
         {cover.status === "declined" && cover.current && (cover.next
           ? <p className="warning">{cover.instructor} declined. {cover.next} is qualified, free then and suits everyone booked.</p>
           : <p className="warning">{cover.instructor} declined{cover.next === null ? " and no other qualified instructor is free then" : ""}. Plan a new recovery for this class.</p>)}

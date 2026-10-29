@@ -60,7 +60,7 @@ it("asks the substitute on a private link after approval, without touching the h
   expect(JSON.stringify(coverView(token, repository))).not.toMatch(/@|customer/i);
   // A customer token cannot open a cover link, and an unknown token is rejected.
   const customer = repository.listCustomerLinks(workspaceId)[0];
-  expect(() => coverView(repository.customerToken(customer), repository)).toThrow("not valid");
+  expect(() => coverView(repository.customerToken(customer), repository)).toThrow("no longer available");
 });
 
 it("starts accepted when the owner confirmed the cover at approval", async () => {

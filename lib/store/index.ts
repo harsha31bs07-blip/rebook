@@ -6,7 +6,7 @@ import type { Plan, State } from "../domain/types";
 import { PlanSchema, StateSchema } from "../domain/schemas";
 import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "../domain/time";
 import { nextWeekStart } from "../seed/seed";
-import { activateConstraint, activeConstraints, preserveConstraints } from "../solver/constraints";
+import { activateConstraint, preserveConstraints } from "../solver/constraints";
 import type { CoverConfirmation } from "../recovery/covers";
 import type { DeliveryStatus } from "../choices/outbox";
 
@@ -19,6 +19,7 @@ export type StoredPlan = Plan & {
   createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
   lastAdjustmentTotals?: Plan["totals"];
   coverConfirmations?: CoverConfirmation[];
+  correctedBy?: string;
   refundProgress?: { done: number; total: number };
 };
 export type Workspace = {
@@ -52,6 +53,7 @@ export type Credit = {
 export type CoverLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
   status: "asked" | "accepted" | "declined"; respondedAt?: string; respondedBy?: "instructor" | "owner"; fee: string;
+  withdrawnBy?: string;
 };
 /** Cover pay is staffing cost, kept apart from the customer money ledger and its revenue totals. */
 export type CoverPayout = {
@@ -315,9 +317,12 @@ export class Repository {
     const workspace = JSON.parse(row.data) as Workspace;
     if (workspace.pooled && !includePooled) return undefined;
     // Backfill workspaces executed before constraints were persisted in scheduling state.
-    if (!activeConstraints(workspace.state).length) {
+    if (!("activeConstraints" in workspace.state)) {
       const applied = this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? AND json_extract(data, '$.status') != 'proposed'").all(id) as JsonRow[];
-      for (const row of applied) workspace.state = activateConstraint(workspace.state, (JSON.parse(row.data) as StoredPlan).disruption);
+      for (const row of applied) {
+        const plan = JSON.parse(row.data) as StoredPlan;
+        if (!plan.correctionOf && !plan.correctedBy) workspace.state = activateConstraint(workspace.state, plan.disruption);
+      }
     }
     // Older persisted workspaces predate the explicit seed-week field.
     if (!workspace.state.studio.weekStart) {

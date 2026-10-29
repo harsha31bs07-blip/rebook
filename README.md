@@ -20,6 +20,8 @@ The walkthrough takes about 60 seconds once your studio is ready (first load can
 6. Under **Cover instructors**, open Alex's cover link and accept, then press **Pay Alex $35 with PayPal**: a sandbox PayPal payout.
 7. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?", "Which class type earns the most revenue?" or "Add a bar chart of revenue by class type".
 
+**Try it on your own week:** [/import](https://rebook-by9u.onrender.com/import) reads one week of a booking-system export (one row per booking), shows every column and class type it understood for you to correct, and builds a private copy of that week to rehearse a recovery on. **Use a sample week** loads a Mindbody-style export if you don't have one to hand. If a substitute says no, the console offers the next qualified instructor who is free and suits everyone booked, in one click.
+
 ## What is real
 
 Payments and refunds marked real are actual **PayPal sandbox transactions**; no real money moves. The studio, members and bookings are fictional. By default, the two disruption scenarios prepare 38 sandbox captures (31 Monday bookings and seven Wednesday bookings); the rest of the week is simulated and labelled. Inconclusive prior capture outcomes stay labelled as simulated fallbacks. Customer checkout also creates sandbox payments. `DEMO_REAL_CAPTURES=0` simulates seeded payments and labels them. The server accepts only `PAYPAL_ENV=sandbox` (or unset); every other value is rejected.
@@ -34,6 +36,7 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 | --- | --- | --- | --- |
 | Paste a forwarded message: "Fwd from Maya: so sorry, fever since last night, can't teach today" | Reads forwarded texts, Hinglish ("Maya bimaar hai, kal class nahi le paayegi") and shorthand that the rules parser cannot | Negations, maybes, corrections, past events and questions never reach the model; its reading must match the names, days and times you wrote; you confirm "AI read this as…" before anything is planned | [interpret.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/ai/interpret.ts#L215-L292), [live report](docs/interpretation-messy-eval.md) |
 | On a customer's private link, type what works | Turns "anything after 6 this week, otherwise refund me" into one concrete class or refund | Proposes only; the class must be one of that customer's real options, every amount and the reply about money come from the server, and the customer confirms | [assistant.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/choices/assistant.ts#L17-L54), [live report](docs/customer-assistant-eval.md) |
+| [/import](https://rebook-by9u.onrender.com/import) > **Use a sample week** | Matches the export's columns and class names ("Slow Burn" is yoga) that exact-name rules cannot | Only column headers and class names are sent, never customer details; every match is shown with how it was made and the owner can change it; no AI runs when the studio is created | [service.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/import/service.ts) |
 | Dashboard > Ask Recovery analyst | Answers cost and refund questions from the workspace ledger and edits the AG Studio report | Tool-backed, timestamped answers | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L54-L87) |
 
 Models: Gemini first, Groq as fallback; the deterministic solver, server validation and PayPal decide every booking and amount.
@@ -150,7 +153,7 @@ A browser end-to-end check walks the whole judge path on a deployment (interpret
 
 Rebook is built to sit beside a studio's booking system (Mindbody, Glofox, Momence and similar), not replace it: the booking system stays the record of members and payments, and Rebook handles the bad morning. A first real pilot would need:
 
-- **Data in:** import the week's timetable, instructors and bookings from the booking system's export or API, and write the approved changes back.
+- **Data in:** [/import](https://rebook-by9u.onrender.com/import) already reads a week from a CSV export; a pilot would read it through the booking system's API instead and write the approved changes back.
 - **Owner sign-in** in place of the workspace link, and durable storage (Postgres) in place of per-visitor demo workspaces.
 - **Live PayPal:** the studio connects its own PayPal business account (partner onboarding); refunds and cover payouts then run against live captures with the same idempotency and reconciliation.
 - **Reach:** SMS alongside email, sent from the studio's own number.
@@ -163,6 +166,7 @@ Everything else (interpretation, the solver, review and approval, customer links
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.
 - Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.
 - The owner workspace URL acts as the owner capability for this demo; a real deployment needs owner sign-in. The separate public booking URL (`/b/<bookingId>`) is read/checkout-only and grants no owner access. Customer choice links use separate per-customer tokens.
+- Imported weeks carry no customer availability or PayPal payments: customers are assumed to fit any time (and choose on their own page), and refunds are simulated. Class types are limited to six families (yoga, pilates, spin, dance, HIIT, barre).
 - Recovery stays within one studio week. Moves respect qualifications, availability, clashes and capacity; customers who cannot move need refunds.
 - Transaction Search can lag; uncertain seeded captures fall back to visibly labelled simulations. Refund retries reconcile through Payments; a timeout is never reported as a completed refund, and a refund whose outcome stays unknown is held for owner review instead of being sent again.
 - Bryntum and AG Studio use commercial trial licences; trial notices or watermarks may appear. Gemini free-tier quotas can pause chat; the rules parser and deterministic recovery still work.

@@ -16,7 +16,7 @@ export async function explainPlan(plan: Plan, state: State, opts: { rephrase?: b
   const template: PlanExplanation = {
     headline: "Your studio recovery plan is ready",
     bullets: [
-      `${totals.sessionsAffected} sessions affected; ${totals.kept} bookings stay at their original time.`,
+      `${totals.sessionsAffected} ${totals.sessionsAffected === 1 ? "session" : "sessions"} affected; ${totals.kept} bookings stay at their original time.`,
       `${totals.moved} bookings move to a new time.`,
       `${totals.refunded} bookings receive refunds totaling ${refund}.`,
       `${revenue} in revenue stays with your studio.`,

@@ -162,7 +162,7 @@ textarea { resize: vertical; min-height: 120px; }
 .proof-grid strong { display: block; font-size: 34px; line-height: 1; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
 .proof-grid p { font-size: 13px; line-height: 1.45; margin: 10px 0 6px; }
 .proof-grid li > span { display: block; font-size: 11px; line-height: 1.5; color: var(--muted); }
-.proof-grid a { display: inline-block; margin-top: 8px; font-size: 11px; }
+.proof-grid a { display: inline-block; margin-top: 8px; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 1023px) { .proof-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 24px; } }
 .landing-footer { border-top: 1px solid var(--border); display: flex; justify-content: space-between; padding: 24px 0; color: var(--muted); font-size: 11px; }
 

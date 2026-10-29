@@ -1,5 +1,7 @@
 import { z } from "zod";
-import type { State } from "../domain/types";
+import type { Session, State } from "../domain/types";
+import { isActiveBooking } from "../solver/score";
+import { feasibilityErrors } from "../solver/validate";
 import { PayPalError } from "../paypal/client";
 import { createPayout, getPayout } from "../paypal/payouts";
 import { getRepository, StoreError, withWorkspaceLock, type CoverLink, type CoverPayout, type Repository, type StoredPlan } from "../store";
@@ -26,7 +28,7 @@ function details(link: CoverLink, repository: Repository) {
   const session = state.sessions.find((item) => item.id === link.sessionId);
   const change = plan?.sessionChanges.find((item) => item.sessionId === link.sessionId);
   const name = (id?: string) => state.instructors.find((item) => item.id === id)?.name ?? "Studio team";
-  const payout = repository.listCoverPayouts(link.workspaceId).find((item) => item.planId === link.planId && item.sessionId === link.sessionId);
+  const payout = repository.listCoverPayouts(link.workspaceId).find((item) => item.planId === link.planId && item.sessionId === link.sessionId && item.instructorId === link.instructorId);
   return { state, session, instructor: name(link.instructorId), original: name(change?.before.instructorId), current: session?.instructorId === link.instructorId,
     payout: payout && { status: payout.status, amount: payout.amount, itemId: payout.itemId, error: payout.error } };
 }
@@ -61,14 +63,52 @@ export async function respondToCover(token: string, action: "accept" | "decline"
   return coverView(token, repository);
 }
 
-/** The owner's cover list, with each private instructor link. */
+/**
+ * The next instructor to ask after a decline: qualified, free at the class's time, within their daily limit, not the
+ * disrupted resource, never asked before for this class, and acceptable to every customer still booked.
+ */
+export function nextCover(state: State, plan: StoredPlan, session: Session, asked: string[]) {
+  const original = plan.sessionChanges.find((change) => change.sessionId === session.id)?.before.instructorId;
+  const staying = state.bookings.filter((booking) => booking.sessionId === session.id && isActiveBooking(booking))
+    .map((booking) => state.customers.find((customer) => customer.id === booking.customerId));
+  return [...state.instructors].sort((a, b) => a.id.localeCompare(b.id)).find((instructor) => !asked.includes(instructor.id)
+    && feasibilityErrors(state, { ...session, instructorId: instructor.id }, plan.disruption, new Date().toISOString()).length === 0
+    && staying.every((customer) => !!customer && (instructor.id === original || customer.prefs.acceptsSubstitute || !!customer.prefs.preferredInstructorIds?.includes(instructor.id))));
+}
+
+/** After a decline, give the class to the next suitable instructor and send them their own cover link. */
+export async function askNextCover(workspaceId: string, planId: string, sessionId: string, repository = getRepository()) {
+  await withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
+    const plan = repository.getPlan(workspaceId, planId);
+    if (!plan || plan.status === "proposed") throw new StoreError(404, "Recovery not found");
+    const { state } = repository.requireReadyWorkspace(workspaceId);
+    const session = state.sessions.find((item) => item.id === sessionId);
+    if (!session) throw new StoreError(410, "This class is no longer on the schedule.");
+    if (Date.parse(session.start) <= Date.now()) throw new StoreError(409, "This class has already started.");
+    const links = repository.listCoverLinks(workspaceId).filter((item) => item.planId === planId && item.sessionId === sessionId);
+    if (links.find((item) => item.instructorId === session.instructorId)?.status !== "declined") throw new StoreError(409, "Only a declined cover can be passed to another instructor.");
+    const next = nextCover(state, plan, session, links.map((item) => item.instructorId));
+    if (!next) throw new StoreError(409, "No other qualified instructor is free for this class. Plan a new recovery for it.");
+    session.instructorId = next.id;
+    repository.saveState(workspaceId, state);
+    repository.createCoverLink({ workspaceId, planId, sessionId, instructorId: next.id, status: "asked", fee: COVER_FEE });
+  }));
+  return ownerCovers(workspaceId, repository);
+}
+
+/** The owner's cover list, with each private instructor link. Earlier asks stay listed as history. */
 export function ownerCovers(workspaceId: string, repository = getRepository()) {
   void refreshCoverPayouts(workspaceId, repository).catch(() => {});
-  return repository.listCoverLinks(workspaceId).map((link) => {
+  const links = repository.listCoverLinks(workspaceId);
+  return links.map((link) => {
     const { state, session, instructor, original, payout, current } = details(link, repository);
     const when = session ? new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start)) : "";
-    return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when, status: current ? link.status : "replaced" as const,
-      respondedBy: link.respondedBy, fee: link.fee, path: `/i/${repository.coverToken(link)}`, payout, payee: Boolean(process.env.PAYPAL_PAYOUT_RECEIVER?.trim()) };
+    const plan = current && link.status === "declined" && session && Date.parse(session.start) > Date.now() ? repository.getPlan(workspaceId, link.planId) : undefined;
+    const next = plan && session ? nextCover(state, plan, session, links.filter((item) => item.planId === link.planId && item.sessionId === link.sessionId).map((item) => item.instructorId)) : undefined;
+    return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when,
+      status: current || link.status === "declined" ? link.status : "replaced" as const, current,
+      respondedBy: link.respondedBy, fee: link.fee, path: `/i/${repository.coverToken(link)}`, payout,
+      payee: Boolean(process.env.PAYPAL_PAYOUT_RECEIVER?.trim()), ...(plan ? { next: next?.name ?? null } : {}) };
   });
 }
 export type OwnerCover = ReturnType<typeof ownerCovers>[number];
@@ -78,7 +118,9 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
   const receiver = process.env.PAYPAL_PAYOUT_RECEIVER?.trim();
   if (!receiver) throw new StoreError(503, "Cover payouts need a sandbox payee (PAYPAL_PAYOUT_RECEIVER).");
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
-    const link = repository.listCoverLinks(workspaceId).find((item) => item.planId === planId && item.sessionId === sessionId);
+    const asked = repository.listCoverLinks(workspaceId).filter((item) => item.planId === planId && item.sessionId === sessionId);
+    const teaching = repository.requireWorkspace(workspaceId).state.sessions.find((item) => item.id === sessionId)?.instructorId;
+    const link = asked.find((item) => item.instructorId === teaching) ?? asked.at(-1);
     if (!link) throw new StoreError(404, "Cover not found");
     if (link.status !== "accepted") throw new StoreError(409, "Pay a cover only after the instructor accepts it.");
     const { session, current } = details(link, repository);

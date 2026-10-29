@@ -13,7 +13,7 @@ export default function NextSteps({ workspaceId, summary, covers, customerPath, 
   onMessages: () => void; onPreview: (party: "customer" | "instructor") => void;
 }) {
   const total = summary ? summary.sent + summary.notSent : 0;
-  const cover = covers?.[0];
+  const cover = covers?.find((item) => item.current) ?? covers?.[0];
   return <section className="next-steps" aria-labelledby="next-steps-title"><h3 id="next-steps-title">What happens next</h3><ol>
     <li><div><strong>Customers choose</strong><span>{summary ? `${summary.replied} of ${total} replied · ${summary.sent} sent` : "Private links are ready"}</span></div>
       <div className="next-actions"><button onClick={onMessages}>Message customers</button>{customerPath && <button onClick={() => onPreview("customer")}>See a customer’s page</button>}</div></li>

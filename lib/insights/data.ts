@@ -54,7 +54,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       local_day: localParts(change.before.start, state.studio.timezone).dateKey,
       local_start: localParts(change.before.start, state.studio.timezone).minutesOfDay,
       original_instructor: state.instructors.find((item) => item.id === change.before.instructorId)?.name ?? "Unknown instructor",
-      covering_instructor: state.instructors.find((item) => item.id === change.after!.instructorId)?.name ?? "Unknown instructor",
+      // An applied cover can pass to another instructor after a decline; the class's current teacher is who covered it.
+      covering_instructor: state.instructors.find((item) => item.id === (plan.status !== "proposed" && sessions.get(change.sessionId)?.start === change.after!.start
+        ? sessions.get(change.sessionId)!.instructorId : change.after!.instructorId))?.name ?? "Unknown instructor",
     }))),
     studio: { name: state.studio.name, timezone: state.studio.timezone, currency: state.studio.currency,
       week_start: state.studio.weekStart, week_label: weekBounds(state).label },

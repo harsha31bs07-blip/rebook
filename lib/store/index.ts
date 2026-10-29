@@ -123,8 +123,7 @@ export class Repository {
       CREATE TABLE IF NOT EXISTS cover_links (
         id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL,
-        UNIQUE(plan_id, session_id)
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS cover_payouts (
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -143,6 +142,17 @@ export class Repository {
         link_id TEXT NOT NULL UNIQUE REFERENCES customer_links(id) ON DELETE CASCADE, data TEXT NOT NULL
       );
     `);
+    // A declined cover can be passed to another instructor: one link per instructor asked, not per class.
+    const covers = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cover_links'").get() as { sql: string } | undefined;
+    if (covers?.sql.includes("UNIQUE(plan_id, session_id)")) this.transaction(() => {
+      this.db.exec(`CREATE TABLE cover_links_next (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL
+      );
+      INSERT INTO cover_links_next SELECT id, token_hash, workspace_id, plan_id, session_id, data FROM cover_links ORDER BY rowid;
+      DROP TABLE cover_links; ALTER TABLE cover_links_next RENAME TO cover_links;`);
+    });
     // Persist separate public capabilities for existing demos before indexing them.
     this.transaction(() => {
       const rows = this.db.prepare("SELECT id FROM workspaces WHERE json_extract(data, '$.bookingId') IS NULL").all() as { id: string }[];
@@ -220,7 +230,7 @@ export class Repository {
     this.db.prepare("UPDATE credits SET data = ? WHERE id = ?").run(JSON.stringify(credit), credit.id);
   }
   createCoverLink(input: Omit<CoverLink, "id" | "tokenHash" | "createdAt">): CoverLink {
-    const previous = this.listCoverLinks(input.workspaceId).find((link) => link.planId === input.planId && link.sessionId === input.sessionId);
+    const previous = this.listCoverLinks(input.workspaceId).find((link) => link.planId === input.planId && link.sessionId === input.sessionId && link.instructorId === input.instructorId);
     if (previous) return previous;
     const link: CoverLink = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", createdAt: new Date().toISOString() };
     link.tokenHash = createHash("sha256").update(this.coverToken(link)).digest("hex");

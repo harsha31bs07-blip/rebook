@@ -7,7 +7,9 @@ import { closeRepository, getRepository, type Repository } from "../lib/store";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
 import { executePlan } from "../lib/executor/executePlan";
-import { coverView, ownerCovers, payCover, refreshCoverPayouts, respondToCover } from "../lib/recovery/cover-pay";
+import { askNextCover, coverView, ownerCovers, payCover, refreshCoverPayouts, respondToCover } from "../lib/recovery/cover-pay";
+import { POST as nextPost } from "../app/api/workspaces/[id]/covers/next/route";
+import { DatabaseSync } from "node:sqlite";
 import { POST as instructorPost } from "../app/api/instructor/[token]/route";
 import { POST as payPost } from "../app/api/workspaces/[id]/covers/pay/route";
 import { limits } from "../lib/api/limits";
@@ -191,4 +193,71 @@ it("checks origin and input on the public and owner routes", async () => {
   expect((await pay("https://evil.example")).status).toBe(403);
   expect((await pay("http://localhost")).status).toBe(200);
   expect(payoutRows()[0]).toMatchObject({ status: "PENDING" });
+});
+
+it("passes a declined cover to the next qualified, free instructor in one step, keeps the history, and pays only who teaches", async () => {
+  await approved();
+  await respondToCover(token, "decline", repository);
+  const [declined] = ownerCovers(workspaceId, repository);
+  expect(declined).toMatchObject({ instructor: "Alex Rivera", status: "declined", current: true });
+  const next = declined.next!;
+  expect(["Jordan Lee", "Priya Shah"]).toContain(next);
+  // Customers still booked must all accept the new instructor; the class keeps its time, room and bookings.
+  const before = repository.requireWorkspace(workspaceId).state;
+  const kept = before.bookings.filter((booking) => booking.sessionId === sessionId && ["confirmed", "moved"].includes(booking.status)).map((booking) => booking.id);
+  const response = await nextPost(new Request("http://localhost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planId, sessionId }) }),
+    { params: Promise.resolve({ id: workspaceId }) });
+  expect(response.status).toBe(200);
+  const covers = await response.json();
+  expect(covers.map((cover: { instructor: string; status: string; current: boolean }) => [cover.instructor, cover.status, cover.current]))
+    .toEqual([["Alex Rivera", "declined", false], [next, "asked", true]]);
+  const after = repository.requireWorkspace(workspaceId).state, session = after.sessions.find((item) => item.id === sessionId)!;
+  expect(after.instructors.find((item) => item.id === session.instructorId)!.name).toBe(next);
+  expect(session.start).toBe(before.sessions.find((item) => item.id === sessionId)!.start);
+  expect(after.bookings.filter((booking) => booking.sessionId === sessionId && ["confirmed", "moved"].includes(booking.status)).map((booking) => booking.id)).toEqual(kept);
+  // Alex's old link now says someone else has the class; the new instructor answers on their own link and is the one paid.
+  expect(coverView(token, repository)).toMatchObject({ status: "replaced", canRespond: false });
+  const nextToken = covers[1].path.slice(3);
+  await respondToCover(nextToken, "accept", repository);
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()).toEqual([expect.objectContaining({ instructorId: session.instructorId, amount: "35.00" })]);
+  expect(ownerCovers(workspaceId, repository).map((cover) => [cover.instructor, cover.payout?.status ?? "-"])).toEqual([["Alex Rivera", "-"], [next, "PENDING"]]);
+  // Only a current decline can be passed on; repeating the click does nothing new.
+  await expect(askNextCover(workspaceId, planId, sessionId, repository)).rejects.toThrow("Only a declined cover");
+});
+
+it("never asks the same instructor twice and says so when nobody else qualifies", async () => {
+  await approved();
+  await respondToCover(token, "decline", repository);
+  const names: string[] = ["Alex Rivera"];
+  for (;;) {
+    const current = ownerCovers(workspaceId, repository).find((cover) => cover.current)!;
+    if (!current.next) { expect(current.next).toBeNull(); break; }
+    expect(names).not.toContain(current.next);
+    const covers = await askNextCover(workspaceId, planId, sessionId, repository);
+    const asked = covers.find((cover) => cover.current)!;
+    names.push(asked.instructor);
+    await respondToCover(asked.path.slice(3), "decline", repository);
+  }
+  expect(names.length).toBeGreaterThan(1);
+  await expect(askNextCover(workspaceId, planId, sessionId, repository)).rejects.toThrow("No other qualified instructor is free");
+  expect(ownerCovers(workspaceId, repository).find((cover) => cover.current)!.status).toBe("declined");
+});
+
+it("migrates an older database that allowed one cover link per class, keeping every link", () => {
+  closeRepository();
+  const file = join(directory, "rebook.sqlite"); rmSync(file, { force: true });
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE plans (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, created_at INTEGER NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE cover_links (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(plan_id, session_id));
+    INSERT INTO workspaces VALUES ('w', 0, '{}'); INSERT INTO plans VALUES ('p', 'w', 0, '{}');
+    INSERT INTO cover_links VALUES ('old', 'hash', 'w', 'p', 's', '{"id":"old"}');`);
+  db.close();
+  let migrated: Repository;
+  try { migrated = getRepository(); } catch (error) { throw new Error(`migration failed: ${error}`); }
+  const sql = (migrated as unknown as { db: DatabaseSync }).db.prepare("SELECT sql FROM sqlite_master WHERE name = 'cover_links'").get() as { sql: string };
+  expect(sql.sql).not.toContain("UNIQUE(plan_id, session_id)");
+  expect((migrated as unknown as { db: DatabaseSync }).db.prepare("SELECT id FROM cover_links").all()).toEqual([{ id: "old" }]);
 });

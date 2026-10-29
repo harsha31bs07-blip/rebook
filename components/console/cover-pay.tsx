@@ -19,21 +19,30 @@ export default function CoverPay({ workspaceId, covers, onUpdated }: { workspace
     catch (error) { setNotice(error instanceof Error ? error.message : "Unable to pay this cover."); onUpdated(); }
     finally { setBusy(""); }
   }
+  async function askNext(cover: OwnerCover) {
+    setBusy(cover.sessionId); setNotice("");
+    try { await api.askNextCover(workspaceId, cover.planId, cover.sessionId); setNotice(`Asked ${cover.next} to cover ${cover.class}. Customers' pages now show ${cover.next}.`); onUpdated(); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Unable to ask another instructor."); onUpdated(); }
+    finally { setBusy(""); }
+  }
   async function copy(cover: OwnerCover) {
     try { await navigator.clipboard.writeText(new URL(cover.path, window.location.origin).href); setNotice(`Copied ${cover.instructor}’s cover link.`); }
     catch { setNotice("Copy failed. Open the link and copy it from the address bar."); }
   }
   return <section id="cover-instructors" className="refund-results cover-pay" aria-label="Cover instructors"><h3>Cover instructors</h3>
-    {covers.map((cover) => {
+    {covers.map((cover, index) => {
       const payable = cover.status === "accepted" && cover.payee && (!cover.payout || ["REQUESTED", "FAILED", "RETURNED", "BLOCKED", "DENIED", "REFUNDED", "REVERSED"].includes(cover.payout.status));
-      return <div className="refund-row" key={`${cover.planId}:${cover.sessionId}`}>
+      return <div className="refund-row" key={`${cover.planId}:${cover.sessionId}:${index}`}>
         <div><strong>{cover.instructor} covers {cover.class} · {cover.when}</strong><span className="result-status">{STATUS[cover.status]}{cover.respondedBy === "owner" ? " by you" : ""}</span></div>
         <p className="muted">For {cover.original} · ${cover.fee} cover fee{cover.payout ? ` · ${PAYOUT[cover.payout.status] ?? cover.payout.status}` : ""}{cover.payout?.itemId ? ` · ${cover.payout.itemId}` : ""}</p>
-        {cover.status === "declined" && <p className="warning">{cover.instructor} declined. Plan a new recovery for this class.</p>}
+        {cover.status === "declined" && cover.current && (cover.next
+          ? <p className="warning">{cover.instructor} declined. {cover.next} is qualified, free then and suits everyone booked.</p>
+          : <p className="warning">{cover.instructor} declined{cover.next === null ? " and no other qualified instructor is free then" : ""}. Plan a new recovery for this class.</p>)}
         {cover.payout?.error && <p className="error">{cover.payout.error}</p>}
         <div className="button-row">
           <a href={cover.path} target="_blank" rel="noopener noreferrer" aria-label={`Open ${cover.instructor}’s cover link`}>Open cover link</a>
           <button onClick={() => void copy(cover)} aria-label={`Copy ${cover.instructor}’s cover link`}>Copy link</button>
+          {cover.status === "declined" && cover.current && cover.next && <button className="primary" disabled={!!busy} onClick={() => void askNext(cover)}>{busy === cover.sessionId ? `Asking ${cover.next}…` : `Ask ${cover.next} instead`}</button>}
           {payable && <button className="primary" disabled={!!busy} onClick={() => void pay(cover)}>{busy === cover.sessionId ? "Paying with PayPal…" : cover.payout?.status === "REQUESTED" ? `Check payout to ${cover.instructor}` : `Pay ${cover.instructor} $${cover.fee} with PayPal`}</button>}
         </div>
         {cover.status === "accepted" && !cover.payout && <p className="muted">Studios usually pay after the class; you choose when.</p>}

@@ -230,7 +230,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     {bookingNotice && !toast && <div className="toast" role="status">{bookingNotice.message}</div>}
     {previewParty && details && <PartyPreview initial={previewParty} onClose={() => { setPreviewParty(undefined); void refresh().catch(() => {}); }}
       customerPath={workspace?.customerChoices?.links.find((link) => link.planId === details.plan.id && link.kind === "choice")?.path}
-      coverPath={workspace?.covers?.find((cover) => cover.planId === details.plan.id)?.path} instructor={workspace?.covers?.find((cover) => cover.planId === details.plan.id)?.instructor} />}
+      coverPath={workspace?.covers?.find((cover) => cover.planId === details.plan.id && cover.current)?.path} instructor={workspace?.covers?.find((cover) => cover.planId === details.plan.id && cover.current)?.instructor} />}
     {messagesOpen && details && <MessagesDrawer workspaceId={id} messages={details.messages} links={workspace?.customerChoices?.links.filter((link) => link.planId === details.plan.id)} outbox={details.plan.status !== "proposed" ? workspace?.customerChoices?.outbox?.filter((row) => row.planId === details.plan.id) : undefined} onUpdated={() => { void refresh().catch(() => setError("Outbox saved. The workspace refresh failed; updates will retry shortly.")); }} onClose={() => setMessagesOpen(false)} />}
   </main>;
 }

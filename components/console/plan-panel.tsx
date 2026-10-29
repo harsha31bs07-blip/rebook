@@ -21,8 +21,11 @@ export function CoverRecord({ plan, state, links }: { plan: PublicPlan; state: S
   return <div className="cover-confirmations"><h3>Substitute confirmations</h3><ul>{covers.map((cover) => {
     const confirmation = plan.coverConfirmations?.find((item) => item.sessionId === cover.sessionId && item.instructorId === cover.instructorId);
     // The substitute's own answer on their cover link supersedes the owner's pre-approval record.
-    const answered = links?.find((item) => item.planId === plan.id && item.sessionId === cover.sessionId && item.respondedBy === "instructor");
-    if (answered) return <li key={cover.sessionId}>{cover.label} — {answered.status === "accepted" ? `Accepted by ${cover.instructor} on their cover link` : `Declined by ${cover.instructor}`}</li>;
+    const asked = links?.filter((item) => item.planId === plan.id && item.sessionId === cover.sessionId) ?? [];
+    const latest = asked.findLast((item) => item.current) ?? asked.at(-1);
+    const declined = asked.filter((item) => item.status === "declined" && item !== latest).map((item) => item.instructor);
+    const after = declined.length ? ` after ${declined.join(" and ")} declined` : "";
+    if (latest && (latest.respondedBy === "instructor" || declined.length)) return <li key={cover.sessionId}>{cover.label} — {latest.status === "accepted" ? `Accepted by ${latest.instructor} on their cover link${after}` : latest.status === "declined" ? `Declined by ${latest.instructor}${after}` : `Asked ${latest.instructor}${after}`}</li>;
     return <li key={cover.sessionId}>{cover.label} — {confirmation ? <>Confirmed by {confirmation.confirmedBy} at <time dateTime={confirmation.confirmedAt}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(confirmation.confirmedAt))}</time></> : "Not yet confirmed"}</li>;
   })}</ul></div>;
 }

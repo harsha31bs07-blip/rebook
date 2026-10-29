@@ -10,7 +10,7 @@ import { activateConstraint, activeConstraints, preserveConstraints } from "../s
 import type { CoverConfirmation } from "../recovery/covers";
 import type { DeliveryStatus } from "../choices/outbox";
 
-export type Delivery = { workspaceId: string; planId: string; customerId: string; kind: "message" | "reminder";
+export type Delivery = { workspaceId: string; planId: string; customerId: string; kind: "message" | "reminder" | `credit:${string}`;
   status: DeliveryStatus; attemptId: string; messageId?: string; createdAt: string; updatedAt: string; reason?: string };
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };

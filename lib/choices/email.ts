@@ -1,9 +1,9 @@
 import { limits } from "../api/limits";
 import { emailConfigured, emailEvents, sendEmail } from "../notify/email";
 import { getRepository, StoreError, type Repository } from "../store";
-import { outboxEmail } from "./email-content";
+import { creditEmail, deliverableAddress, outboxEmail } from "./email-content";
 import { outboxState } from "./outbox";
-import { ownerCustomerChoices } from "./service";
+import { creditPath, ownerCustomerChoices, requireLink } from "./service";
 
 export function requireEmail(): void {
   if (!emailConfigured()) throw new StoreError(503, "Email delivery is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server, or use a sharing app.");
@@ -34,6 +34,30 @@ export async function sendCustomerEmail(workspaceId: string, input: { planId: st
     }
   });
   return ownerCustomerChoices(workspaceId, repository);
+}
+
+/** Emails a customer the lasting link to their studio credit, once. Skips quietly when email is off or the address is a demo one. */
+export async function emailCreditLink(token: string, origin: string, client: string, repository = getRepository()): Promise<void> {
+  if (!emailConfigured() || !process.env.PUBLIC_ORIGIN?.trim()) return;
+  const link = requireLink(token, repository);
+  const credit = repository.listCredits(link.workspaceId).find((item) => item.linkId === link.id);
+  if (!credit) return;
+  const { state } = repository.requireWorkspace(link.workspaceId);
+  const customer = state.customers.find((item) => item.id === credit.customerId);
+  if (!customer || !deliverableAddress(customer.email, [credit.bookingId], repository.listCheckout(link.workspaceId))) return;
+  let delivery;
+  try {
+    delivery = repository.queueDelivery({ workspaceId: link.workspaceId, planId: link.planId, customerId: credit.customerId, kind: `credit:${link.id}` },
+      false, () => limits.email(client, link.workspaceId));
+  } catch (error) { if (error instanceof StoreError) return; throw error; }
+  const content = creditEmail(state.studio.name, credit.amount, new URL(creditPath(credit, repository), origin).href, link.before.title);
+  const result = await sendEmail({ ...content, to: customer.email, name: customer.name, tags: ["rebook", "credit"] });
+  repository.transaction(() => {
+    const current = repository.listDeliveries(link.workspaceId).find((item) => item.planId === delivery.planId && item.customerId === delivery.customerId && item.kind === delivery.kind);
+    if (current?.attemptId !== delivery.attemptId) return;
+    repository.saveDelivery({ ...delivery, status: result.kind === "accepted" ? "sent" : result.kind === "rejected" ? "failed" : "unknown",
+      messageId: result.kind === "accepted" ? result.messageId : undefined, reason: result.kind === "rejected" ? result.reason : undefined, updatedAt: new Date().toISOString() });
+  });
 }
 
 export async function sendAllCustomerEmails(workspaceId: string, planId: string, origin: string, client: string, repository = getRepository()) {

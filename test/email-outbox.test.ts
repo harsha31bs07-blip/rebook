@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Limits, limits } from "../lib/api/limits";
 import { publicOrigin } from "../lib/api/same-origin";
-import { refreshEmailStatus, sendAllCustomerEmails, sendCustomerEmail } from "../lib/choices/email";
-import { createCustomerLinks, ownerCustomerChoices } from "../lib/choices/service";
+import { emailCreditLink, refreshEmailStatus, sendAllCustomerEmails, sendCustomerEmail } from "../lib/choices/email";
+import { createCustomerLinks, customerChoice, ownerCustomerChoices } from "../lib/choices/service";
 import { summarizeOutbox } from "../lib/choices/outbox";
 import { seedStudio, demoDisruption } from "../lib/seed/seed";
 import { replan } from "../lib/solver/replan";
@@ -39,6 +39,38 @@ function fixture() {
   const send = (extra = {}) => sendCustomerEmail(id, { ...input, ...extra }, "https://studio.org", "client", repository);
   return { id, plan, row, rows, input, send };
 }
+function credited(id: string, bookingId: string) {
+  const link = repository.listCustomerLinks(id).find((item) => item.bookingId === bookingId && item.kind === "choice")!;
+  const booking = repository.requireWorkspace(id).state.bookings.find((item) => item.id === bookingId)!;
+  repository.createCredit({ workspaceId: id, linkId: link.id, bookingId, customerId: booking.customerId, amount: "22.00" });
+  return repository.customerToken(link);
+}
+it("emails a credit's lasting link once, to a real checkout address, with the token only in the fragment", async () => {
+  const { id, row } = fixture(), token = credited(id, row.changes[0].bookingId);
+  await emailCreditLink(token, "https://studio.org", "client", repository);
+  await emailCreditLink(token, "https://studio.org", "client", repository);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body.to).toEqual([{ email: "customer@studio.org", name: expect.any(String) }]);
+  expect(body.subject).toMatch(/^Your \$22\.00 studio credit at /);
+  expect(body.textContent).toMatch(/https:\/\/studio\.org\/b\/[^\s?#]+#credit=[A-Za-z0-9_-]{43}/);
+  expect(body.htmlContent).toContain("#credit="); expect(body.tags).toEqual(["rebook", "credit"]);
+  expect((await customerChoice(token)).credit?.emailed).toBe("sent");
+});
+it("skips the credit email for demo addresses or when email is off, and records a rejected send as failed", async () => {
+  const { id, row } = fixture();
+  const demo = ownerCustomerChoices(id, repository).outbox.find((item) => !item.emailDeliverable && item.changes.some((change) => change.kind === "choice"))!;
+  await emailCreditLink(credited(id, demo.changes.find((change) => change.kind === "choice")!.bookingId), "https://studio.org", "client", repository);
+  expect(fetchMock).not.toHaveBeenCalled();
+  const token = credited(id, row.changes[0].bookingId);
+  vi.stubEnv("PUBLIC_ORIGIN", ""); await emailCreditLink(token, "https://studio.org", "client", repository);
+  expect(fetchMock).not.toHaveBeenCalled();
+  vi.stubEnv("PUBLIC_ORIGIN", "https://studio.org"); fetchMock.mockResolvedValueOnce(Response.json({}, { status: 400 }));
+  await emailCreditLink(token, "https://studio.org", "client", repository);
+  expect((await customerChoice(token)).credit?.emailed).toBe("failed");
+  await emailCreditLink(token, "https://studio.org", "client", repository);
+  expect(fetchMock).toHaveBeenCalledTimes(2); expect((await customerChoice(token)).credit?.emailed).toBe("sent");
+});
 it("leaves every seeded hero row a demo address", () => {
   const { rows, row } = fixture();
   expect(rows().filter((item) => item.emailDeliverable).map((item) => item.customerId)).toEqual([row.customerId]);

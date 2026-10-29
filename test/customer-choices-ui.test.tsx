@@ -77,7 +77,7 @@ it("shows old/new class details, drafted message and four choices; offers the lo
 it("chooses a studio credit and shows its lasting card and booking link", async () => {
   render(); await settle();
   data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
-    credit: { amount: "22.00", remaining: "22.00", status: "available", path: `/b/public#credit=${"b".repeat(43)}` } };
+    credit: { amount: "22.00", remaining: "22.00", status: "available", path: `/b/public#credit=${"b".repeat(43)}`, readableUntil: Date.parse("2026-12-05T12:00:00Z"), emailed: undefined } };
   (button("Keep $22 as studio credit").props.onClick as () => void)(); await settle();
   const post = send.mock.calls.find((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")! as unknown as [string, RequestInit];
   expect(JSON.parse(post[1].body as string)).toEqual({ action: "credit" });
@@ -85,6 +85,15 @@ it("chooses a studio credit and shows its lasting card and booking link", async 
   expect(html).toContain("Your $22.00 studio credit"); expect(html).toContain("Book a class with your credit"); expect(html).toContain(data.credit!.path);
   expect(html).not.toContain("Your place in your chosen class is confirmed."); expect(html).not.toContain("Refund completed");
   expect(button("Refund me")).toBeUndefined();
+  expect(html).toContain("This page closes on Dec 5; your credit doesn&#x27;t. Bookmark the link above to keep it.");
+});
+
+it.each([["sent", true], ["delivered", true], ["failed", false], ["unknown", false], ["bounced", false]] as const)("says the credit link was emailed only when a send was accepted (%s)", async (emailed, sent) => {
+  data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
+    credit: { amount: "22.00", remaining: "22.00", status: "available", path: "/b/public#credit=private", readableUntil: Date.parse("2026-12-05T12:00:00Z"), emailed } };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html.includes("We&#x27;ve emailed you this link")).toBe(sent); expect(html.includes("Bookmark the link above")).toBe(!sent);
 });
 
 it("offers existing-credit returns instead of PayPal refunds or a new studio credit", async () => {
@@ -103,7 +112,7 @@ it("offers existing-credit returns instead of PayPal refunds or a new studio cre
 
 it("shows unavailable backing without offering to spend the credit", async () => {
   data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
-    credit: { amount: "22.00", remaining: "0.00", status: "unavailable", path: "/b/public#credit=private" } };
+    credit: { amount: "22.00", remaining: "0.00", status: "unavailable", path: "/b/public#credit=private", readableUntil: 0, emailed: undefined } };
   render(); await settle();
   const html = renderToStaticMarkup(tree);
   expect(html).toContain("original payment was refunded or reversed");

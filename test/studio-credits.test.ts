@@ -362,3 +362,25 @@ it("rolls back restoration, booking status and its receipt together, and respect
   await expect(redeemCredit(workspace.id, input(creditToken, "cheap"), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
   expect(calls).toEqual([]);
 });
+
+it("emails the lasting credit link when the customer chooses credit on the private page, and a failed send never undoes the choice", async () => {
+  const { POST: choicePOST } = await import("../app/api/choices/[token]/route");
+  vi.stubEnv("BREVO_API_KEY", "test-key"); vi.stubEnv("BREVO_SENDER_EMAIL", "sender@studio.org"); vi.stubEnv("PUBLIC_ORIGIN", "https://studio.org");
+  const { workspace, booking, token } = fixture();
+  const { state } = repository.requireWorkspace(workspace.id), customer = state.customers.find((item) => item.id === booking.customerId)!;
+  customer.email = "member@studio.org"; repository.saveState(workspace.id, state);
+  repository.saveCheckout({ id: booking.id, workspaceId: workspace.id, requestId: "original-checkout", sessionId: booking.sessionId, customer: { name: customer.name, email: customer.email },
+    amount: booking.amount, currency: "USD", session: state.sessions[0], status: "confirmed", expiresAt: Date.now() });
+  const brevo = vi.fn().mockRejectedValue(new Error("network"));
+  vi.stubGlobal("fetch", brevo);
+  const choose = () => choicePOST(new Request(`http://localhost/api/choices/${token}`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "credit" }) }), { params: Promise.resolve({ token }) });
+  const first = await choose();
+  expect(first.status).toBe(200);
+  const view = await first.json();
+  expect(view.reply.action).toBe("credit"); expect(view.credit.emailed).toBe("unknown");
+  expect(brevo).toHaveBeenCalledOnce(); expect(brevo.mock.calls[0][0]).toBe("https://api.brevo.com/v3/smtp/email");
+  expect(JSON.parse(brevo.mock.calls[0][1].body).textContent).toContain(`https://studio.org${view.credit.path}`);
+  expect((await choose()).status).toBe(200); expect(brevo).toHaveBeenCalledOnce();
+  vi.unstubAllGlobals();
+});

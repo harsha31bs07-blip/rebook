@@ -8,7 +8,7 @@ import { recoveryOutcomes } from "../recovery/outcomes";
 import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
 import { type OutboxCustomer } from "./outbox";
 import { deliverableAddress } from "./email-content";
-import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
+import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type Credit, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const ChoiceInputSchema = z.discriminatedUnion("action", [
@@ -99,11 +99,15 @@ export function view(link: CustomerLink, repository: Repository) {
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
     kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
     refundable: fromCents(remainingCaptured(link, repository)), ...(payment.paidWith ? { paidWith: payment.paidWith, creditRefundable: fromCents(payment.remaining) } : {}), receipt: receiptFor(link, repository),
-    ...(credit ? { credit: { ...spendableCredit(credit, repository),
-      path: `/b/${repository.requireWorkspace(link.workspaceId).bookingId}#credit=${repository.creditToken(credit)}` } } : {}),
+    ...(credit ? { credit: { ...spendableCredit(credit, repository), path: creditPath(credit, repository), readableUntil: customerLinkReadableUntil(link),
+      emailed: repository.listDeliveries(link.workspaceId).find((item) => item.kind === `credit:${link.id}`)?.status } } : {}),
     alternatives: canChoose ? alternatives(link, repository) : [] };
 }
 export type CustomerChoiceView = ReturnType<typeof view>;
+/** The credit's own link outlives the choice page; the token rides in the fragment, never in a request. */
+export function creditPath(credit: Credit, repository: Repository): string {
+  return `/b/${repository.requireWorkspace(credit.workspaceId).bookingId}#credit=${repository.creditToken(credit)}`;
+}
 
 async function finishRefund(link: CustomerLink, repository: Repository, owner: string) {
   if (link.kind === "receipt") {

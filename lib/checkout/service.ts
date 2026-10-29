@@ -6,6 +6,7 @@ import { activeConstraints } from "../solver/constraints";
 import { captureOrder, createBookingOrder, getOrder, PayPalError, type PayPalOrder } from "../paypal/client";
 import { getRepository, StoreError, withWorkspaceLock, type CheckoutReservation, type Repository } from "../store";
 import { envLimit, limits } from "../api/limits";
+import { spendableCredit } from "../credits/balance";
 
 export const CheckoutInputSchema = z.strictObject({
   sessionId: z.string().min(1).max(100),
@@ -28,7 +29,7 @@ function requireCredit(workspaceId: string, token: string, repository: Repositor
 }
 export function studioCredit(workspaceId: string, token: string, repository = getRepository()) {
   const credit = requireCredit(workspaceId, token, repository);
-  return { amount: credit.amount, remaining: credit.remaining, status: credit.status };
+  return spendableCredit(credit, repository);
 }
 export async function redeemCredit(workspaceId: string, input: CreditCheckoutInput, requestId: string, repository = getRepository()): Promise<Receipt> {
   input = CreditCheckoutInputSchema.parse(input);
@@ -47,9 +48,10 @@ export async function redeemCredit(workspaceId: string, input: CreditCheckoutInp
     const session = state.sessions.find((item) => item.id === input.sessionId);
     if (!session || !sessionAvailable(state, session)) throw new StoreError(409, "This class is no longer available");
     if (!seatsLeft(state, session, repository.listCheckout(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
+    const balance = spendableCredit(credit, repository);
     const price = toCents(session.price), remaining = toCents(credit.remaining);
     if (price <= 0) throw new StoreError(409, "This class cannot be purchased");
-    if (credit.status !== "available" || remaining < price) throw new StoreError(409, `Your studio credit covers classes up to $${credit.remaining}.`);
+    if (balance.status !== "available" || toCents(balance.remaining) < price) throw new StoreError(409, `Your studio credit covers classes up to $${balance.remaining}.`);
     const id = randomUUID(), at = new Date().toISOString();
     const customer = state.customers.find((item) => item.email.trim().toLowerCase() === input.customer.email.trim().toLowerCase());
     const customerId = customer?.id ?? `customer-${id}`;

@@ -178,6 +178,21 @@ describe("read-only PayPal money verification", () => {
     await vi.advanceTimersByTimeAsync(30_000); expect(result.summary.unavailable).toBe(8); expect(mock.call).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps timed-out calls counted across runs, so later runs never add upstream calls beyond three", async () => {
+    vi.useFakeTimers(); const { id } = fixture(4);
+    const releases: ((value: unknown) => void)[] = [];
+    mock.call.mockImplementation(() => new Promise((resolve) => { releases.push(resolve); }));
+    for (let run = 0; run < 3; run++) {
+      const pending = verify(id, repository); await vi.advanceTimersByTimeAsync(10_000);
+      expect((await pending).summary.unavailable).toBe(4);
+    }
+    expect(mock.call).toHaveBeenCalledTimes(3);
+    const body = { content: JSON.stringify({ status: "COMPLETED", amount: { value: "25.00", currency_code: "USD" } }) };
+    releases.splice(0).forEach((release) => release(body)); await vi.advanceTimersByTimeAsync(0);
+    mock.call.mockResolvedValue(body);
+    expect((await verify(id, repository)).summary.matched).toBe(4);
+  });
+
   it("bounds a long queue to the 30-second whole-call budget", async () => {
     vi.useFakeTimers(); const { id } = fixture(15); let active = 0, peak = 0;
     mock.call.mockImplementation(async () => {

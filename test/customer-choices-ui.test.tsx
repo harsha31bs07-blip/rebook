@@ -77,7 +77,7 @@ it("shows old/new class details, drafted message and four choices; offers the lo
 it("chooses a studio credit and shows its lasting card and booking link", async () => {
   render(); await settle();
   data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
-    credit: { amount: "22.00", remaining: "22.00", status: "available", path: `/b/public?credit=${"b".repeat(43)}` } };
+    credit: { amount: "22.00", remaining: "22.00", status: "available", path: `/b/public#credit=${"b".repeat(43)}` } };
   (button("Keep $22 as studio credit").props.onClick as () => void)(); await settle();
   const post = send.mock.calls.find((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")! as unknown as [string, RequestInit];
   expect(JSON.parse(post[1].body as string)).toEqual({ action: "credit" });
@@ -85,6 +85,29 @@ it("chooses a studio credit and shows its lasting card and booking link", async 
   expect(html).toContain("Your $22.00 studio credit"); expect(html).toContain("Book a class with your credit"); expect(html).toContain(data.credit!.path);
   expect(html).not.toContain("Your place in your chosen class is confirmed."); expect(html).not.toContain("Refund completed");
   expect(button("Refund me")).toBeUndefined();
+});
+
+it("offers existing-credit returns instead of PayPal refunds or a new studio credit", async () => {
+  data = { ...data, paidWith: "credit", refundable: "0.00", creditRefundable: "22.00" };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Keep my new time"); expect(html).toContain("Pick another class");
+  expect(html).toContain("Return to my studio credit");
+  expect(button("Refund me")).toBeUndefined(); expect(button("as studio credit")).toBeUndefined();
+  data = { ...data, canChoose: false, kind: "receipt", receipt: { amount: "22.00", status: "CREDIT_RESTORED", paypalId: "", error: undefined } };
+  (button("Return to my studio credit").props.onClick as () => void)(); await settle();
+  expect(renderToStaticMarkup(tree)).toContain("returned to your studio credit");
+  expect(renderToStaticMarkup(tree)).not.toContain("PayPal");
+  expect(renderToStaticMarkup(tree)).not.toContain("Refund pending");
+});
+
+it("shows unavailable backing without offering to spend the credit", async () => {
+  data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
+    credit: { amount: "22.00", remaining: "0.00", status: "unavailable", path: "/b/public#credit=private" } };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("original payment was refunded or reversed");
+  expect(html).not.toContain("Book a class with your credit");
 });
 
 it("confirms the assistant's studio credit proposal through the choice API", async () => {

@@ -5,6 +5,7 @@ import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc 
 import type { State } from "../domain/types";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
+import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
 import { type OutboxCustomer } from "./outbox";
 import { deliverableAddress } from "./email-content";
 import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
@@ -27,7 +28,8 @@ export function createCustomerLinks(plan: StoredPlan, before: State, after: Stat
     const current = after.sessions.find((item) => item.id === booking.sessionId);
     const message = messages.find((item) => item.bookingId === booking.id)!;
     const checkout = checkouts.get(booking.id);
-    const body = checkout ? message.body.replace(`Hi ${message.customerName},`, () => `Hi ${checkout.customer.name},`) : message.body;
+    let body = checkout ? message.body.replace(`Hi ${message.customerName},`, () => `Hi ${checkout.customer.name},`) : message.body;
+    if (checkout?.paidWith === "credit" && action.action === "refund") body = body.replace(`We'll arrange a refund of ${before.studio.currency} ${action.amount}.`, `${before.studio.currency} ${action.amount} will be returned to your studio credit.`);
     repository.createCustomerLink({ workspaceId: plan.workspaceId, planId: plan.id, bookingId: booking.id,
       kind: action.action === "refund" ? "receipt" : "choice",
       expiresAt: Math.min(Date.now() + 7 * 86_400_000, Date.parse(current?.start ?? original.start)),
@@ -46,13 +48,13 @@ export function requireLink(token: string, repository: Repository): CustomerLink
 }
 
 function remainingCaptured(link: CustomerLink, repository: Repository): number {
-  const { state } = repository.requireReadyWorkspace(link.workspaceId);
-  const booking = state.bookings.find((item) => item.id === link.bookingId);
-  const capture = repository.latestMoneyEvents(link.workspaceId).find((event) => event.kind === "capture" && event.paypalId === booking?.payment?.captureId);
-  if (!capture || !["COMPLETED", "SIMULATED"].includes(capture.status)) return 0;
-  return Math.max(0, toCents(capture.amount) - repository.latestMoneyEvents(link.workspaceId)
-    .filter((event) => event.kind === "refund" && event.captureId === capture.captureId && ["REQUESTED", "PENDING", "NEEDS_REVIEW", "COMPLETED", "SIMULATED"].includes(event.status))
-    .reduce((sum, event) => sum + toCents(event.amount), 0));
+  return capturedBalance(link.workspaceId, link.bookingId, repository);
+}
+
+function creditPayment(link: CustomerLink, repository: Repository) {
+  const checkout = repository.listCheckout(link.workspaceId).find((row) => row.id === link.bookingId && row.paidWith === "credit");
+  const credit = checkout && repository.listCredits(link.workspaceId).find((item) => item.id === checkout.creditId);
+  return { paidWith: checkout?.paidWith, remaining: credit ? unreturnedRedemption(credit, link.bookingId) : 0 };
 }
 
 function alternatives(link: CustomerLink, repository: Repository) {
@@ -60,7 +62,8 @@ function alternatives(link: CustomerLink, repository: Repository) {
   const booking = state.bookings.find((item) => item.id === link.bookingId)!;
   const week = localParts(state.studio.weekStart, state.studio.timezone).dateKey;
   const end = Date.parse(zonedTimeToUtc(addLocalDays(week, 7), "00:00", state.studio.timezone));
-  const maxPrice = Math.min(toCents(booking.amount), remainingCaptured(link, repository));
+  const payment = creditPayment(link, repository);
+  const maxPrice = Math.min(toCents(booking.amount), payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
   const paused = pausedSessionIds(link.workspaceId, repository);
   return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session, paused)
     && Date.parse(session.start) >= Date.parse(state.studio.weekStart) && Date.parse(session.start) < end
@@ -88,15 +91,16 @@ export function view(link: CustomerLink, repository: Repository) {
   const current = state.sessions.find((item) => item.id === booking.sessionId);
   const newest = repository.listCustomerLinks(link.workspaceId).filter((item) => item.bookingId === link.bookingId).at(-1);
   const credit = repository.listCredits(link.workspaceId).find((item) => item.linkId === link.id);
+  const payment = creditPayment(link, repository);
   const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && link.reply?.action !== "credit" && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
   return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
     kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
-    refundable: fromCents(remainingCaptured(link, repository)), receipt: receiptFor(link, repository),
-    ...(credit ? { credit: { amount: credit.amount, remaining: credit.remaining, status: credit.status,
-      path: `/b/${repository.requireWorkspace(link.workspaceId).bookingId}?credit=${repository.creditToken(credit)}` } } : {}),
+    refundable: fromCents(remainingCaptured(link, repository)), ...(payment.paidWith ? { paidWith: payment.paidWith, creditRefundable: fromCents(payment.remaining) } : {}), receipt: receiptFor(link, repository),
+    ...(credit ? { credit: { ...spendableCredit(credit, repository),
+      path: `/b/${repository.requireWorkspace(link.workspaceId).bookingId}#credit=${repository.creditToken(credit)}` } } : {}),
     alternatives: canChoose ? alternatives(link, repository) : [] };
 }
 export type CustomerChoiceView = ReturnType<typeof view>;
@@ -156,12 +160,14 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         booking.sessionId = target.id; booking.amount = target.price; booking.status = "moved";
         link = { ...link, expiresAt: Math.min(link.expiresAt, Date.parse(target.start)) };
       } else if (input.action === "credit") {
+        if (creditPayment(link, repository).paidWith) throw new StoreError(409, "This booking was paid with studio credit.");
         amount = fromCents(remainingCaptured(link, repository));
         if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available for studio credit.");
         booking.status = "cancelled";
         repository.createCredit({ workspaceId: link.workspaceId, linkId: link.id, bookingId: booking.id, customerId: booking.customerId, amount });
       } else if (input.action === "refund") {
-        amount = fromCents(remainingCaptured(link, repository));
+        const payment = creditPayment(link, repository);
+        amount = fromCents(payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
         if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available to refund.");
         // Seed booking IDs repeat across workspaces; the durable link identifies this operation.
         requestId = `choice:${link.id}`;
@@ -200,9 +206,11 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       customerName: state.customers.find((item) => item.id === booking.customerId)?.name ?? "Customer", planId: link.planId, changes: [] };
     const action = plans.find((plan) => plan.id === link.planId)?.bookingActions.find((item) => item.bookingId === link.bookingId);
     const reply = link.reply;
+    const receipt = receiptFor(link, repository);
     row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind,
       path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
-      reply: reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
+      reply: receipt?.status === "CREDIT_RESTORED" ? { at: reply?.at ?? link.createdAt, status: "returned to your studio credit" }
+        : reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
   }
   for (const row of outbox.values()) {
@@ -213,7 +221,8 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       if (delivery) row[kind === "message" ? "delivery" : "reminderDelivery"] = { status: delivery.status, updatedAt: delivery.updatedAt };
     }
   }
-  return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links),
+  const creditPaidBookingIds = checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id);
+  return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links, new Set(creditPaidBookingIds)), creditPaidBookingIds,
     outbox: [...outbox.values()],
     links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
     path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
@@ -224,7 +233,8 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       const session = state.sessions.find((item) => item.id === (reply.sessionId ?? booking?.sessionId));
       const when = session ? new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "long", hour: "numeric", minute: "2-digit" }).format(new Date(session.start)) : "their class";
       const receipt = receiptFor(link, repository);
-      const money = receipt ? ` ($${receipt.amount}, ${receipt.status === "SIMULATED" ? "simulated" : "PayPal"} ${receipt.paypalId || "pending"} · ${receipt.status.toLowerCase()})` : "";
+      const money = receipt?.status === "CREDIT_RESTORED" ? ` ($${receipt.amount} returned to your studio credit)`
+        : receipt ? ` ($${receipt.amount}, ${receipt.status === "SIMULATED" ? "simulated" : "PayPal"} ${receipt.paypalId || "pending"} · ${receipt.status.toLowerCase()})` : "";
       return { id: link.id, at: reply.at, action: reply.action,
         text: `${customer} ${reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? "took a refund" : reply.action === "move" ? `picked ${session?.title ?? "another class"} on ${when}` : `kept ${when}`}${money}` };
     }).sort((a, b) => b.at.localeCompare(a.at)) };

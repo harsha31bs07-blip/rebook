@@ -124,6 +124,19 @@ it("shows insufficient studio credit without a payment button or PayPal", () => 
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+it("reads the credit token from the fragment, which never reaches a server, and removes it", async () => {
+  const token = "f".repeat(43), replaceState = vi.fn();
+  vi.stubGlobal("window", { location: { href: `http://localhost/b/studio?view=week#credit=${token}` }, history: { state: { page: "booking" }, replaceState } });
+  fetchMock.mockImplementation(async (url: string) => Response.json(url.endsWith("/credit") ? { amount: "22.00", remaining: "22.00", status: "available" }
+    : { studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] }));
+  hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true }); hooks.pending.splice(0).forEach((effect) => effect());
+  expect(replaceState).toHaveBeenCalledWith({ page: "booking" }, "", "/b/studio?view=week");
+  await Promise.resolve();
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+  expect(calls.every(([url]) => !url.includes(token))).toBe(true);
+  expect(calls.find(([url]) => url.endsWith("/credit"))?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ creditToken: token }) });
+});
+
 it("strips the URL credit token before requests and uses the credit payment option", async () => {
   const token = "c".repeat(43), replaceState = vi.fn();
   vi.stubGlobal("window", { location: { href: `http://localhost/b/studio?credit=${token}&view=week#classes` }, history: { state: { page: "booking" }, replaceState } });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { toCents } from "../domain/time";
+import { fromCents, toCents } from "../domain/time";
+import { unreturnedRedemption } from "../credits/balance";
 import { reconcileRefund } from "./reconcileRefund";
 import { canReplayRefund, reviewUncertainRefund } from "./refund-policy";
 import { PayPalError, refundCapture } from "../paypal/client";
@@ -16,6 +17,31 @@ export async function executeRefund(workspaceId: string, input: { bookingId: str
   if (previous && (previous.bookingId !== input.bookingId || previous.amount !== input.amount || !!previous.partial !== !!input.partial)) {
     throw new StoreError(409, "Refund identity, amount or type changed since the original request");
   }
+  const checkout = repository.listCheckout(workspaceId).find((row) => row.id === input.bookingId && row.paidWith === "credit");
+  if (checkout) return repository.transaction(() => {
+    renew();
+    const current = repository.requireWorkspace(workspaceId).state;
+    const booking = current.bookings.find((item) => item.id === input.bookingId);
+    const credit = repository.listCredits(workspaceId).find((item) => item.id === checkout.creditId);
+    if (!booking || !credit || !credit.redemptions.some((item) => item.bookingId === booking.id)) throw new StoreError(409, "Studio credit redemption not found");
+    const recorded = repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "refund" && event.requestId === requestId);
+    if (recorded?.status !== "CREDIT_RESTORED") {
+      const outstanding = unreturnedRedemption(credit, booking.id);
+      const amount = input.partial ? toCents(input.amount) : outstanding;
+      if (amount < 0 || amount > outstanding || (input.partial && amount <= 0)) throw new StoreError(409, "Return exceeds redeemed studio credit");
+      if (amount > 0) {
+        const restorations = credit.restorations ?? [];
+        const prior = restorations.find((item) => item.bookingId === booking.id);
+        const restoration = { bookingId: booking.id, amount: fromCents(toCents(prior?.amount ?? "0.00") + amount), at: new Date().toISOString() };
+        repository.saveCredit({ ...credit, remaining: fromCents(toCents(credit.remaining) + amount), status: "available",
+          restorations: [...restorations.filter((item) => item.bookingId !== booking.id), restoration] });
+      }
+      repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "refund", amount: input.amount, captureId: "", requestId,
+        ...(input.partial ? { partial: true } : {}), paypalId: "", status: "CREDIT_RESTORED" });
+    }
+    if (!input.partial) { booking.status = "refunded"; repository.saveState(workspaceId, current); }
+    return { bookingId: booking.id, status: "CREDIT_RESTORED" };
+  });
   // Every booking in a concurrent batch is fenced by the same durable workspace lease.
   // Losing it aborts the writer, including error persistence; only fresh PayPal evidence may settle it.
   const fence = async () => {

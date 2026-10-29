@@ -1,16 +1,18 @@
 import type { State } from "../domain/types";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
-import type { Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
+import type { CheckoutReservation, Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
 import { recoveryOutcomes, summarizeRecovery } from "../recovery/outcomes";
 import { paymentsNeedingAttention } from "../recovery/payment-attention";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
-export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = []) {
+export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = [], checkouts: CheckoutReservation[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
-  const outcomes = recoveryOutcomes(state, plans, ledger, links);
+  const creditPaidBookingIds = new Set([...checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id),
+    ...credits.flatMap((credit) => credit.redemptions.map((item) => item.bookingId))]);
+  const outcomes = recoveryOutcomes(state, plans, ledger, links, creditPaidBookingIds);
   const sessions = new Map(state.sessions.map((session) => [session.id, session]));
   // Execution removes cancellations from the live schedule. Their original records still join bookings.
   for (const plan of applied) for (const session of plan.basis?.sessions ?? []) {
@@ -37,7 +39,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         : plan?.bookingActions.find((action) => action.bookingId === event.bookingId)?.reason ?? "",
       // Issued money excludes pending/failed requests; simulations remain clearly labelled.
       issued_refund: event.kind === "refund" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
-      payment_mode: event.status === "SIMULATED" ? "simulated" : "real",
+      payment_mode: event.status === "CREDIT_RESTORED" ? "credit" : event.status === "SIMULATED" ? "simulated" : "real",
       local_day: localParts(event.createdAt, state.studio.timezone).dateKey,
       captured: event.kind === "capture" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
       net: ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) * (event.kind === "refund" ? -1 : 1) : 0,
@@ -75,9 +77,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     bookings: state.bookings.map((booking) => ({
       id: booking.id, session_id: booking.sessionId, customer_id: booking.customerId,
       status: booking.status, amount: dollars(booking.amount),
-      revenue_kept: credits.some((credit) => credit.redemptions.some((item) => item.bookingId === booking.id)) ? 0 : outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
+      revenue_kept: creditPaidBookingIds.has(booking.id) ? 0 : outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
         (["confirmed", "moved"].includes(booking.status) ? Math.max(0, toCents(booking.amount) - moneyEvents.filter((event) => event.booking_id === booking.id).reduce((sum, event) => sum + Math.round(event.issued_refund * 100), 0)) / 100 : 0),
-      payment_mode: credits.some((credit) => credit.redemptions.some((item) => item.bookingId === booking.id)) ? "credit" : booking.payment?.simulated ? "simulated" : "real",
+      payment_mode: creditPaidBookingIds.has(booking.id) ? "credit" : booking.payment?.simulated ? "simulated" : "real",
       capture_id: booking.payment?.captureId ?? "",
     })),
     customers: state.customers.map((customer) => ({ id: customer.id, name: customer.name,
@@ -89,21 +91,24 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     money_events: moneyEvents,
     credits: credits.map((credit) => ({ id: credit.id, booking_id: credit.bookingId, customer_id: credit.customerId,
       plan_id: links.find((link) => link.id === credit.linkId)?.planId ?? null, amount: dollars(credit.amount), remaining: dollars(credit.remaining),
-      redeemed: credit.redemptions.reduce((sum, item) => sum + toCents(item.amount), 0) / 100, status: credit.status, created_at: credit.createdAt })),
+      redeemed: (credit.redemptions.reduce((sum, item) => sum + toCents(item.amount), 0)
+        - (credit.restorations ?? []).reduce((sum, item) => sum + toCents(item.amount), 0)) / 100, status: credit.status, created_at: credit.createdAt })),
     disruptions: plans.map((plan) => {
       const label = disruptionLabel(plan, state);
       const active = plan.status !== "proposed";
       const recovery = summarizeRecovery(outcomes.filter((item) => item.plan_id === plan.id));
       const refunds = [...latest.values()].filter((event) => event.kind === "refund" && originatingPlan(event)?.id === plan.id);
       const amountFor = (statuses: string[]) => refunds.filter((event) => statuses.includes(event.status)).reduce((sum, event) => sum + toCents(event.amount), 0) / 100;
+      const plannedAmount = (refund: boolean) => plan.bookingActions.filter((action) => (action.action === "refund") === refund && !creditPaidBookingIds.has(action.bookingId))
+        .reduce((sum, action) => sum + toCents(action.amount), 0) / 100;
       return {
         id: plan.id, kind: plan.disruption.kind, subject: label.subject, window: label.window, label: `${label.subject}, ${label.window}`,
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
         kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
         credited: recovery.credited, kept_as_credit: recovery.keptAsCredit,
-        refund_amount: dollars(plan.totals.refundAmount), revenue_kept: active ? recovery.revenueKept : dollars(plan.totals.revenueKept),
-        planned_refund_amount: dollars(plan.totals.refundAmount),
+        refund_amount: plannedAmount(true), revenue_kept: active ? recovery.revenueKept : plannedAmount(false),
+        planned_refund_amount: plannedAmount(true),
         pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]),
         completed_refund_amount: amountFor(["COMPLETED"]),
         simulated_refund_amount: amountFor(["SIMULATED"]),

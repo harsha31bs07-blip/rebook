@@ -17,6 +17,10 @@ import { POST } from "../app/api/bookings/[bookingId]/checkout/credit/route";
 import { GET as insights } from "../app/api/workspaces/[id]/insights/route";
 import { limits } from "../lib/api/limits";
 import { activateConstraint } from "../lib/solver/constraints";
+import { executePlan } from "../lib/executor/executePlan";
+import { executeRefund } from "../lib/executor/refund";
+import { checkRefund } from "../lib/executor/refund-sweep";
+import { withWorkspaceLock } from "../lib/store";
 
 let directory: string, repository: Repository, calls: string[];
 beforeEach(() => {
@@ -52,10 +56,22 @@ function fixture() {
   return { workspace, booking, link, token: repository.customerToken(link), original: next.sessions[0], plan: stored };
 }
 const input = (creditToken: string, sessionId = "equal") => ({ creditToken, sessionId, customer: { name: "Credit buyer", email: "buyer@example.com" } });
+function laterPlan(workspaceId: string, bookingId: string, action: "move" | "refund") {
+  const { state } = repository.requireWorkspace(workspaceId);
+  const booking = state.bookings.find((item) => item.id === bookingId)!;
+  const before = state.sessions.find((item) => item.id === booking.sessionId)!;
+  const after = { ...before, start: "2026-11-12T17:00:00Z", end: "2026-11-12T18:00:00Z" };
+  return repository.createPlan(workspaceId, { now: new Date().toISOString(),
+    disruption: { kind: "closure", from: before.start, to: before.end },
+    sessionChanges: [{ sessionId: before.id, before, ...(action === "move" ? { after } : {}), remedy: action === "move" ? "move_time" : "cancel", reason: "Later disruption" }],
+    bookingActions: [{ bookingId, customerId: booking.customerId, action, amount: booking.amount, reason: "Later disruption" }],
+    totals: { sessionsAffected: 1, kept: 0, moved: action === "move" ? 1 : 0, refunded: action === "refund" ? 1 : 0,
+      refundAmount: action === "refund" ? booking.amount : "0.00", revenueKept: action === "move" ? booking.amount : "0.00" }, warnings: [] });
+}
 async function issue() {
   const fixtureData = fixture();
   const choice = await submitChoice(fixtureData.token, { action: "credit" }, repository);
-  return { ...fixtureData, choice, creditToken: new URL(choice.credit!.path, "http://localhost").searchParams.get("credit")! };
+  return { ...fixtureData, choice, creditToken: new URLSearchParams(new URL(choice.credit!.path, "http://localhost").hash.slice(1)).get("credit")! };
 }
 function post(bookingId: string, body: unknown, key = randomUUID(), origin = "http://localhost") {
   return POST(new Request(`http://localhost/api/bookings/${bookingId}/checkout/credit`, { method: "POST", headers: { origin, "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(body) }), { params: Promise.resolve({ bookingId }) });
@@ -216,4 +232,133 @@ it("reports retained credits separately from refunds, without counting redemptio
   expect(initialReport.pages?.find((page) => page.id === "money")?.widgets?.credits).toMatchObject({ format: { title: { text: "Kept as studio credit" } } });
   const apiData = await (await insights(new Request("http://localhost"), { params: Promise.resolve({ id: workspace.id }) })).json();
   expect(apiData.credits[0]).toMatchObject({ amount: 22, redeemed: 10, remaining: 12 });
+});
+
+it.each(["COMPLETED", "PENDING", "REQUESTED", "NEEDS_REVIEW"])("blocks credit backed by an original capture with a %s refund", async (status) => {
+  const { workspace, booking, creditToken, token } = await issue();
+  repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", amount: "22.00", paypalId: "external-refund",
+    captureId: booking.payment!.captureId, requestId: "external-refund", status });
+  const ledger = repository.listLedger(workspace.id);
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "0.00", status: "unavailable" });
+  expect((await customerChoice(token, repository)).credit).toMatchObject({ remaining: "0.00", status: "unavailable" });
+  await expect(redeemCredit(workspace.id, input(creditToken), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
+  expect(repository.listLedger(workspace.id)).toEqual(ledger);
+  expect(repository.listCredits(workspace.id)[0].remaining).toBe("22.00");
+  expect(calls).toEqual([]);
+});
+
+it("limits partially refunded backing by net redemptions without discarding the stored balance", async () => {
+  const { workspace, booking, creditToken, token } = await issue();
+  repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", amount: "2.00", paypalId: "partial",
+    captureId: booking.payment!.captureId, requestId: "partial", status: "COMPLETED", partial: true });
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "20.00", status: "available" });
+  await expect(redeemCredit(workspace.id, input(creditToken), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
+  await redeemCredit(workspace.id, input(creditToken, "cheap"), randomUUID(), repository);
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "10.00", status: "available" });
+  expect((await customerChoice(token, repository)).credit?.remaining).toBe("10.00");
+  expect(repository.listCredits(workspace.id)[0].remaining).toBe("12.00");
+});
+
+it.each(["capture", "external-reversal"])("makes reversed capture backing unavailable for request %s", async (requestId) => {
+  const { workspace, booking, creditToken } = await issue();
+  repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: "22.00", paypalId: booking.payment!.captureId,
+    captureId: booking.payment!.captureId, requestId, status: "REVERSED" });
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "0.00", status: "unavailable" });
+  await expect(redeemCredit(workspace.id, input(creditToken), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
+});
+
+it("restores cancelled credit bookings once across approval, replay and a different request id without PayPal", async () => {
+  const { workspace, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const plan = laterPlan(workspace.id, receipt.bookingId, "refund");
+  const result = await executePlan(workspace.id, plan.id, repository);
+  expect(result).toMatchObject({ plan: { status: "executed" }, results: [{ bookingId: receipt.bookingId, status: "CREDIT_RESTORED" }] });
+  await executePlan(workspace.id, plan.id, repository);
+  expect(await checkRefund(workspace.id, `${plan.id}:${receipt.bookingId}`, repository)).toEqual({ kind: "settled" });
+  await withWorkspaceLock(repository, workspace.id, (owner) => executeRefund(workspace.id, plan.bookingActions[0], "another-retry", repository, () => repository.renewLock(workspace.id, owner)));
+  expect(repository.requireWorkspace(workspace.id).state.bookings.find((item) => item.id === receipt.bookingId)?.status).toBe("refunded");
+  expect(repository.listCredits(workspace.id)[0]).toMatchObject({ remaining: "22.00", status: "available", restorations: [{ bookingId: receipt.bookingId, amount: "22.00" }] });
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "22.00", status: "available" });
+  const link = repository.listCustomerLinks(workspace.id).find((item) => item.planId === plan.id)!;
+  expect((await customerChoice(repository.customerToken(link), repository)).receipt).toMatchObject({ status: "CREDIT_RESTORED", amount: "22.00", paypalId: "" });
+  const outcomes = ownerCustomerChoices(workspace.id, repository).outcomes;
+  expect(outcomes.find((item) => item.booking_id === receipt.bookingId)).toMatchObject({ pending: 0, final: true, revenue_kept: 0, completed_refund_amount: 0, simulated_refund_amount: 0 });
+  expect(ownerCustomerChoices(workspace.id, repository).outbox.find((row) => row.planId === plan.id)?.changes[0].body).toContain("returned to your studio credit");
+  const data = await (await insights(new Request("http://localhost"), { params: Promise.resolve({ id: workspace.id }) })).json();
+  expect(data.disruptions.find((item: { id: string }) => item.id === plan.id)).toMatchObject({ refund_amount: 0, planned_refund_amount: 0, completed_refund_amount: 0, pending_refund_amount: 0, simulated_refund_amount: 0 });
+  expect(data.money_events.filter((item: { status: string }) => item.status === "CREDIT_RESTORED").every((item: { issued_refund: number; net: number; payment_mode: string }) => item.issued_refund === 0 && item.net === 0 && item.payment_mode === "credit")).toBe(true);
+  expect(getRecoverySummary(data)).toMatchObject({ creditsRedeemedUSD: 0, creditsRemainingUSD: 22 });
+  await redeemCredit(workspace.id, input(creditToken, "cheap"), randomUUID(), repository);
+  expect(studioCredit(workspace.id, creditToken, repository).remaining).toBe("12.00");
+  expect(repository.ledgerSummary(workspace.id).refunded).toBe("0.00");
+  expect(calls).toEqual([]);
+});
+
+it("keeps credit-funded choices usable and restores a customer refund without issuing credit of credit", async () => {
+  const { workspace, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const plan = laterPlan(workspace.id, receipt.bookingId, "move");
+  await executePlan(workspace.id, plan.id, repository);
+  const link = repository.listCustomerLinks(workspace.id).find((item) => item.planId === plan.id)!;
+  const token = repository.customerToken(link);
+  const choice = await customerChoice(token, repository);
+  expect(choice).toMatchObject({ canChoose: true, refundable: "0.00", paidWith: "credit" });
+  expect(choice.alternatives.some((item) => item.id === "cheap")).toBe(true);
+  await expect(submitChoice(token, { action: "credit" }, repository)).rejects.toMatchObject({ status: 409 });
+  await submitChoice(token, { action: "keep" }, repository);
+  const result = await submitChoice(token, { action: "refund" }, repository);
+  expect(result.receipt).toMatchObject({ status: "CREDIT_RESTORED", amount: "22.00" });
+  await submitChoice(token, { action: "refund" }, repository);
+  expect(repository.listCredits(workspace.id)).toHaveLength(1);
+  expect(repository.listCredits(workspace.id)[0].restorations).toHaveLength(1);
+  expect(studioCredit(workspace.id, creditToken, repository).remaining).toBe("22.00");
+  expect(calls).toEqual([]);
+});
+
+it("counts later moved credit bookings as saved without counting their retained revenue again", async () => {
+  const { workspace, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const plan = laterPlan(workspace.id, receipt.bookingId, "move");
+  await executePlan(workspace.id, plan.id, repository);
+  expect(ownerCustomerChoices(workspace.id, repository).outcomes.find((item) => item.booking_id === receipt.bookingId)).toMatchObject({ moved: 1, saved: 1, revenue_kept: 0, pending: 0 });
+  const data = await (await insights(new Request("http://localhost"), { params: Promise.resolve({ id: workspace.id }) })).json();
+  expect(data.disruptions.find((item: { id: string }) => item.id === plan.id)).toMatchObject({ moved: 1, applied_saved: 1, revenue_kept: 0 });
+  expect(getRecoverySummary(data).revenueKept).toBe(22);
+});
+
+it("returns a credit-funded move's price difference and then only the outstanding value on cancellation", async () => {
+  const { workspace, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const plan = laterPlan(workspace.id, receipt.bookingId, "move");
+  await executePlan(workspace.id, plan.id, repository);
+  const link = repository.listCustomerLinks(workspace.id).find((item) => item.planId === plan.id)!;
+  const token = repository.customerToken(link);
+  const moved = await submitChoice(token, { action: "move", sessionId: "cheap" }, repository);
+  expect(moved.receipt).toMatchObject({ amount: "12.00", status: "CREDIT_RESTORED" });
+  await submitChoice(token, { action: "move", sessionId: "cheap" }, repository);
+  expect(studioCredit(workspace.id, creditToken, repository).remaining).toBe("12.00");
+  expect(ownerCustomerChoices(workspace.id, repository).outcomes.find((item) => item.booking_id === receipt.bookingId)).toMatchObject({ moved: 1, saved: 1, pending: 0, revenue_kept: 0, completed_refund_amount: 0 });
+  const cancelled = laterPlan(workspace.id, receipt.bookingId, "refund");
+  expect((await executePlan(workspace.id, cancelled.id, repository)).plan.status).toBe("executed");
+  await executePlan(workspace.id, cancelled.id, repository);
+  expect(repository.listCredits(workspace.id)[0]).toMatchObject({ remaining: "22.00", restorations: [{ bookingId: receipt.bookingId, amount: "22.00" }] });
+  expect(studioCredit(workspace.id, creditToken, repository).remaining).toBe("22.00");
+  expect(calls).toEqual([]);
+});
+
+it("rolls back restoration, booking status and its receipt together, and respects backing after restoration", async () => {
+  const { workspace, booking, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const plan = laterPlan(workspace.id, receipt.bookingId, "refund");
+  vi.spyOn(repository, "appendLedger").mockImplementationOnce(() => { throw new Error("disk failed"); });
+  await expect(executePlan(workspace.id, plan.id, repository)).rejects.toThrow("disk failed");
+  expect(repository.listCredits(workspace.id)[0]).toMatchObject({ remaining: "0.00", restorations: [] });
+  expect(repository.latestMoneyEvents(workspace.id).filter((item) => item.kind === "refund")).toEqual([]);
+  expect(repository.requireWorkspace(workspace.id).state.bookings.find((item) => item.id === receipt.bookingId)?.status).toBe("refund_pending");
+  await executePlan(workspace.id, plan.id, repository);
+  repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "refund", amount: "22.00", paypalId: "backing-return",
+    captureId: booking.payment!.captureId, requestId: "backing-return", status: "COMPLETED" });
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "0.00", status: "unavailable" });
+  await expect(redeemCredit(workspace.id, input(creditToken, "cheap"), randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
+  expect(calls).toEqual([]);
 });

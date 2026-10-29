@@ -5,7 +5,7 @@ import type { CustomerLink, LedgerEvent, StoredPlan } from "../store";
 type RecoveryPlan = Pick<StoredPlan, "id" | "workspaceId" | "status" | "createdAt" | "bookingActions" | "results">;
 
 /** One current recovery record per booking. Reply tracking is separate from applied booking status. */
-export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: LedgerEvent[], links: CustomerLink[] = []) {
+export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], creditPaidBookingIds: ReadonlySet<string> = new Set()) {
   const latest = new Map<string, { plan: RecoveryPlan; action: RecoveryPlan["bookingActions"][number]; originalAmount: number }>();
   const appliedAt = (plan: RecoveryPlan) => links.find((link) => link.workspaceId === plan.workspaceId && link.planId === plan.id)?.createdAt ?? plan.createdAt;
   for (const plan of [...plans].sort((a, b) => appliedAt(a).localeCompare(appliedAt(b)))) {
@@ -20,7 +20,8 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
     const booking = state.bookings.find((item) => item.id === action.bookingId);
     const capture = [...events.values()].find((event) => event.workspaceId === plan.workspaceId && event.bookingId === action.bookingId && event.kind === "capture" &&
       event.captureId === booking?.payment?.captureId && ["COMPLETED", "SIMULATED"].includes(event.status));
-    const originalAmount = capture ? toCents(capture.amount) : plannedAmount;
+    const creditPaid = creditPaidBookingIds.has(action.bookingId);
+    const originalAmount = creditPaid ? 0 : capture ? toCents(capture.amount) : plannedAmount;
     const link = links.filter((item) => item.workspaceId === plan.workspaceId && item.planId === plan.id && item.bookingId === action.bookingId).at(-1);
     const credited = link?.reply?.action === "credit";
     // Credit releases the seat while retaining the captured revenue; a chargeback still reverses it.
@@ -32,27 +33,28 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
     const result = plan.results.find((item) => item.bookingId === action.bookingId);
     // The ledger wins; results support an approval response before the workspace refresh arrives.
     const fallbackStatus = refunds.length ? undefined : result?.status;
+    const creditRestored = refunds.some((event) => event.status === "CREDIT_RESTORED" && !event.partial) || fallbackStatus === "CREDIT_RESTORED";
     const completedAmount = amount(settled.filter((event) => event.status === "COMPLETED")) || (fallbackStatus === "COMPLETED" ? toCents(action.amount) : 0);
     const simulatedAmount = amount(settled.filter((event) => event.status === "SIMULATED")) || (fallbackStatus === "SIMULATED" ? toCents(action.amount) : 0);
     const refundedAmount = completedAmount + simulatedAmount;
-    const refundIntent = action.action === "refund" || link?.reply?.action === "refund" || ["refund_pending", "refunded"].includes(booking?.status ?? "") || refundedAmount >= originalAmount;
-    const fullySettled = refundIntent && refundedAmount >= originalAmount;
+    const refundIntent = action.action === "refund" || link?.reply?.action === "refund" || ["refund_pending", "refunded"].includes(booking?.status ?? "") || (!creditPaid && refundedAmount >= originalAmount);
+    const fullySettled = refundIntent && (creditPaid ? creditRestored : refundedAmount >= originalAmount);
     const pending = refunds.some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
       (refundIntent && !fullySettled);
-    const saved = !refundIntent && !reversed && refundedAmount < originalAmount;
+    const saved = !refundIntent && !reversed && (creditPaid || refundedAmount < originalAmount);
     const moved = saved && !credited && (link?.reply?.action === "move" || action.action === "move");
     const noReply = !refundIntent && !reversed && !link?.reply;
     const failed = refunds.some((event) => ["FAILED", "CANCELLED", "NEEDS_REVIEW"].includes(event.status));
     return {
       booking_id: action.bookingId, customer_id: action.customerId, plan_id: plan.id, planned_remedy: action.action,
-      customer_reply: link?.reply?.action ?? "none", outcome: reversed && !refundIntent ? "reversed" : fullySettled ? simulatedAmount ? "simulated_refund" : "refunded" : refundIntent ? "pending" : credited ? "credit" : moved ? "moved" : "kept",
+      customer_reply: link?.reply?.action ?? "none", outcome: reversed && !refundIntent ? "reversed" : fullySettled ? creditRestored ? "credit_restored" : simulatedAmount ? "simulated_refund" : "refunded" : refundIntent ? "pending" : credited ? "credit" : moved ? "moved" : "kept",
       kept: saved && !moved && !credited ? 1 : 0, moved: moved ? 1 : 0, saved: saved ? 1 : 0,
       credited: credited && saved ? 1 : 0, kept_as_credit: credited && saved ? toCents(link.reply!.amount) / 100 : 0,
       refunded: fullySettled && !simulatedAmount ? 1 : 0, simulated_refunded: fullySettled && simulatedAmount > 0 ? 1 : 0,
       pending: pending ? 1 : 0, no_reply: noReply ? 1 : 0,
       revenue_kept: saved ? Math.max(0, originalAmount - refundedAmount) / 100 : 0,
       completed_refund_amount: completedAmount / 100, simulated_refund_amount: simulatedAmount / 100,
-      payment_state: reversed && !refundIntent ? "reversed" : pending ? failed ? "needs_attention" : "pending" : simulatedAmount ? "simulated_refund" : completedAmount ? "completed_refund" : "captured",
+      payment_state: reversed && !refundIntent ? "reversed" : pending ? failed ? "needs_attention" : "pending" : creditRestored ? "credit_restored" : simulatedAmount ? "simulated_refund" : completedAmount ? "completed_refund" : creditPaid ? "credit" : "captured",
       final: !noReply && !pending && !failed,
     };
   });

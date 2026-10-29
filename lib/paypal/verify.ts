@@ -38,10 +38,17 @@ function notFound(value: unknown): boolean {
     || notFound(error.error) || notFound(error.response);
 }
 const timeout = Symbol("verification timeout");
+// Toolkit calls cannot be aborted, so a slot is held until the upstream call actually settles,
+// across every verification run in this process; at most MAX_UPSTREAM calls are ever outstanding.
+const MAX_UPSTREAM = 3;
+let upstream = 0;
 async function bounded<T>(operation: () => Promise<T>, ms: number): Promise<T | typeof timeout> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  upstream += 1;
+  const call = Promise.resolve().then(operation);
+  call.then(() => { upstream -= 1; }, () => { upstream -= 1; });
   try {
-    return await Promise.race([Promise.resolve().then(operation), new Promise<typeof timeout>((resolve) => {
+    return await Promise.race([call, new Promise<typeof timeout>((resolve) => {
       timer = setTimeout(() => resolve(timeout), Math.max(0, ms));
     })]);
   } finally { clearTimeout(timer); }
@@ -90,12 +97,11 @@ export async function verifyWorkspaceMoney(workspaceId: string, repository: Repo
   }
   let next = 0;
   async function worker() {
-    while (next < tasks.length && Date.now() < deadline) {
+    while (next < tasks.length && Date.now() < deadline && upstream < MAX_UPSTREAM) {
       const task = tasks[next++];
       try {
         const result = await bounded(task.run, Math.min(10_000, deadline - Date.now()));
-        // Toolkit calls cannot be aborted. Retire this slot after a timeout so at most three
-        // actual upstream calls remain in flight, including calls that outlive the response.
+        // The timed-out call still holds its upstream slot; stop this worker rather than queue behind it.
         if (result === timeout) return;
         Object.assign(task.item, result);
       } catch (error) {

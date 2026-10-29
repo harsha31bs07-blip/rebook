@@ -42,8 +42,10 @@ export type CustomerLink = {
 };
 export type Credit = {
   id: string; tokenHash: string; workspaceId: string; linkId: string; bookingId: string; customerId: string;
-  amount: string; remaining: string; status: "available" | "redeemed"; createdAt: string;
+  amount: string; remaining: string; status: "available" | "redeemed" | "unavailable"; createdAt: string;
   redemptions: { bookingId: string; amount: string; at: string }[];
+  // One cumulative return per booking, including any earlier lower-price move. Optional for older rows.
+  restorations?: { bookingId: string; amount: string; at: string }[];
 };
 export type CoverLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
@@ -202,7 +204,7 @@ export class Repository {
     const previous = this.listCredits(input.workspaceId).find((credit) => credit.linkId === input.linkId);
     if (previous) return previous;
     const credit: Credit = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", remaining: input.amount,
-      status: "available", createdAt: new Date().toISOString(), redemptions: [] };
+      status: "available", createdAt: new Date().toISOString(), redemptions: [], restorations: [] };
     credit.tokenHash = createHash("sha256").update(this.creditToken(credit)).digest("hex");
     this.db.prepare("INSERT INTO credits VALUES (?, ?, ?, ?, ?)").run(credit.id, credit.tokenHash, credit.workspaceId, credit.linkId, JSON.stringify(credit));
     return credit;
@@ -409,7 +411,7 @@ export class Repository {
           ? plan.results.find((item) => item.bookingId === action.bookingId)?.error : undefined) }
         : { bookingId: action.bookingId, status: "REQUESTED", ...(plan.status === "executing" ? {} : { error: "Refund has not been submitted yet" }) };
     });
-    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING"].includes(item.status))
+    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING", "CREDIT_RESTORED"].includes(item.status))
       ? "partially_failed" : "executed";
     return { ...plan, results, status };
   }

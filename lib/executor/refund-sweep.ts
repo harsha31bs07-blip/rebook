@@ -14,7 +14,7 @@ export async function checkRefund(workspaceId: string, requestId: string, reposi
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     const event = repository.latestMoneyEvents(workspaceId).find((item) => item.kind === "refund" && item.requestId === requestId);
     if (!event) throw new StoreError(404, "Refund not found");
-    if (["COMPLETED", "SIMULATED"].includes(event.status)) return { kind: "settled" as const };
+    if (["COMPLETED", "SIMULATED", "CREDIT_RESTORED"].includes(event.status)) return { kind: "settled" as const };
     // Persist before I/O so process restarts and failing requests retain their backoff.
     repository.deferRefundCheck(event);
     const outcome = await reconcileRefund(event, repository);

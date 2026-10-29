@@ -218,8 +218,13 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   useEffect(() => {
     if (!window.location?.href) return;
     const url = new URL(window.location.href);
-    creditToken.current ||= url.searchParams.get("credit") ?? "";
-    if (url.searchParams.has("credit")) { url.searchParams.delete("credit"); window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`); }
+    // The credit link carries its token in the fragment (#credit=), which browsers never send to a server.
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    creditToken.current ||= fragment.get("credit") ?? url.searchParams.get("credit") ?? "";
+    if (fragment.has("credit") || url.searchParams.has("credit")) {
+      url.searchParams.delete("credit");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${fragment.has("credit") ? "" : url.hash}`);
+    }
     if (!creditToken.current) return;
     const controller = new AbortController(); setCreditPending(true);
     void request<ReturnType<typeof studioCredit>>(`/api/bookings/${id}/checkout/credit`, { method: "POST", signal: controller.signal,

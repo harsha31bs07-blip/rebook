@@ -1,14 +1,14 @@
 import type { State } from "../domain/types";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
-import type { CustomerLink, LedgerEvent, StoredPlan } from "../store";
+import type { Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
 import { recoveryOutcomes, summarizeRecovery } from "../recovery/outcomes";
 import { paymentsNeedingAttention } from "../recovery/payment-attention";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
-export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = []) {
+export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
   const outcomes = recoveryOutcomes(state, plans, ledger, links);
   const sessions = new Map(state.sessions.map((session) => [session.id, session]));
@@ -75,9 +75,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     bookings: state.bookings.map((booking) => ({
       id: booking.id, session_id: booking.sessionId, customer_id: booking.customerId,
       status: booking.status, amount: dollars(booking.amount),
-      revenue_kept: outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
+      revenue_kept: credits.some((credit) => credit.redemptions.some((item) => item.bookingId === booking.id)) ? 0 : outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
         (["confirmed", "moved"].includes(booking.status) ? Math.max(0, toCents(booking.amount) - moneyEvents.filter((event) => event.booking_id === booking.id).reduce((sum, event) => sum + Math.round(event.issued_refund * 100), 0)) / 100 : 0),
-      payment_mode: booking.payment?.simulated ? "simulated" : "real",
+      payment_mode: credits.some((credit) => credit.redemptions.some((item) => item.bookingId === booking.id)) ? "credit" : booking.payment?.simulated ? "simulated" : "real",
       capture_id: booking.payment?.captureId ?? "",
     })),
     customers: state.customers.map((customer) => ({ id: customer.id, name: customer.name,
@@ -87,6 +87,9 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     instructors: state.instructors.map((instructor) => ({ id: instructor.id, name: instructor.name, skills: instructor.skills.join(", ") })),
     rooms: state.rooms.map((room) => ({ id: room.id, name: room.name, capacity: room.capacity })),
     money_events: moneyEvents,
+    credits: credits.map((credit) => ({ id: credit.id, booking_id: credit.bookingId, customer_id: credit.customerId,
+      plan_id: links.find((link) => link.id === credit.linkId)?.planId ?? null, amount: dollars(credit.amount), remaining: dollars(credit.remaining),
+      redeemed: credit.redemptions.reduce((sum, item) => sum + toCents(item.amount), 0) / 100, status: credit.status, created_at: credit.createdAt })),
     disruptions: plans.map((plan) => {
       const label = disruptionLabel(plan, state);
       const active = plan.status !== "proposed";
@@ -98,6 +101,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
         kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
+        credited: recovery.credited, kept_as_credit: recovery.keptAsCredit,
         refund_amount: dollars(plan.totals.refundAmount), revenue_kept: active ? recovery.revenueKept : dollars(plan.totals.revenueKept),
         planned_refund_amount: dollars(plan.totals.refundAmount),
         pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]),
@@ -125,7 +129,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       id: `${plan.id}:${action.bookingId}`, plan_id: plan.id, booking_id: action.bookingId,
       action: action.action, reason: action.reason, amount: dollars(action.amount),
     }))),
-    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Recovery KPIs count each booking once under its latest applied plan, using replies and settled refunds across its history. Kept or moved means the booking is confirmed; No reply yet separately tracks customer confirmation. Pending includes refunds requested or awaiting PayPal, including price differences for moved bookings. Revenue kept subtracts settled refunds; bookings requesting a full refund are excluded."],
+    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Recovery KPIs count each booking once under its latest applied plan, using replies and settled refunds across its history. Studio credits retain captured revenue, release the original seat and are reported separately from refunds. Redeeming credit does not create another capture or count the retained revenue again. Kept or moved means the booking is confirmed; No reply yet separately tracks customer confirmation. Pending includes refunds requested or awaiting PayPal, including price differences for moved bookings. Revenue kept subtracts settled refunds; bookings requesting a full refund are excluded."],
   };
 }
 

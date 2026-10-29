@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Session, State } from "../domain/types";
-import { overlaps, toCents } from "../domain/time";
+import { fromCents, overlaps, toCents } from "../domain/time";
 import { activeConstraints } from "../solver/constraints";
 import { captureOrder, createBookingOrder, getOrder, PayPalError, type PayPalOrder } from "../paypal/client";
 import { getRepository, StoreError, withWorkspaceLock, type CheckoutReservation, type Repository } from "../store";
@@ -17,6 +17,54 @@ export const CheckoutInputSchema = z.strictObject({
   }).optional(),
 });
 export type CheckoutInput = z.infer<typeof CheckoutInputSchema>;
+export const CreditTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const CreditCheckoutInputSchema = CheckoutInputSchema.extend({ creditToken: CreditTokenSchema });
+export type CreditCheckoutInput = z.infer<typeof CreditCheckoutInputSchema>;
+function requireCredit(workspaceId: string, token: string, repository: Repository) {
+  repository.requireReadyWorkspace(workspaceId);
+  const credit = repository.creditByToken(CreditTokenSchema.parse(token));
+  if (!credit || credit.workspaceId !== workspaceId) throw new StoreError(404, "This studio credit is unavailable.");
+  return credit;
+}
+export function studioCredit(workspaceId: string, token: string, repository = getRepository()) {
+  const credit = requireCredit(workspaceId, token, repository);
+  return { amount: credit.amount, remaining: credit.remaining, status: credit.status };
+}
+export async function redeemCredit(workspaceId: string, input: CreditCheckoutInput, requestId: string, repository = getRepository()): Promise<Receipt> {
+  input = CreditCheckoutInputSchema.parse(input);
+  return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
+    const credit = requireCredit(workspaceId, input.creditToken, repository);
+    const previous = repository.listCheckout(workspaceId).find((row) => row.requestId === requestId || row.requestAliases?.includes(requestId));
+    if (previous) {
+      if (previous.paidWith !== "credit" || previous.creditId !== credit.id || previous.sessionId !== input.sessionId
+        || JSON.stringify(previous.customer) !== JSON.stringify(input.customer) || JSON.stringify(previous.availability) !== JSON.stringify(input.availability)) {
+        throw new StoreError(409, "This checkout key belongs to another booking");
+      }
+      return checkoutReceipt(previous, repository);
+    }
+    const { state } = repository.requireReadyWorkspace(workspaceId);
+    if (pausedSessionIds(workspaceId, repository).has(input.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
+    const session = state.sessions.find((item) => item.id === input.sessionId);
+    if (!session || !sessionAvailable(state, session)) throw new StoreError(409, "This class is no longer available");
+    if (!seatsLeft(state, session, repository.listCheckout(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
+    const price = toCents(session.price), remaining = toCents(credit.remaining);
+    if (price <= 0) throw new StoreError(409, "This class cannot be purchased");
+    if (credit.status !== "available" || remaining < price) throw new StoreError(409, `Your studio credit covers classes up to $${credit.remaining}.`);
+    const id = randomUUID(), at = new Date().toISOString();
+    const customer = state.customers.find((item) => item.email.trim().toLowerCase() === input.customer.email.trim().toLowerCase());
+    const customerId = customer?.id ?? `customer-${id}`;
+    if (!customer) state.customers.push({ id: customerId, ...input.customer, prefs: checkoutPreferences(input.availability) });
+    else if (input.availability) customer.prefs = { ...customer.prefs, ...checkoutPreferences(input.availability) };
+    state.bookings.push({ id, customerId, sessionId: session.id, amount: session.price, status: "confirmed", bookedAt: at });
+    const row: CheckoutReservation = { id, workspaceId, requestId, sessionId: session.id, customer: input.customer, availability: input.availability,
+      amount: session.price, currency: state.studio.currency, session, expiresAt: Date.now(), status: "confirmed", paidWith: "credit", creditId: credit.id };
+    repository.saveState(workspaceId, state);
+    repository.saveCheckout(row);
+    repository.saveCredit({ ...credit, remaining: fromCents(remaining - price), status: remaining === price ? "redeemed" : "available",
+      redemptions: [...credit.redemptions, { bookingId: id, amount: session.price, at }] });
+    return checkoutReceipt(row, repository);
+  }));
+}
 export const BOOKING_PAUSED_MESSAGE = "Schedule change in progress — booking paused";
 export function pausedSessionIds(workspaceId: string, repository = getRepository()): Set<string> {
   return new Set(repository.listPlans(workspaceId).filter((plan) => plan.status === "proposed")
@@ -49,6 +97,7 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
   input = CheckoutInputSchema.parse(input);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId || item.requestAliases?.includes(requestId));
+    if (row?.paidWith === "credit") throw new StoreError(409, "This checkout key belongs to a studio credit booking");
     if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer)
       || JSON.stringify(row.availability) !== JSON.stringify(input.availability))) throw new StoreError(409, "This checkout key belongs to another booking");
     if (row?.status === "failed" || (row?.status === "pending" && row.expiresAt <= Date.now())) throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
@@ -152,17 +201,20 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
 }
 
 export function receipt(workspaceId: string, orderId: string, repository = getRepository()) {
-  const { state } = repository.requireWorkspace(workspaceId);
   const row = repository.checkoutByOrder(workspaceId, orderId);
   if (!row) throw new StoreError(404, "Checkout not found");
+  return checkoutReceipt(row, repository);
+}
+function checkoutReceipt(row: CheckoutReservation, repository: Repository) {
+  const { state } = repository.requireWorkspace(row.workspaceId);
   const booking = state.bookings.find((item) => item.id === row.id);
   const session = booking && state.sessions.find((item) => item.id === booking.sessionId);
   const current = booking ? { class: session?.title ?? row.session.title, start: session?.start ?? row.session.start,
     end: session?.end ?? row.session.end, status: booking.status,
     changed: booking.status !== "confirmed" || booking.sessionId !== row.sessionId || !!session &&
       (session.title !== row.session.title || session.start !== row.session.start || session.end !== row.session.end) } : undefined;
-  return { orderId, bookingId: row.id, status: row.status, class: row.session.title, start: row.session.start, end: row.session.end,
-    amount: row.amount, currency: row.currency, captureId: row.captureId, webhookConfigured: Boolean(process.env.PAYPAL_WEBHOOK_ID),
+  return { orderId: row.orderId, ...(row.paidWith ? { paidWith: row.paidWith } : {}), bookingId: row.id, status: row.status, class: row.session.title, start: row.session.start, end: row.session.end,
+    amount: row.amount, currency: row.currency, captureId: row.captureId, webhookConfigured: row.paidWith !== "credit" && Boolean(process.env.PAYPAL_WEBHOOK_ID),
     webhookConfirmed: Boolean(row.webhookConfirmed), current };
 }
 export type Receipt = ReturnType<typeof receipt>;

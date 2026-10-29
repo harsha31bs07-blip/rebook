@@ -3,7 +3,7 @@
 import Script from "next/script";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { bookingCatalog, CheckoutInput, Receipt } from "@/lib/checkout/service";
+import type { bookingCatalog, CheckoutInput, Receipt, studioCredit } from "@/lib/checkout/service";
 import { calendarFile, eligibleCheckoutMethods, payLaterButtonTag, type CardSession, type EligibleMethods, type PayPalV6 } from "@/lib/client/paypal-v6";
 import AgentReadyChip from "../webmcp/agent-ready-chip";
 import { useWebMcp } from "../../lib/webmcp/use-webmcp";
@@ -13,12 +13,37 @@ type Catalog = ReturnType<typeof bookingCatalog>;
 type Class = Catalog["sessions"][number];
 class CheckoutError extends Error { constructor(message: string, public code: string | undefined, public status: number) { super(message); } }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { ...init, cache: "no-store" });
+  const response = await fetch(path, { ...init, cache: "no-store", referrerPolicy: "no-referrer" });
   const body = await response.json();
   if (!response.ok) throw new CheckoutError(body.error ?? "Checkout could not be completed", body.code, response.status);
   return body;
 }
 function classTitle(title: string) { return title.replace(/\bhiit\b/gi, "HIIT"); }
+export function CreditPayment({ id, token, remaining, session, customer, availability, validate, onSuccess, onLockChange }: {
+  id: string; token: string; remaining: string; session: Class; customer: CheckoutInput["customer"]; availability?: CheckoutInput["availability"];
+  validate(): boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void;
+}) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const inFlight = useRef(false), key = useRef(""), uncertain = useRef(false);
+  const sufficient = Math.round(Number(remaining) * 100) >= Math.round(Number(session.price) * 100);
+  async function pay() {
+    if (inFlight.current || !sufficient || !validate()) return;
+    inFlight.current = true; setBusy(true); setError(""); onLockChange(true); key.current ||= crypto.randomUUID();
+    try {
+      onSuccess(await request<Receipt>(`/api/bookings/${id}/checkout/credit`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
+        body: JSON.stringify({ creditToken: token, sessionId: session.id, customer, availability }) }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Please try again.");
+      // Unknown responses keep the same key and details so retry cannot spend twice.
+      if (cause instanceof CheckoutError && cause.status < 500 && !uncertain.current) { key.current = ""; onLockChange(false); }
+      else uncertain.current = true;
+    } finally { inFlight.current = false; setBusy(false); }
+  }
+  return <div className="payment-methods" aria-busy={busy}><h3>Pay with your studio credit (${remaining} left)</h3>
+    {sufficient ? <button className="primary full-width" disabled={busy} onClick={() => void pay()}>{busy ? "Booking your class…" : "Book with studio credit"}</button>
+      : <p>Your studio credit covers classes up to ${remaining}. Choose another class to use it.</p>}
+    {error && <p className="error" role="alert">{error}</p>}</div>;
+}
 export function Payments({ id, session, customer, availability, validate, clientId, sandbox, onSuccess, onLockChange }: {
   id: string; session: Class; customer: { name: string; email: string }; validate(): boolean;
   availability?: CheckoutInput["availability"];
@@ -187,6 +212,22 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   const [error, setError] = useState("");
   const form = useRef<HTMLFormElement>(null);
   const [availability, setAvailability] = useState<CheckoutInput["availability"]>();
+  const [credit, setCredit] = useState<ReturnType<typeof studioCredit> & { token: string }>();
+  const [creditPending, setCreditPending] = useState(false);
+  const creditToken = useRef("");
+  useEffect(() => {
+    if (!window.location?.href) return;
+    const url = new URL(window.location.href);
+    creditToken.current ||= url.searchParams.get("credit") ?? "";
+    if (url.searchParams.has("credit")) { url.searchParams.delete("credit"); window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`); }
+    if (!creditToken.current) return;
+    const controller = new AbortController(); setCreditPending(true);
+    void request<ReturnType<typeof studioCredit>>(`/api/bookings/${id}/checkout/credit`, { method: "POST", signal: controller.signal,
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ creditToken: creditToken.current }) })
+      .then((details) => { if (!controller.signal.aborted) setCredit({ ...details, token: creditToken.current }); }).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); })
+      .finally(() => { if (!controller.signal.aborted) setCreditPending(false); });
+    return () => controller.abort();
+  }, [id]);
   useEffect(() => {
     const controller = new AbortController();
     const load = () => request<Catalog>(`/api/bookings/${id}/checkout`, { signal: controller.signal }).then(setCatalog).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
@@ -224,9 +265,10 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     <p className="eyebrow">Make time for yourself</p><h1>{catalog?.studio.name ?? "Northstar Movement Studio"} · Book a class</h1>
     <p className="muted booking-intro">Find your next good hour. All class times are local to the studio ({timezone}).</p>
     {error && <p className="error" role="alert">{error}</p>}
+    {credit && !receipt && <p role="status">Your studio credit: ${credit.remaining} left. Covers classes up to ${credit.remaining}.</p>}
     {receipt && placement ? <section className="booking-receipt"><span className="pill success-pill">{statusText}</span><h2>{inactive ? statusText : "You’re on the list."}</h2><h3>{classTitle(placement.class)}</h3>
       {receipt.current?.changed ? <><p>{inactive ? statusText : `Updated: now ${time(placement.start)}`}</p><p className="muted">Originally: {time(receipt.start)}</p></> : <p>{time(receipt.start)}</p>}
-      <p>${receipt.amount} {receipt.currency} paid via PayPal</p><p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>
+      <p>${receipt.amount} {receipt.currency} paid {receipt.paidWith === "credit" ? "with studio credit" : "via PayPal"}</p>{receipt.paidWith !== "credit" && <p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>}
       {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
       {!inactive && <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button></div>}</section>
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
@@ -246,7 +288,7 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
           <label><input type="checkbox" name="acceptsSubstitute" checked={availability?.acceptsSubstitute ?? true} onChange={(event) => setAvailability({ ...availability, acceptsSubstitute: event.target.checked })} />I&apos;m happy with a substitute instructor</label>
         </fieldset></details>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
         {selectionPaused && <p role="status">Schedule change in progress — booking paused</p>}
-        {(customerLocked || (currentSelection && !selectionPaused)) && <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />}
+        {(customerLocked || (currentSelection && !selectionPaused)) && (creditPending ? <p role="status">Checking studio credit...</p> : credit ? <CreditPayment key={`${id}:${selectedClass.id}:credit`} id={id} token={credit.token} remaining={credit.remaining} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} onSuccess={setReceipt} onLockChange={setCustomerLocked} /> : <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />)}
       </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}
   </main>;
 }

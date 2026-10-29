@@ -14,6 +14,7 @@ export const ChoiceInputSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("keep") }),
   z.strictObject({ action: z.literal("move"), sessionId: z.string().min(1).max(100) }),
   z.strictObject({ action: z.literal("refund") }),
+  z.strictObject({ action: z.literal("credit") }),
 ]);
 export type ChoiceInput = z.infer<typeof ChoiceInputSchema>;
 
@@ -86,13 +87,16 @@ export function view(link: CustomerLink, repository: Repository) {
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team" });
   const current = state.sessions.find((item) => item.id === booking.sessionId);
   const newest = repository.listCustomerLinks(link.workspaceId).filter((item) => item.bookingId === link.bookingId).at(-1);
-  const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && newest?.id === link.id
+  const credit = repository.listCredits(link.workspaceId).find((item) => item.linkId === link.id);
+  const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && link.reply?.action !== "credit" && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
   return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
     kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
     refundable: fromCents(remainingCaptured(link, repository)), receipt: receiptFor(link, repository),
+    ...(credit ? { credit: { amount: credit.amount, remaining: credit.remaining, status: credit.status,
+      path: `/b/${repository.requireWorkspace(link.workspaceId).bookingId}?credit=${repository.creditToken(credit)}` } } : {}),
     alternatives: canChoose ? alternatives(link, repository) : [] };
 }
 export type CustomerChoiceView = ReturnType<typeof view>;
@@ -128,6 +132,10 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
   return withWorkspaceLock(repository, initial.workspaceId, async (owner) => {
     let link = requireLink(token, repository);
     if (link.kind !== "choice") throw new StoreError(409, "This link is a refund receipt only.");
+    if (link.reply?.action === "credit" || repository.listCredits(link.workspaceId).some((item) => item.bookingId === link.bookingId)) {
+      if (input.action !== "credit") throw new StoreError(409, "Your studio credit choice is final.");
+      return view(link, repository);
+    }
     if (link.reply?.requestId) {
       if (input.action !== link.reply.action || (input.action === "move" && input.sessionId !== link.reply.sessionId)) throw new StoreError(409, "Your choice is final once a refund starts.");
       await finishRefund(link, repository, owner);
@@ -147,6 +155,11 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         if (toCents(amount) > 0) requestId = `choice:${link.id}`;
         booking.sessionId = target.id; booking.amount = target.price; booking.status = "moved";
         link = { ...link, expiresAt: Math.min(link.expiresAt, Date.parse(target.start)) };
+      } else if (input.action === "credit") {
+        amount = fromCents(remainingCaptured(link, repository));
+        if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available for studio credit.");
+        booking.status = "cancelled";
+        repository.createCredit({ workspaceId: link.workspaceId, linkId: link.id, bookingId: booking.id, customerId: booking.customerId, amount });
       } else if (input.action === "refund") {
         amount = fromCents(remainingCaptured(link, repository));
         if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available to refund.");
@@ -189,7 +202,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     const reply = link.reply;
     row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind,
       path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt,
-      reply: reply ? { at: reply.at, status: reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
+      reply: reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
   }
   for (const row of outbox.values()) {
@@ -213,7 +226,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       const receipt = receiptFor(link, repository);
       const money = receipt ? ` ($${receipt.amount}, ${receipt.status === "SIMULATED" ? "simulated" : "PayPal"} ${receipt.paypalId || "pending"} · ${receipt.status.toLowerCase()})` : "";
       return { id: link.id, at: reply.at, action: reply.action,
-        text: `${customer} ${reply.action === "refund" ? "took a refund" : reply.action === "move" ? `picked ${session?.title ?? "another class"} on ${when}` : `kept ${when}`}${money}` };
+        text: `${customer} ${reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? "took a refund" : reply.action === "move" ? `picked ${session?.title ?? "another class"} on ${when}` : `kept ${when}`}${money}` };
     }).sort((a, b) => b.at.localeCompare(a.at)) };
 }
 export type OwnerCustomerChoices = ReturnType<typeof ownerCustomerChoices>;

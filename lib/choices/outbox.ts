@@ -6,7 +6,7 @@ export type DeliveryView = { status: DeliveryStatus; updatedAt: string };
 export type OutboxChange = {
   bookingId: string; subject: string; body: string;
   kind?: "choice" | "receipt"; path?: string; expiresAt?: number;
-  sentAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded"; at: string };
+  sentAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded" | `kept a $${number} studio credit`; at: string };
 };
 export type OutboxCustomer = {
   customerId: string; customerName: string; planId: string; changes: OutboxChange[];

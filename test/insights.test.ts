@@ -116,7 +116,7 @@ describe("workspace insights", () => {
     expect(first.local_start).toBe("07:00");
     expect(JSON.stringify(data)).not.toContain("@example");
     const model = buildStudioData(data);
-    expect(model.sources).toHaveLength(8);
+    expect(model.sources).toHaveLength(9);
     for (const relationship of insightRelationships) {
       if (!("tableId" in relationship.target)) continue;
       const targetRef = relationship.target;

@@ -61,16 +61,40 @@ beforeEach(() => {
 });
 afterEach(() => { for (const cleanup of hooks.cleanups.values()) cleanup?.(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-it("shows old/new class details, drafted message and three choices; offers the lower-price refund", async () => {
+it("shows old/new class details, drafted message and four choices; offers the lower-price refund", async () => {
   render(); await settle();
   let html = renderToStaticMarkup(tree);
   expect(html).toContain("Maya Chen"); expect(html).toContain("Alex Rivera"); expect(html).toContain("Hi Avery");
   expect(html).toContain("Keep my new time"); expect(html).toContain("Pick another class"); expect(html).toContain("Refund me");
+  expect(html).toContain("Keep $22 as studio credit"); expect(html).toContain("Use it for any class; no refund needed.");
   (button("Pick another class").props.onClick as () => void)(); render();
   html = renderToStaticMarkup(tree); expect(html).toContain("Gentle Yoga"); expect(html).toContain("$4.00 refunded");
   (button("Gentle Yoga").props.onClick as () => void)(); await settle();
   const call = send.mock.calls.find((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")! as unknown as [string, RequestInit];
   expect(call[0]).toBe(`/api/choices/${"a".repeat(43)}`); expect(JSON.parse(call[1].body as string)).toEqual({ action: "move", sessionId: "other" });
+});
+
+it("chooses a studio credit and shows its lasting card and booking link", async () => {
+  render(); await settle();
+  data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
+    credit: { amount: "22.00", remaining: "22.00", status: "available", path: `/b/public?credit=${"b".repeat(43)}` } };
+  (button("Keep $22 as studio credit").props.onClick as () => void)(); await settle();
+  const post = send.mock.calls.find((args: unknown[]) => (args[1] as RequestInit)?.method === "POST")! as unknown as [string, RequestInit];
+  expect(JSON.parse(post[1].body as string)).toEqual({ action: "credit" });
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Your $22.00 studio credit"); expect(html).toContain("Book a class with your credit"); expect(html).toContain(data.credit!.path);
+  expect(html).not.toContain("Your place in your chosen class is confirmed."); expect(html).not.toContain("Refund completed");
+  expect(button("Refund me")).toBeUndefined();
+});
+
+it("confirms the assistant's studio credit proposal through the choice API", async () => {
+  render(); await settle();
+  send.mockResolvedValueOnce(Response.json({ action: "credit", credit: "22.00", refund: "0.00", reply: "Keep $22.00 as credit. Nothing changes until you confirm.", checked: 1, source: "gemini", model: "test" }));
+  await hooks.tools[0].execute({ message: "studio credit please" }, { signal: new AbortController().signal }); await settle();
+  expect(renderToStaticMarkup(tree)).toContain("$22.00 studio credit");
+  (button("Confirm").props.onClick as () => void)(); await settle();
+  const posts = send.mock.calls.filter((args: unknown[]) => (args[1] as RequestInit)?.method === "POST") as unknown as [string, RequestInit][];
+  expect(JSON.parse(posts.at(-1)![1].body as string)).toEqual({ action: "credit" });
 });
 
 it("asks for a proposal, focuses it, and confirms only through the existing choice API", async () => {

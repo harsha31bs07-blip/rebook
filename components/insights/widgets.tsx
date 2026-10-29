@@ -108,6 +108,7 @@ function RecoveryImpact(params: AgWidgetParams<RecoveryWidget>) {
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!selected) return <div className="insight-empty"><strong>Your next recovery, in perspective</strong><p>Create a disruption from the schedule to see bookings saved and refunds here.</p></div>;
   const kept = Number(selected.kept) || 0, moved = Number(selected.moved) || 0, refunded = Number(selected.refunded) || 0;
+  const credited = Number(selected.credited) || 0;
   const pending = Number(selected.pending) || 0, noReply = Number(selected.no_reply) || 0, simulated = Number(selected.simulated_refunded) || 0;
   const affected = String(selected.status) === "proposed" ? kept + moved + refunded : Number(selected.applied_affected) || 0;
   const refunds = receipts?.filter((row) => row.refundKind === "refund" && row.refundPlan === selected.id);
@@ -115,13 +116,14 @@ function RecoveryImpact(params: AgWidgetParams<RecoveryWidget>) {
     .reduce((sum, row) => sum + Math.round(Number(row.refundAmount) * 100), 0) / 100;
   return <div className="recovery-impact">
     <label>Disruption<select aria-label="Selected disruption" value={String(selected.id)} onChange={(event) => select(event.target.value)}>{sorted.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.subject)} · {String(row.window)}</option>)}</select></label>
-    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>{receiptError ? "Refund totals unavailable" : receipts ? `${money(refundAmount(["COMPLETED"]))} refunded · ${money(refundAmount(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]))} pending · ${money(refundAmount(["SIMULATED"]))} simulated` : "Loading refund totals…"}</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved) / affected * 100) : 0}% saved</span></div>
+    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>{receiptError ? "Refund totals unavailable" : receipts ? `${money(refundAmount(["COMPLETED"]))} refunded · ${money(refundAmount(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]))} pending · ${money(refundAmount(["SIMULATED"]))} simulated` : "Loading refund totals…"}</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved + credited) / affected * 100) : 0}% saved</span></div>
     <p className="muted">{money(selected.refund_amount)} in planned refunds</p>
-    <div className="impact-bar" role="img" aria-label={`${kept} kept, ${moved} moved, ${refunded} refund actions`}>
-      {[kept, moved, refunded].map((count, index) => count > 0 && <span className={`impact-segment impact-${index}`} key={index} style={{ flex: count }} />)}
+    {String(selected.status) !== "proposed" && <p className="muted">Kept as studio credit: {money(selected.kept_as_credit)} ({credited} bookings)</p>}
+    <div className="impact-bar" role="img" aria-label={`${kept} kept, ${moved} moved, ${refunded} refund actions, ${credited} studio credits`}>
+      {[kept, moved, refunded, credited].map((count, index) => count > 0 && <span className={`impact-segment impact-${index === 3 ? 0 : index}`} key={index} style={{ flex: count }} />)}
     </div>
     {String(selected.status) !== "proposed" && <p className="muted">Kept or moved (confirmed): {kept + moved} - Refunded (completed): {refunded} - Pending (refund requested / awaiting PayPal): {pending} - No reply yet: {noReply} - Simulated refunds: {simulated}</p>}
-    <div className="impact-legend"><span><i className="impact-0" />{kept} Kept</span><span><i className="impact-1" />{moved} Moved</span><span><i className="impact-2" />{refunded} Refund actions</span></div>
+    <div className="impact-legend"><span><i className="impact-0" />{kept} Kept</span><span><i className="impact-1" />{moved} Moved</span><span><i className="impact-2" />{refunded} Refund actions</span>{credited > 0 && <span><i className="impact-0" />{credited} Studio credits</span>}</div>
     <p className="muted">{String(selected.status) === "proposed" ? "Proposed recovery · forecast" : "Applied recovery"} · {String(selected.sessions_affected)} classes affected</p>
   </div>;
 }

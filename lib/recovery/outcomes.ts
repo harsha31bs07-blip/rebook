@@ -21,10 +21,11 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
     const capture = [...events.values()].find((event) => event.workspaceId === plan.workspaceId && event.bookingId === action.bookingId && event.kind === "capture" &&
       event.captureId === booking?.payment?.captureId && ["COMPLETED", "SIMULATED"].includes(event.status));
     const originalAmount = capture ? toCents(capture.amount) : plannedAmount;
-    // A reversed capture (chargeback) cancels the booking: none of its money stays with the studio.
-    const reversed = booking?.status === "cancelled" || [...events.values()].some((event) => event.workspaceId === plan.workspaceId && event.kind === "capture" &&
-      event.captureId === booking?.payment?.captureId && event.status === "REVERSED");
     const link = links.filter((item) => item.workspaceId === plan.workspaceId && item.planId === plan.id && item.bookingId === action.bookingId).at(-1);
+    const credited = link?.reply?.action === "credit";
+    // Credit releases the seat while retaining the captured revenue; a chargeback still reverses it.
+    const reversed = (booking?.status === "cancelled" && !credited) || [...events.values()].some((event) => event.workspaceId === plan.workspaceId && event.kind === "capture" &&
+      event.captureId === booking?.payment?.captureId && event.status === "REVERSED");
     const refunds = [...events.values()].filter((event) => event.workspaceId === plan.workspaceId && event.bookingId === action.bookingId && event.kind === "refund" && event.status !== "MERGED");
     const settled = refunds.filter((event) => ["COMPLETED", "SIMULATED"].includes(event.status));
     const amount = (items: LedgerEvent[]) => items.reduce((sum, event) => sum + toCents(event.amount), 0);
@@ -39,13 +40,14 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
     const pending = refunds.some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
       (refundIntent && !fullySettled);
     const saved = !refundIntent && !reversed && refundedAmount < originalAmount;
-    const moved = saved && (link?.reply?.action === "move" || action.action === "move");
+    const moved = saved && !credited && (link?.reply?.action === "move" || action.action === "move");
     const noReply = !refundIntent && !reversed && !link?.reply;
     const failed = refunds.some((event) => ["FAILED", "CANCELLED", "NEEDS_REVIEW"].includes(event.status));
     return {
       booking_id: action.bookingId, customer_id: action.customerId, plan_id: plan.id, planned_remedy: action.action,
-      customer_reply: link?.reply?.action ?? "none", outcome: reversed && !refundIntent ? "reversed" : fullySettled ? simulatedAmount ? "simulated_refund" : "refunded" : refundIntent ? "pending" : moved ? "moved" : "kept",
-      kept: saved && !moved ? 1 : 0, moved: moved ? 1 : 0, saved: saved ? 1 : 0,
+      customer_reply: link?.reply?.action ?? "none", outcome: reversed && !refundIntent ? "reversed" : fullySettled ? simulatedAmount ? "simulated_refund" : "refunded" : refundIntent ? "pending" : credited ? "credit" : moved ? "moved" : "kept",
+      kept: saved && !moved && !credited ? 1 : 0, moved: moved ? 1 : 0, saved: saved ? 1 : 0,
+      credited: credited && saved ? 1 : 0, kept_as_credit: credited && saved ? toCents(link.reply!.amount) / 100 : 0,
       refunded: fullySettled && !simulatedAmount ? 1 : 0, simulated_refunded: fullySettled && simulatedAmount > 0 ? 1 : 0,
       pending: pending ? 1 : 0, no_reply: noReply ? 1 : 0,
       revenue_kept: saved ? Math.max(0, originalAmount - refundedAmount) / 100 : 0,
@@ -59,11 +61,11 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
 export type RecoveryOutcome = ReturnType<typeof recoveryOutcomes>[number];
 
 export function summarizeRecovery(outcomes: RecoveryOutcome[]) {
-  const sum = (field: "kept" | "moved" | "saved" | "refunded" | "simulated_refunded" | "pending" | "no_reply" | "revenue_kept" | "completed_refund_amount" | "simulated_refund_amount") =>
+  const sum = (field: "kept" | "moved" | "saved" | "credited" | "kept_as_credit" | "refunded" | "simulated_refunded" | "pending" | "no_reply" | "revenue_kept" | "completed_refund_amount" | "simulated_refund_amount") =>
     outcomes.reduce((total, item) => total + Math.round(item[field] * 100), 0) / 100;
   return { affected: outcomes.length, kept: sum("kept"), moved: sum("moved"), saved: sum("saved"), refunded: sum("refunded"),
     simulatedRefunded: sum("simulated_refunded"), pending: sum("pending"), noReply: sum("no_reply"), revenueKept: sum("revenue_kept"),
-    completedRefundAmount: sum("completed_refund_amount"), simulatedRefundAmount: sum("simulated_refund_amount"),
+    completedRefundAmount: sum("completed_refund_amount"), simulatedRefundAmount: sum("simulated_refund_amount"), credited: sum("credited"), keptAsCredit: sum("kept_as_credit"),
     noReplyCustomers: new Set(outcomes.filter((item) => item.no_reply).map((item) => item.customer_id)).size,
     complete: outcomes.length > 0 && outcomes.every((item) => item.final) };
 }

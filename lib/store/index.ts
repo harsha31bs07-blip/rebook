@@ -38,7 +38,12 @@ export type CustomerLink = {
   message: { subject: string; body: string };
   before: State["sessions"][number]; after?: State["sessions"][number];
   sentAt?: string;
-  reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
+  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string };
+};
+export type Credit = {
+  id: string; tokenHash: string; workspaceId: string; linkId: string; bookingId: string; customerId: string;
+  amount: string; remaining: string; status: "available" | "redeemed"; createdAt: string;
+  redemptions: { bookingId: string; amount: string; at: string }[];
 };
 export type CoverLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
@@ -63,6 +68,7 @@ export type CheckoutReservation = {
   availability?: { times?: ("mornings" | "afternoons" | "evenings")[]; days?: ("weekdays" | "weekends")[]; acceptsSubstitute?: boolean };
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
   paypalCustomId?: string;
+  paidWith?: "credit"; creditId?: string;
   status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;
 };
 const storeErrorBrand = Symbol.for("rebook.StoreError");
@@ -129,6 +135,11 @@ export class Repository {
         plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, booking_id TEXT NOT NULL, data TEXT NOT NULL,
         UNIQUE(plan_id, booking_id)
       );
+      CREATE TABLE IF NOT EXISTS credits (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        link_id TEXT NOT NULL UNIQUE REFERENCES customer_links(id) ON DELETE CASCADE, data TEXT NOT NULL
+      );
     `);
     // Persist separate public capabilities for existing demos before indexing them.
     this.transaction(() => {
@@ -182,6 +193,29 @@ export class Repository {
   coverToken(link: Pick<CoverLink, "id">): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
     return createHmac("sha256", secret).update(`cover:${link.id}`).digest("base64url");
+  }
+  creditToken(credit: Pick<Credit, "id">): string {
+    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
+    return createHmac("sha256", secret).update(`credit:${credit.id}`).digest("base64url");
+  }
+  createCredit(input: Pick<Credit, "workspaceId" | "linkId" | "bookingId" | "customerId" | "amount">): Credit {
+    const previous = this.listCredits(input.workspaceId).find((credit) => credit.linkId === input.linkId);
+    if (previous) return previous;
+    const credit: Credit = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", remaining: input.amount,
+      status: "available", createdAt: new Date().toISOString(), redemptions: [] };
+    credit.tokenHash = createHash("sha256").update(this.creditToken(credit)).digest("hex");
+    this.db.prepare("INSERT INTO credits VALUES (?, ?, ?, ?, ?)").run(credit.id, credit.tokenHash, credit.workspaceId, credit.linkId, JSON.stringify(credit));
+    return credit;
+  }
+  listCredits(workspaceId: string): Credit[] {
+    return (this.db.prepare("SELECT data FROM credits WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  creditByToken(token: string): Credit | undefined {
+    const row = this.db.prepare("SELECT data FROM credits WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  saveCredit(credit: Credit): void {
+    this.db.prepare("UPDATE credits SET data = ? WHERE id = ?").run(JSON.stringify(credit), credit.id);
   }
   createCoverLink(input: Omit<CoverLink, "id" | "tokenHash" | "createdAt">): CoverLink {
     const previous = this.listCoverLinks(input.workspaceId).find((link) => link.planId === input.planId && link.sessionId === input.sessionId);
@@ -532,6 +566,7 @@ export class Repository {
       for (const { id } of candidates) {
         // A private recovery link must remain usable for its advertised lifetime.
         if (this.listCustomerLinks(id).some((link) => customerLinkReadableUntil(link) > Date.now())) continue;
+        if (this.listCredits(id).some((credit) => credit.status === "available" && toCents(credit.remaining) > 0)) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
         if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status))) continue;

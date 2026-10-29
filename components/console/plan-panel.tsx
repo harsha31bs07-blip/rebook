@@ -104,11 +104,11 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
         <div><span>Refunds planned</span><strong className="danger-text">{totals.refunded}</strong><small>bookings</small></div>
         <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
       </> : <>
-        <div><span>Kept or moved</span><strong className="success">{recovery.saved}</strong><small>in the new schedule - {recovery.kept} kept / {recovery.moved} moved</small></div>
+        <div><span>Kept or moved</span><strong className="success">{recovery.kept + recovery.moved}</strong><small>in the new schedule - {recovery.kept} kept / {recovery.moved} moved</small></div>
         <div><span>Refunded</span><strong className="danger-text">{recovery.refunded}</strong><small>completed - {recovery.simulatedRefunded} simulated separately</small></div>
         <div><span>Pending</span><strong>{recovery.pending}</strong><small>refund requested / awaiting PayPal</small></div>
         <div><span>No reply yet</span><strong>{recovery.noReply}</strong><small>customer confirmation outstanding</small></div>
-        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small></div>
+        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>Kept as studio credit: {money(recovery.keptAsCredit.toFixed(2))}</small><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small></div>
       </>}
     </div>
     {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul role="list">{plan.sessionChanges.map((change) => {

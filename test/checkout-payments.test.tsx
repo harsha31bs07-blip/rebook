@@ -38,7 +38,7 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("next/script", () => ({ default: "sdk-script" }));
 vi.mock("next/link", () => ({ default: "a" }));
 vi.mock("@/lib/client/paypal-v6", () => import("../lib/client/paypal-v6"));
-import BookingPage, { Payments } from "../components/booking/booking-page";
+import BookingPage, { CreditPayment, Payments } from "../components/booking/booking-page";
 
 type Element = ReactElement<Record<string, unknown>>;
 function elements(node: ReactNode): Element[] {
@@ -87,6 +87,66 @@ it("loads only the sandbox JS SDK even if a caller supplies a non-sandbox presen
   props = { ...props, sandbox: false };
   render();
   expect(find(tree, (element) => element.type === "sdk-script").props.src).toBe("https://www.sandbox.paypal.com/web-sdk/v6/core");
+});
+
+it("pays with studio credit using only a POST body and reuses the key after a lost response", async () => {
+  const creditProps = { id: "studio", token: "c".repeat(43), remaining: "22.00", session: props.session, customer: props.customer,
+    validate: props.validate, onSuccess: vi.fn(), onLockChange: vi.fn() };
+  const renderCredit = () => { hooks.cursor = 0; tree = CreditPayment(creditProps); };
+  fetchMock.mockRejectedValueOnce(new Error("Response lost"))
+    .mockResolvedValueOnce(Response.json({ error: "Workspace is busy; retry shortly" }, { status: 409 }))
+    .mockResolvedValueOnce(Response.json({ ...receipt, orderId: undefined, captureId: undefined, paidWith: "credit" }));
+  renderCredit();
+  expect(elements(tree).some((element) => element.type === "sdk-script")).toBe(false);
+  expect(elements(tree).some((element) => String(element.props.children).includes("PayPal"))).toBe(false);
+  const click = () => (find(tree, (element) => element.type === "button").props.onClick as () => void)();
+  click();
+  for (let index = 0; index < 15; index++) { await Promise.resolve(); renderCredit(); }
+  click();
+  for (let index = 0; index < 15; index++) { await Promise.resolve(); renderCredit(); }
+  click();
+  for (let index = 0; index < 15; index++) { await Promise.resolve(); renderCredit(); }
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+  expect(calls[0][0]).toBe("/api/bookings/studio/checkout/credit"); expect(calls[0][0]).not.toContain(creditProps.token);
+  expect(calls[0][1]).toMatchObject({ method: "POST", referrerPolicy: "no-referrer" });
+  expect(JSON.parse(calls[0][1].body as string)).toEqual({ creditToken: creditProps.token, sessionId: props.session.id, customer: props.customer });
+  expect(calls[1][1].headers).toEqual(calls[0][1].headers);
+  expect(calls[2][1].headers).toEqual(calls[0][1].headers);
+  expect(creditProps.onSuccess).toHaveBeenCalledWith(expect.objectContaining({ paidWith: "credit" }));
+});
+
+it("shows insufficient studio credit without a payment button or PayPal", () => {
+  tree = CreditPayment({ id: "studio", token: "c".repeat(43), remaining: "12.00", session: props.session, customer: props.customer,
+    validate: props.validate, onSuccess: vi.fn(), onLockChange: vi.fn() });
+  expect(elements(tree).some((element) => element.type === "button" || element.type === Payments)).toBe(false);
+  expect(elements(tree).some((element) => element.type === "p" && String(element.props.children).includes("12.00"))).toBe(true);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("strips the URL credit token before requests and uses the credit payment option", async () => {
+  const token = "c".repeat(43), replaceState = vi.fn();
+  vi.stubGlobal("window", { location: { href: `http://localhost/b/studio?credit=${token}&view=week#classes` }, history: { state: { page: "booking" }, replaceState } });
+  fetchMock.mockImplementation(async (url: string) => Response.json(url.endsWith("/credit") ? { amount: "22.00", remaining: "22.00", status: "available" }
+    : { studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] }));
+  const renderPage = () => { hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true }); hooks.pending.splice(0).forEach((effect) => effect()); };
+  renderPage();
+  expect(replaceState).toHaveBeenCalledWith({ page: "booking" }, "", "/b/studio?view=week#classes");
+  for (let index = 0; index < 15; index++) { await Promise.resolve(); renderPage(); }
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+  expect(calls.every(([url]) => !url.includes(token))).toBe(true);
+  expect(calls.find(([url]) => url.endsWith("/credit"))?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ creditToken: token }) });
+  (find(tree, (element) => element.type === "button" && String(element.props.className).startsWith("bookable-class")).props.onClick as () => void)(); renderPage();
+  expect(elements(tree).some((element) => element.type === CreditPayment)).toBe(true);
+  expect(elements(tree).some((element) => element.type === Payments)).toBe(false);
+});
+
+it("labels credit receipts without a PayPal capture reference", () => {
+  hooks.slots[0] = { studio: { name: "Studio", timezone: "UTC" }, sessions: [] };
+  hooks.slots[4] = { bookingId: "credit-booking", paidWith: "credit", class: "Yoga", start: "2026-11-09T17:15:00Z", end: "2026-11-09T18:15:00Z", amount: "22.00", currency: "USD" };
+  tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true });
+  expect(elements(tree).some((element) => element.type === "p" && Array.isArray(element.props.children) && element.props.children.includes("with studio credit"))).toBe(true);
+  expect(elements(tree).some((element) => element.props.className === "capture-reference")).toBe(false);
 });
 function clickPay() {
   (find(tree, (element) => element.type === "button" && element.props.className === "primary full-width").props.onClick as () => void)();

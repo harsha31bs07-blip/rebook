@@ -74,6 +74,21 @@ it("rejects closed choices before calling a provider", async () => {
   await submitChoice(token, { action: "refund" }, repository);
   await expect(proposeChoice(token, "keep", repository)).rejects.toMatchObject({ status: 409 }); expect(send).not.toHaveBeenCalled();
 });
+it("may propose studio credit using only the server's refundable amount without executing", async () => {
+  const choice = await customerChoice(token, repository), before = repository.requireWorkspace(workspaceId).state;
+  send.mockResolvedValueOnce(response({ action: "credit", amount: "500.00", credit: "500.00", reply: "I issued $500." }));
+  const result = await proposeChoice(token, "Keep it as studio credit", repository);
+  expect(result).toMatchObject({ action: "credit", credit: choice.refundable, refund: "0.00" });
+  expect(result.reply).toContain(`$${choice.refundable}`); expect(result.reply).toContain("until you confirm"); expect(result.reply).not.toContain("500");
+  expect(repository.listCredits(workspaceId)).toEqual([]); expect(repository.requireWorkspace(workspaceId).state).toEqual(before);
+  expect(repository.customerLinkByToken(token)?.reply).toBeUndefined();
+});
+it("clarifies a credit request with no refundable balance", async () => {
+  const link = repository.customerLinkByToken(token)!, booking = repository.requireWorkspace(workspaceId).state.bookings.find((entry) => entry.id === link.bookingId)!;
+  repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "refund", amount: booking.amount, paypalId: "already-refunded", captureId: booking.payment!.captureId, requestId: "prior-refund", status: "SIMULATED" });
+  send.mockResolvedValueOnce(response({ action: "credit", reply: "Credit please" }));
+  expect(await proposeChoice(token, "credit", repository)).toMatchObject({ action: "clarify", refund: "0.00" });
+});
 it("returns the recoverable 503 message when no provider is available", async () => {
   vi.stubEnv("GEMINI_API_KEY", "");
   await expect(proposeChoice(token, "help", repository)).rejects.toMatchObject({ status: 503, message: "The assistant is busy right now. You can still choose below." });

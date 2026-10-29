@@ -11,12 +11,14 @@ const stamp = (data: Insights) => ({ asOf: readableAsOf(data), asOfIso: data.as_
 
 export function getRecoverySummary(data: Insights) {
   return { ...stamp(data), ...summarizeRecovery(data.recovery_outcomes),
+    creditsIssuedUSD: money(data.credits.map((credit) => credit.amount)), creditsRedeemedUSD: money(data.credits.map((credit) => credit.redeemed)),
+    creditsRemainingUSD: money(data.credits.map((credit) => credit.remaining)),
     disruptions: data.disruptions.map((plan) => ({ disruption: `${plan.subject}, ${plan.window}`, status: plan.status,
       ...summarizeRecovery(data.recovery_outcomes.filter((row) => row.plan_id === plan.id)),
       completedRefundAmount: plan.completed_refund_amount, simulatedRefundAmount: plan.simulated_refund_amount,
       pendingRefundUSD: plan.pending_refund_amount, failedRefundUSD: plan.failed_refund_amount,
       plannedRefundUSD: plan.planned_refund_amount,
-    })), note: "Applied outcomes count each booking once under its latest applied plan. Per-disruption refund money follows the originating plan. No reply overlaps kept/moved; pending may include a moved booking's price difference. Simulated refunds are separate. Proposed plans are forecasts only." };
+    })), note: "Applied outcomes count each booking once under its latest applied plan. Per-disruption refund money follows the originating plan. No reply overlaps kept/moved; pending may include a moved booking's price difference. Studio credits are retained revenue, separate from refunds; issuance and redemption are reported in USD without counting redemption as new revenue. Simulated refunds are separate. Proposed plans are forecasts only." };
 }
 
 export function getRefundBreakdown(data: Insights, groupBy: RefundGroup = "reason") {

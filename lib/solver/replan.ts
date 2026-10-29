@@ -7,6 +7,11 @@ import { activeConstraints } from "./constraints";
 
 export { applyPlan } from "./validate";
 
+/** Placements the exact pass may evaluate before keeping its best plan so far (deterministic, about a second). */
+const WORK_BUDGET = 250_000;
+/** Equally good placements per class the exact pass branches on, closest to the original first. */
+const MAX_TIED_OPTIONS = 24;
+
 const placement = (session: Session): Placement => ({
   instructorId: session.instructorId, roomId: session.roomId, start: session.start, end: session.end,
 });
@@ -87,7 +92,8 @@ function candidateFeasibility(state: State, before: Session, disruption: Disrupt
 }
 
 /**
- * Greedy, deterministic allocation in session-ID order. Each chosen remedy reserves its resources.
+ * Deterministic. A greedy pass in session-ID order reserves each class's best placement; when its refunds exceed
+ * the per-class lower bound, a budgeted branch and bound over placements finds a plan with fewer refunds if one exists.
  * Default horizon ends at now + 7 days; horizonEnd supplies an exact exclusive boundary.
  * Moves never precede the original session, and must finish inside the horizon.
  * If now is omitted, the earliest session start is used (or disruption.from for an empty state).
@@ -117,7 +123,9 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
     disruption: structuredClone(disruption), now, sessionChanges: [], bookingActions: [],
     totals: calculateTotals(0, []), warnings: [],
   };
-  for (const session of affected) {
+  let work = 0;
+  /** Best placement for one class against `working`. With `all`, also collects every feasible placement (no pruning). */
+  const search = (session: Session, working: State, all?: Candidate[]): Candidate => {
     const bookings = state.bookings.filter((booking) => booking.sessionId === session.id);
     const feasible = candidateFeasibility(working, session, disruption);
     const actionsAt = bookingActionEvaluator(bookings, state.customers, session, tz, { ...working, originalSessions: state.sessions });
@@ -136,10 +144,12 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       remedy: "cancel", actions: cancelledActions,
       objective: objective("cancel", undefined, cancelledActions),
     };
+    all?.push(best);
     const consider = (remedy: Remedy, candidate: Session) => {
       if (!feasible(candidate)) return;
       const actions = actionsAt(candidate);
       const candidateObjective = objective(remedy, candidate, actions);
+      if (all) { work += 1; all.push({ remedy, after: candidate, actions, objective: candidateObjective }); }
       if (compareObjectives(candidateObjective, best.objective) < 0) {
         best = { remedy, after: candidate, actions, objective: candidateObjective };
       }
@@ -150,15 +160,15 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       // A room or substitute can only add refunds. Keep the strict objective's tie order.
       const timeActions = actionsAt(candidate);
       const timeObjective = objective("move_time", candidate, timeActions);
-      if (timeObjective.refunds > best.objective.refunds ||
-        (timeObjective.refunds === best.objective.refunds && timeObjective.priority > best.objective.priority)) return;
+      if (!all && (timeObjective.refunds > best.objective.refunds ||
+        (timeObjective.refunds === best.objective.refunds && timeObjective.priority > best.objective.priority))) return;
       for (const instructor of instructors) {
         if (!instructor.skills.includes(session.classType)) continue;
         const withInstructor = { ...candidate, instructorId: instructor.id };
         const bound = objective("move_time", withInstructor, actionsAt(withInstructor));
         // The prefix sorts before every complete room key, including prefix-sharing room IDs.
         bound.key = `${withInstructor.start}|${instructor.id}|`;
-        if (compareObjectives(bound, best.objective) >= 0) continue;
+        if (!all && compareObjectives(bound, best.objective) >= 0) continue;
         for (const room of rooms) {
           if (!room.supports.includes(session.classType)) continue;
           consider("move_time", { ...withInstructor, roomId: room.id, capacity: Math.min(session.capacity, room.capacity) });
@@ -174,7 +184,7 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       }
     }
     // Only skip moves when the retention upper bound is met at the original time.
-    if (best.objective.refunds > unavoidableRefunds || best.objective.priority >= 2) {
+    if (all || best.objective.refunds > unavoidableRefunds || best.objective.priority >= 2) {
       const duration = Date.parse(session.end) - Date.parse(session.start);
       const original = localParts(session.start, tz);
       const originalClock = original.minutesOfDay;
@@ -185,7 +195,7 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
       if (nextDayStart >= Date.parse(now) && nextDayStart + duration <= horizon) {
         considerMoves(nextDayStart, duration);
       }
-      if (best.objective.refunds > unavoidableRefunds || best.objective.priority > 2) {
+      if (all || best.objective.refunds > unavoidableRefunds || best.objective.priority > 2) {
         const boundaryTimes = [Date.parse(disruption.to),
           ...working.sessions.flatMap((item) => [Date.parse(item.end), Date.parse(item.start) - duration]),
           ...instructors.flatMap((instructor) => (instructor.unavailability ?? []).map((window) => Date.parse(window.to)))];
@@ -214,13 +224,61 @@ export function replan(state: State, disruption: Disruption, options: ReplanOpti
         }
       }
     }
+    return best;
+  };
+  type Step = { session: Session; best: Candidate };
+  const place = (working: State, session: Session, best: Candidate): State => {
+    if (!best.after) return working;
+    const kept = state.bookings.filter((booking) => booking.sessionId === session.id &&
+      best.actions.some((action) => action.bookingId === booking.id && action.action !== "refund"));
+    return { ...working, sessions: [...working.sessions, best.after], bookings: [...working.bookings, ...kept] };
+  };
+  const refundsOf = (steps: Step[]) => steps.reduce((sum, step) => sum + step.best.objective.refunds, 0);
+  // Greedy pass in session-ID order: each class takes its best placement and reserves its resources.
+  let chosen: Step[] = [];
+  let greedyWorking = working;
+  for (const session of affected) {
+    const best = search(session, greedyWorking);
+    chosen.push({ session, best }); greedyWorking = place(greedyWorking, session, best);
+  }
+  // A class can never do better than with every other recovery out of its way: a sound lower bound.
+  const alone = affected.map((session) => search(session, working).objective.refunds);
+  const suffix = alone.map((_, index) => alone.slice(index).reduce((sum, value) => sum + value, 0));
+  if (refundsOf(chosen) > (suffix[0] ?? 0)) {
+    // Greedy order gave a shared resource (an instructor, a room, a time) to the wrong class. Branch and bound
+    // over each class's alternatives: every placement with its fewest refunds (closest first) plus each
+    // instructor's best, fewest refunds first, under a fixed work budget so results stay deterministic.
+    let bestRefunds = refundsOf(chosen), found: Step[] | undefined;
+    const visit = (depth: number, current: State, path: Step[], refunds: number) => {
+      if (depth === affected.length) { bestRefunds = refunds; found = path; return; }
+      const session = affected[depth];
+      const all: Candidate[] = [];
+      search(session, current, all);
+      const byObjective = (x: Candidate, y: Candidate) => compareObjectives(x.objective, y.objective);
+      const fewest = Math.min(...all.map((option) => option.objective.refunds));
+      const options = new Map<string, Candidate>();
+      for (const option of all.filter((item) => item.objective.refunds === fewest).sort(byObjective).slice(0, MAX_TIED_OPTIONS)) options.set(option.objective.key, option);
+      const perInstructor = new Map<string, Candidate>();
+      for (const option of all) {
+        const id = option.after?.instructorId ?? "~cancel", previous = perInstructor.get(id);
+        if (!previous || byObjective(option, previous) < 0) perInstructor.set(id, option);
+      }
+      for (const option of perInstructor.values()) options.set(option.objective.key, option);
+      for (const option of [...options.values()].sort(byObjective)) {
+        if (work > WORK_BUDGET) return;
+        if (refunds + option.objective.refunds + (suffix[depth + 1] ?? 0) >= bestRefunds) break;
+        visit(depth + 1, place(current, session, option), [...path, { session, best: option }], refunds + option.objective.refunds);
+        if (bestRefunds === suffix[0]) return;
+      }
+    };
+    visit(0, working, [], 0);
+    if (found) chosen = found;
+  }
+  for (const { session, best } of chosen) {
     const change: Plan["sessionChanges"][number] = {
       sessionId: session.id, remedy: best.remedy, before: placement(session), reason: reasons[best.remedy],
     };
-    if (best.after) {
-      change.after = placement(best.after); working.sessions.push(best.after);
-      working.bookings.push(...bookings.filter((booking) => best.actions.some((action) => action.bookingId === booking.id && action.action !== "refund")));
-    }
+    if (best.after) change.after = placement(best.after);
     plan.sessionChanges.push(change);
     plan.bookingActions.push(...best.actions);
     if (best.remedy === "cancel") plan.warnings.push(`${session.title}: cancelled within the recovery horizon.`);

@@ -17,7 +17,7 @@ const details: PlanDetails = { plan, sessions: state.sessions, messages: [], exp
 
 it("labels the correction review and approval without asking for refunds or another cover", () => {
   const html = renderToStaticMarkup(<PlanPanel details={details} plan={plan} state={state} busy={false} results={[]} onApprove={vi.fn()} onDiscard={vi.fn()} onMessages={vi.fn()} />);
-  expect(html).toContain("Correction of earlier plan earlier-plan");
+  expect(html).toContain("This undoes the recovery you approved for this disruption.");
   expect(html).toContain(">Approve correction</button>");
   expect(html).not.toContain("Approve and refund");
   expect(html).not.toContain("Confirm substitute arrangements");

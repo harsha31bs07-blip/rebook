@@ -101,7 +101,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
     <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
-    {plan.correctionOf && <p className="notice" role="status">Correction of earlier plan {plan.correctionOf}. The disruption is over; review the restored schedule.</p>}
+    {plan.correctionOf && <p className="notice" role="status">This undoes the recovery you approved for this disruption. Review the restored schedule, then approve.</p>}
     {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
     {onWithdraw && <button className="full-width" disabled={busy} onClick={onWithdraw}>The disruption is over — restore the schedule</button>}
     {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}

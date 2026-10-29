@@ -12,7 +12,7 @@ const spelledNumber = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|te
 export async function explainPlan(plan: Plan, state: State, opts: { rephrase?: boolean } = {}): Promise<PlanExplanation> {
   const totals = plan.totals;
   if (plan.correctionOf) return { headline: "Your schedule correction is ready", source: "template", bullets: [
-    `${totals.sessionsAffected} sessions return to their original placement; ${totals.kept} bookings keep their time and ${totals.moved} return to their original time.`,
+    `${totals.sessionsAffected} ${totals.sessionsAffected === 1 ? "class returns" : "classes return"} to the original schedule; ${totals.kept} ${totals.kept === 1 ? "booking keeps its" : "bookings keep their"} time and ${totals.moved} ${totals.moved === 1 ? "returns" : "return"} to the original time.`,
     "Approval withdraws the disruption. Refunds, studio credits and cover payouts already issued stay recorded. No new refunds are issued.",
   ] };
   const refund = formatMoney(totals.refundAmount, state.studio.currency);

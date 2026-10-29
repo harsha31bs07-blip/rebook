@@ -8,7 +8,8 @@ export type AiProvider = "gemini" | "groq";
 export type AiModel = { provider: AiProvider; model: string };
 // Measured on real Studio turns: 28 KB = 1,803 Groq tokens, 51 KB = 6,205 (about 8 bytes per token).
 const GROQ_BYTES_PER_TOKEN = 8;
-const DEFAULT_MODELS = "gemini:gemini-flash-lite-latest,groq:openai/gpt-oss-120b,gemini:gemini-3.5-flash,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,gemini:gemini-flash-latest";
+// Pinned versions: "-latest" aliases can move to a different model between evaluation and judging.
+const DEFAULT_MODELS = "gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b,gemini:gemini-3.5-flash,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,gemini:gemini-3.1-flash-lite";
 const endpoints = {
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",

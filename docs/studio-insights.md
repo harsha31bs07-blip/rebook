@@ -49,7 +49,7 @@ The heatmap queries session-level rows, including session ID, so equal-valued cl
 ## AI proxy and configuration
 
 - `GEMINI_API_KEY`, `GROQ_API_KEY`: server-only provider keys. Entries without their provider's key are skipped.
-- `AI_MODELS`: ordered `provider:model` chain; defaults to `gemini:gemini-flash-lite-latest,groq:openai/gpt-oss-120b,gemini:gemini-3.5-flash,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,gemini:gemini-flash-latest`. A client can prefer a configured model; arbitrary models/providers cannot be added by the client.
+- `AI_MODELS`: ordered `provider:model` chain; defaults to `gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b,gemini:gemini-3.5-flash,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,gemini:gemini-3.1-flash-lite` (pinned versions). A client can prefer a configured model; arbitrary models/providers cannot be added by the client.
 - `GEMINI_MODELS`: legacy all-Gemini chain, used only when `AI_MODELS` is unset. Existing deployments keep that behavior until they unset it or configure `AI_MODELS`.
 - `GROQ_MAX_INPUT_TOKENS`: input size gate, default `7000`. The estimate is `ceil(UTF-8 bytes of the complete provider JSON body / 8)`, measured on real Studio turns (a 28 KB analyst turn is 1,803 Groq tokens; a 51 KB delegated Page-agent turn is 6,205). Over-limit Groq entries log `too_large` without making a request or consuming a local quota attempt; the largest delegated turns (about 80 KB and up) stay on Gemini. Groq's free tier allows about 8,000 tokens per minute per model (Qwen: 7,000 input tokens), so each Groq model takes roughly one large turn per minute; a 413 or 429 moves on to the next model.
 - `NEXT_PUBLIC_AG_STUDIO_LICENSE`: optional public Studio licence key; without it, expect trial warnings/watermark.

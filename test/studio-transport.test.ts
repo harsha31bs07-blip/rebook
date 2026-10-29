@@ -28,12 +28,12 @@ describe("provider chain", () => {
   it("uses the interleaved default order and logs only safe fields", async () => {
     await expect(complete("private prompt")).rejects.toMatchObject({ status: 503 });
     expect(sent()).toEqual([
-      { provider: "gemini", model: "gemini-flash-lite-latest" },
+      { provider: "gemini", model: "gemini-3.5-flash-lite" },
       { provider: "groq", model: "openai/gpt-oss-120b" },
       { provider: "gemini", model: "gemini-3.5-flash" },
       { provider: "groq", model: "openai/gpt-oss-20b" },
       { provider: "groq", model: "qwen/qwen3.8-27b" },
-      { provider: "gemini", model: "gemini-flash-latest" },
+      { provider: "gemini", model: "gemini-3.1-flash-lite" },
     ]);
     for (const [entry] of log.mock.calls) {
       expect(Object.keys(JSON.parse(entry)).sort()).toEqual(["message", "model", "ms", "provider", "status"]);

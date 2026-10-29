@@ -157,6 +157,13 @@ textarea { resize: vertical; min-height: 120px; }
 .preview-recovery p { color: var(--muted); font-size: 13px; line-height: 1.7; }
 .preview-bottom { display: flex; justify-content: space-between; padding: 16px 24px; border-top: 1px solid var(--border); background: #f8fafc; font-size: 11px; color: var(--muted); }
 .preview-bottom strong { color: var(--foreground); font-weight: 500; }
+.proof-strip { border-top: 1px solid var(--border); padding: 36px 0 44px; }
+.proof-grid { list-style: none; padding: 0; margin: 20px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+.proof-grid strong { display: block; font-size: 34px; line-height: 1; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
+.proof-grid p { font-size: 13px; line-height: 1.45; margin: 10px 0 6px; }
+.proof-grid li > span { display: block; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.proof-grid a { display: inline-block; margin-top: 8px; font-size: 11px; }
+@media (max-width: 1023px) { .proof-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 24px; } }
 .landing-footer { border-top: 1px solid var(--border); display: flex; justify-content: space-between; padding: 24px 0; color: var(--muted); font-size: 11px; }
 
 .console-app { display: flex; flex: none; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; }

@@ -1,6 +1,15 @@
 import OpenDemoButton from "@/components/console/open-demo-button";
 import Link from "next/link";
 
+const repo = "https://github.com/harsha31bs07-blip/rebook/blob/main";
+// Every number links to the published evidence behind it.
+const PROOF = [
+  { value: "40/45", label: "messy owner messages read correctly", detail: "Rules alone: 22. Zero dangerous guesses.", href: `${repo}/docs/interpretation-messy-eval.md`, link: "Live evaluation" },
+  { value: "22/24", label: "customer requests turned into one real option", detail: "Zero unsafe actions, including injection attempts.", href: `${repo}/docs/customer-assistant-eval.md`, link: "Live evaluation" },
+  { value: "~7 s", label: "for six PayPal sandbox refunds after one approval", detail: "Idempotent and reconciled; never sent twice.", href: "/built-with#paypal", link: "How refunds work" },
+  { value: "900+", label: "automated tests", detail: "Plus a browser check of the whole flow on every release.", href: `${repo}#tests`, link: "Test notes" },
+];
+
 export default function Home() {
   return <main id="main-content" tabIndex={-1} className="landing">
     <header className="landing-header"><Link href="/" className="wordmark"><span className="brand-symbol" aria-hidden="true">r</span>rebook<span className="wordmark-dot">.</span><span className="sr-only"> home</span></Link><span className="pill">Built for studio owners</span></header>
@@ -12,6 +21,10 @@ export default function Home() {
         <div className="preview-recovery"><span className="recovery-mark" aria-hidden="true">✓</span><div><h2>There’s a way forward.</h2><p>Substitutes found. New times arranged.<br />Every affected customer taken care of.</p></div></div>
         <div className="preview-bottom"><span>You review every change.</span><strong>You make the call.</strong></div>
       </div>
+    </section>
+    <section className="proof-strip" aria-labelledby="proof-title"><h2 id="proof-title" className="eyebrow">Measured, not promised</h2>
+      <ul className="proof-grid">{PROOF.map((item) => <li key={item.value}><strong>{item.value}</strong><p>{item.label}</p><span>{item.detail}</span>
+        {item.href.startsWith("/") ? <Link href={item.href}>{item.link}</Link> : <a href={item.href} target="_blank" rel="noreferrer">{item.link}<span className="sr-only"> (opens GitHub)</span></a>}</li>)}</ul>
     </section>
     <footer className="landing-footer"><span>Less admin. More room to move.</span><Link href="/built-with">How it&apos;s built</Link><Link href="/agent-ready">Agent-ready with WebMCP</Link><span>Rebook · A calmer week starts here.</span></footer>
   </main>;

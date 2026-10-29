@@ -32,7 +32,7 @@ function RecoveryToolCard({ result }: AgAiToolDetailParams) {
   return <div className={styles.toolCard}>
     {!rows.length ? <p>No matching records in this workspace.</p> : rows.slice(0, 8).map((row, index) => <p key={index}>
       <strong>{String(row.customer ?? row.disruption ?? "Recovery record")}</strong><br />
-      {row.customer ? `${String(row.class)} · $${Number(row.amountUSD).toFixed(2)} · ${titleCase(String(row.status))} · ${String(row.payment)}` : `${Number(row.bookingsKept) + Number(row.bookingsMoved)} bookings saved · $${Number(row.plannedRefundsUSD).toFixed(2)} in planned refunds · $${Number(row.completedRefundsUSD).toFixed(2)} in completed refunds · ${titleCase(String(row.status))}`}
+      {row.customer ? `${String(row.class)} · ${row.visitsReturned ? String(row.displayAmount ?? "Visit returned") : `$${Number(row.amountUSD).toFixed(2)}`} · ${titleCase(String(row.status))} · ${String(row.payment)}` : `${Number(row.bookingsKept) + Number(row.bookingsMoved)} bookings saved · $${Number(row.plannedRefundsUSD).toFixed(2)} in planned refunds · $${Number(row.completedRefundsUSD).toFixed(2)} in completed refunds · ${Number(row.visitsReturned ?? 0)} visits returned · ${titleCase(String(row.status))}`}
     </p>)}
     {rows.length > 8 && <p>{rows.length - 8} more records read.</p>}
   </div>;
@@ -48,15 +48,15 @@ function AnalystToolCard({ result }: AgAiToolDetailParams) {
   return <div className={styles.toolCard}>
     {data.chart ? <p><strong>{String(data.chart)}</strong></p> : null}
     {typeof data.kept === "number" && <p><strong>{data.kept} kept · {Number(data.moved)} moved · {Number(data.refunded)} refunded</strong><br />
-      {Number(data.simulatedRefunded)} simulated refunds · {Number(data.pending)} pending · {Number(data.noReply)} without reply<br />
+      {Number(data.visitsReturned ?? 0)} visits returned · {Number(data.simulatedRefunded)} simulated refunds · {Number(data.pending)} pending · {Number(data.noReply)} without reply<br />
       {usd(data.revenueKept)} kept · {usd(data.completedRefundAmount)} refunded · {usd(data.simulatedRefundAmount)} simulated</p>}
     {!data.chart && rows.length === 0 && typeof data.kept !== "number" && <p>No matching records in this workspace.</p>}
     {rows.slice(0, 8).map((row, index) => <p key={index}>
       <strong>{String(row.label ?? row.disruption ?? row.class)}</strong><br />
       {"bookedUSD" in row ? `${row.bookings} bookings · ${usd(row.bookedUSD)} booked · ${usd(row.keptUSD)} kept`
-        : "completedUSD" in row ? `${row.requests} requests · ${usd(row.completedUSD)} completed · ${usd(row.simulatedUSD)} simulated · ${usd(row.pendingUSD)} pending · ${usd(row.failedUSD)} failed`
+        : "completedUSD" in row ? `${row.requests} requests · ${Number(row.visitsReturned ?? 0)} visits returned · ${usd(row.completedUSD)} completed · ${usd(row.simulatedUSD)} simulated · ${usd(row.pendingUSD)} pending · ${usd(row.failedUSD)} failed`
         : "coveringInstructor" in row ? `${row.coveringInstructor} covered ${row.originalInstructor} · ${row.day} at ${row.time} · ${titleCase(String(row.status))}`
-        : `${titleCase(String(row.status))} · ${row.kept} kept · ${row.moved} moved · ${row.refunded} refunded · ${row.simulatedRefunded} simulated refunds · ${row.pending} pending · ${row.noReply} without reply · ${usd(row.revenueKept)} kept · ${usd(row.completedRefundAmount)} refunded · ${usd(row.simulatedRefundAmount)} simulated · ${usd(row.pendingRefundUSD)} pending · ${usd(row.failedRefundUSD)} failed · ${usd(row.plannedRefundUSD)} forecast`}
+        : `${titleCase(String(row.status))} · ${row.kept} kept · ${row.moved} moved · ${row.refunded} refunded · ${Number(row.visitsReturned ?? 0)} visits returned · ${row.simulatedRefunded} simulated refunds · ${row.pending} pending · ${row.noReply} without reply · ${usd(row.revenueKept)} kept · ${usd(row.completedRefundAmount)} refunded · ${usd(row.simulatedRefundAmount)} simulated · ${usd(row.pendingRefundUSD)} pending · ${usd(row.failedRefundUSD)} failed · ${usd(row.plannedRefundUSD)} forecast`}
     </p>)}
     {rows.length > 8 && <p>{rows.length - 8} more records read.</p>}
     {data.asOf ? <p>Data as of <time dateTime={String(data.asOfIso ?? data.asOf)}>{String(data.asOf)}</time>{data.timezone ? ` · ${data.timezone}` : ""}</p> : null}

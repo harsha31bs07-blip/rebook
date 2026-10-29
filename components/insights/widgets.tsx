@@ -116,7 +116,7 @@ function RecoveryImpact(params: AgWidgetParams<RecoveryWidget>) {
     .reduce((sum, row) => sum + Math.round(Number(row.refundAmount) * 100), 0) / 100;
   return <div className="recovery-impact">
     <label>Disruption<select aria-label="Selected disruption" value={String(selected.id)} onChange={(event) => select(event.target.value)}>{sorted.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.subject)} · {String(row.window)}</option>)}</select></label>
-    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>{receiptError ? "Refund totals unavailable" : receipts ? `${money(refundAmount(["COMPLETED"]))} refunded · ${money(refundAmount(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]))} pending · ${money(refundAmount(["SIMULATED"]))} simulated` : "Loading refund totals…"}</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved + credited) / affected * 100) : 0}% saved</span></div>
+    <div className="impact-headline"><strong>{money(selected.revenue_kept)} kept <span>{receiptError ? "Refund totals unavailable" : receipts ? `${money(refundAmount(["COMPLETED"]))} refunded · ${money(refundAmount(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]))} pending · ${money(refundAmount(["SIMULATED"]))} simulated · ${(refunds ?? []).filter((row) => row.refundStatus === "VISIT_RETURNED").length} visits returned` : "Loading refund totals…"}</span></strong><span className="pill success-pill">{affected ? Math.round((kept + moved + credited) / affected * 100) : 0}% saved</span></div>
     <p className="muted">{money(selected.refund_amount)} in planned refunds</p>
     {String(selected.status) !== "proposed" && <p className="muted">Kept as studio credit: {money(selected.kept_as_credit)} ({credited} bookings)</p>}
     <div className="impact-bar" role="img" aria-label={`${kept} kept, ${moved} moved, ${refunded} refund actions, ${credited} studio credits`}>
@@ -136,7 +136,7 @@ function RefundReceipts(params: AgWidgetParams<ReceiptsWidget>) {
   return <div className="receipt-list" aria-label="Refund receipts">{refunds.map((row) => {
     const status = String(row.status);
     const label = ["PENDING", "REQUESTED"].includes(status) ? "Pending" : titleCase(status);
-    return <article className="receipt" key={String(row.id)}><div><strong>{String(row.name ?? row.booking_id)}</strong><strong>{money(row.amount)}</strong></div><div><code>{String(row.paypal_id || "Awaiting PayPal reference")}</code><span className={`action-pill receipt-${label.toLowerCase()}`}>{label}</span></div></article>;
+    return <article className="receipt" key={String(row.id)}><div><strong>{String(row.name ?? row.booking_id)}</strong><strong>{status === "VISIT_RETURNED" ? String(row.display_amount ?? "Visit returned") : money(row.amount)}</strong></div><div>{!["VISIT_RETURNED", "CREDIT_RESTORED"].includes(status) && <code>{String(row.paypal_id || "Awaiting PayPal reference")}</code>}<span className={`action-pill receipt-${label.toLowerCase()}`}>{label}</span></div></article>;
   })}</div>;
 }
 

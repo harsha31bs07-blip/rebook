@@ -1,4 +1,5 @@
 import type { State } from "../domain/types";
+import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlements";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
 import type { CheckoutReservation, Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
@@ -30,8 +31,10 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
   const moneyEvents = [...latest.values()].filter((event) => event.status !== "MERGED").map((event) => {
     const plan = originatingPlan(event);
     const link = choiceLink(event);
+    const entitlement = state.bookings.find((booking) => booking.id === event.bookingId)?.entitlement;
     return {
       id: event.id, kind: event.kind, amount: dollars(event.amount), status: event.status,
+      display_amount: entitlement ? entitlementLabel(entitlement) : `$${event.amount}`,
       paypal_id: event.paypalId, created_at: event.createdAt, booking_id: event.bookingId,
       plan_id: plan?.id ?? null,
       booking_action_id: plan ? `${plan.id}:${event.bookingId}` : null,
@@ -39,7 +42,8 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         : plan?.bookingActions.find((action) => action.bookingId === event.bookingId)?.reason ?? "",
       // Issued money excludes pending/failed requests; simulations remain clearly labelled.
       issued_refund: event.kind === "refund" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
-      payment_mode: event.status === "CREDIT_RESTORED" ? "credit" : event.status === "SIMULATED" ? "simulated" : "real",
+      visits_returned: event.status === "VISIT_RETURNED" ? 1 : 0,
+      payment_mode: event.status === "VISIT_RETURNED" ? "entitlement" : event.status === "CREDIT_RESTORED" ? "credit" : event.status === "SIMULATED" ? "simulated" : "real",
       local_day: localParts(event.createdAt, state.studio.timezone).dateKey,
       captured: event.kind === "capture" && ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) : 0,
       net: ["COMPLETED", "SIMULATED"].includes(event.status) ? dollars(event.amount) * (event.kind === "refund" ? -1 : 1) : 0,
@@ -81,7 +85,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
       status: booking.status, amount: dollars(booking.amount),
       revenue_kept: creditPaidBookingIds.has(booking.id) ? 0 : outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
         (["confirmed", "moved"].includes(booking.status) ? Math.max(0, toCents(booking.amount) - moneyEvents.filter((event) => event.booking_id === booking.id).reduce((sum, event) => sum + Math.round(event.issued_refund * 100), 0)) / 100 : 0),
-      payment_mode: creditPaidBookingIds.has(booking.id) ? "credit" : booking.payment?.simulated ? "simulated" : "real",
+      payment_mode: booking.entitlement?.kind ?? (creditPaidBookingIds.has(booking.id) ? "credit" : booking.payment?.simulated ? "simulated" : "real"),
       capture_id: booking.payment?.captureId ?? "",
     })),
     customers: state.customers.map((customer) => ({ id: customer.id, name: customer.name,
@@ -108,6 +112,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         status: plan.status, sessions_affected: plan.totals.sessionsAffected,
         kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
+        visits_returned: recovery.visitsReturned,
         credited: recovery.credited, kept_as_credit: recovery.keptAsCredit,
         refund_amount: plannedAmount(true), revenue_kept: active ? recovery.revenueKept : plannedAmount(false),
         planned_refund_amount: plannedAmount(true),
@@ -132,11 +137,15 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         }).join("; "),
       };
     }),
-    booking_actions: plans.flatMap((plan) => plan.bookingActions.map((action) => ({
-      id: `${plan.id}:${action.bookingId}`, plan_id: plan.id, booking_id: action.bookingId,
-      action: action.action, reason: action.reason, amount: dollars(action.amount),
-    }))),
-    notes: ["USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Recovery KPIs count each booking once under its latest applied plan, using replies and settled refunds across its history. Studio credits retain captured revenue, release the original seat and are reported separately from refunds. Redeeming credit does not create another capture or count the retained revenue again. Kept or moved means the booking is confirmed; No reply yet separately tracks customer confirmation. Pending includes refunds requested or awaiting PayPal, including price differences for moved bookings. Revenue kept subtracts settled refunds; bookings requesting a full refund are excluded."],
+    booking_actions: plans.flatMap((plan) => plan.bookingActions.map((action) => {
+      const entitlement = state.bookings.find((booking) => booking.id === action.bookingId)?.entitlement;
+      return {
+        id: `${plan.id}:${action.bookingId}`, plan_id: plan.id, booking_id: action.bookingId,
+        action: action.action, reason: action.reason, amount: dollars(action.amount),
+        display_amount: entitlement ? (action.action === "refund" ? entitlementLabel : entitlementPaymentLabel)(entitlement) : `$${action.amount}`,
+      };
+    })),
+    notes: ["Packs and memberships have zero cash value per booking. VISIT_RETURNED counts visits returned (including membership seat releases), never cash refunded. Balances stay in the booking system.", "USD amounts include clearly labelled simulated sandbox payments. Planned refunds are forecasts. Completed disruption cost includes completed plan refunds and customer-choice refunds attributed to that plan; pending, failed and simulated refunds are labelled separately. Recovery KPIs count each booking once under its latest applied plan, using replies and settled refunds across its history. Studio credits retain captured revenue, release the original seat and are reported separately from refunds. Redeeming credit does not create another capture or count the retained revenue again. Kept or moved means the booking is confirmed; No reply yet separately tracks customer confirmation. Pending includes refunds requested or awaiting PayPal, including price differences for moved bookings. Revenue kept subtracts settled refunds; bookings requesting a full refund are excluded."],
   };
 }
 

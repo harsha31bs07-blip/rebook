@@ -110,6 +110,23 @@ it("offers existing-credit returns instead of PayPal refunds or a new studio cre
   expect(renderToStaticMarkup(tree)).not.toContain("Refund pending");
 });
 
+it.each([
+  [{ kind: "pack", name: "10-class pack" }, "Return the visit to my 10-class pack", "Visit returned to your 10-class pack"],
+  [{ kind: "membership", name: "Unlimited monthly" }, "Cancel this booking", "Booking cancelled — covered by your Unlimited monthly"],
+] as const)("offers an entitlement cancellation and receipt for %s without a dollar refund", async (entitlement, label, receipt) => {
+  data = { ...data, entitlement, refundable: "0.00" };
+  render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain(label);
+  expect(button(label).props.disabled).toBe(false);
+  expect(button("Refund me")).toBeUndefined(); expect(button("as studio credit")).toBeUndefined();
+  expect(html).not.toMatch(/\$|PayPal|original payment/);
+  data = { ...data, canChoose: false, kind: "receipt", receipt: { amount: "0.00", status: "VISIT_RETURNED", paypalId: "", error: undefined } };
+  (button(label).props.onClick as () => void)(); await settle();
+  expect(renderToStaticMarkup(tree)).toContain(receipt);
+  expect(renderToStaticMarkup(tree)).not.toMatch(/\$|PayPal|Refund ID|original payment|Refund pending/);
+});
+
 it("shows unavailable backing without offering to spend the credit", async () => {
   data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
     credit: { amount: "22.00", remaining: "0.00", status: "unavailable", path: "/b/public#credit=private", readableUntil: 0, emailed: undefined } };

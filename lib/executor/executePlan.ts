@@ -84,7 +84,7 @@ export async function executePlan(workspaceId: string, planId: string, repositor
     if (failed?.status === "rejected") throw failed.reason;
     repository.renewLock(workspaceId, owner);
     const results = ordered.filter((item): item is ExecutionResult => !!item);
-    plan = { ...plan, results, status: results.some((result) => !["COMPLETED", "PENDING", "SIMULATED", "CREDIT_RESTORED"].includes(result.status)) ? "partially_failed" : "executed" };
+    plan = { ...plan, results, status: results.some((result) => !["COMPLETED", "PENDING", "SIMULATED", "CREDIT_RESTORED", "VISIT_RETURNED"].includes(result.status)) ? "partially_failed" : "executed" };
     repository.savePlan(plan);
     const view = repository.getPlan(workspaceId, planId)!;
     return { plan: view, results: view.results };

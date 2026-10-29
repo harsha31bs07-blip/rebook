@@ -15,6 +15,7 @@ function body(response: ApiResponse<CapturedPayment | Refund>): Record<string, u
 
 /** Read-only SDK reconciliation, isolated from the refund writer and its retry policy. */
 export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> {
+  if (["CREDIT_RESTORED", "VISIT_RETURNED"].includes(event.status)) return { kind: "unknown" };
   const environment = process.env.PAYPAL_ENV ?? "sandbox";
   if (environment !== "sandbox") throw new Error("PAYPAL_ENV must be sandbox; this demo cannot use live PayPal");
   const clientId = process.env.PAYPAL_CLIENT_ID, secret = process.env.PAYPAL_CLIENT_SECRET;

@@ -17,6 +17,23 @@ export async function executeRefund(workspaceId: string, input: { bookingId: str
   if (previous && (previous.bookingId !== input.bookingId || previous.amount !== input.amount || !!previous.partial !== !!input.partial)) {
     throw new StoreError(409, "Refund identity, amount or type changed since the original request");
   }
+  if (state.bookings.find((booking) => booking.id === input.bookingId)?.entitlement) return repository.transaction(() => {
+    renew();
+    const current = repository.requireWorkspace(workspaceId).state;
+    const booking = current.bookings.find((item) => item.id === input.bookingId)!;
+    if (input.amount !== "0.00" || input.partial || booking.payment) throw new StoreError(409, "A visit return must have zero amount and no payment");
+    const recorded = repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "refund" && event.requestId === requestId);
+    if (recorded?.status !== "VISIT_RETURNED") {
+      if (repository.latestMoneyEvents(workspaceId).some((event) => event.kind === "refund" && event.bookingId === booking.id && event.status === "VISIT_RETURNED")) {
+        throw new StoreError(409, "This visit has already been returned");
+      }
+      repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "refund", amount: "0.00", captureId: "", requestId,
+        paypalId: "", status: "VISIT_RETURNED" });
+    }
+    booking.status = "refunded";
+    repository.saveState(workspaceId, current);
+    return { bookingId: booking.id, status: "VISIT_RETURNED" };
+  });
   const checkout = repository.listCheckout(workspaceId).find((row) => row.id === input.bookingId && row.paidWith === "credit");
   if (checkout) return repository.transaction(() => {
     renew();

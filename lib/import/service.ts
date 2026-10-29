@@ -88,7 +88,7 @@ export function createImportedWorkspace(csv: string, input: ImportInput, reposit
   if (!result.state) throw new StoreError(422, result.errors[0] ?? "This file can't be imported yet.");
   const workspace = repository.createWorkspace(result.state);
   repository.transaction(() => {
-    for (const booking of result.state!.bookings) repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: booking.amount,
+    for (const booking of result.state!.bookings.filter((item) => !item.entitlement)) repository.appendLedger({ workspaceId: workspace.id, bookingId: booking.id, kind: "capture", amount: booking.amount,
       paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId, requestId: `${workspace.id}${booking.id}`, status: "SIMULATED" });
   });
   return { id: workspace.id, summary: result.summary };

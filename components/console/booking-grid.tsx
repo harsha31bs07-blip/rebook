@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry, enableDevValidations, themeQuartz, type ColDef, type GetRowIdParams, type ICellRendererParams } from "ag-grid-community";
+import { entitlementLabel, entitlementPaymentLabel } from "../../lib/domain/entitlements";
 import type { Plan, State } from "@/lib/domain/types";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 if (process.env.NODE_ENV !== "production") enableDevValidations();
 
-type ActionRow = { id: string; customer: string; class: string; action: string; reason: string; amount: number };
+type ActionRow = { id: string; customer: string; class: string; action: string; reason: string; amount: number; entitlement?: string };
 const theme = themeQuartz.withParams({
   accentColor: "#1d4ed8", foregroundColor: "#0f172a", backgroundColor: "#ffffff", borderColor: "#e2e8f0",
   headerBackgroundColor: "#f8fafc", fontFamily: "var(--font-geist-sans), Arial, sans-serif", fontSize: 12,
@@ -22,7 +23,7 @@ const columns: ColDef<ActionRow>[] = [
   { field: "class", headerName: "Class", width: 114 },
   { field: "action", headerName: "Action", width: 92, cellRenderer: ActionCell },
   { field: "reason", headerName: "Reason", width: 240, tooltipField: "reason" },
-  { field: "amount", headerName: "Amount", width: 100, type: "numericColumn", valueFormatter: ({ value }) => `$${Number(value).toFixed(2)}` },
+  { field: "amount", headerName: "Amount", width: 240, type: "numericColumn", valueFormatter: ({ value, data }) => data?.entitlement ?? `$${Number(value).toFixed(2)}` },
 ];
 
 export default function BookingGrid({ plan, state }: { plan: Plan; state: State }) {
@@ -32,7 +33,8 @@ export default function BookingGrid({ plan, state }: { plan: Plan; state: State 
     const customer = state.customers.find((item) => item.id === action.customerId);
     return { id: action.bookingId, customer: customer?.name ?? "Customer",
       class: state.sessions.find((item) => item.id === booking?.sessionId)?.title ?? "Cancelled class",
-      action: action.action, reason: `${customer?.prefs.availabilityKnown === false ? "availability not given · " : ""}${action.reason}`, amount: Number(action.amount) };
+      action: action.action, reason: `${customer?.prefs.availabilityKnown === false ? "availability not given · " : ""}${action.reason}`, amount: Number(action.amount),
+      entitlement: booking?.entitlement ? (action.action === "refund" ? entitlementLabel : entitlementPaymentLabel)(booking.entitlement) : undefined };
   }), [plan, state]);
   return <section className="booking-section" aria-label="Booking actions">
     <div className="section-label"><h3>Booking actions</h3><span>{rows.length}</span></div>

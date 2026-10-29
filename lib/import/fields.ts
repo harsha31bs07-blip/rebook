@@ -1,7 +1,7 @@
-import type { ClassType } from "../domain/types";
+import type { Booking, ClassType } from "../domain/types";
 
 /** The columns Rebook reads from a booking export: one row per booking (or per class with no bookings). */
-export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "customer_name", "customer_email", "accepts_substitute", "status"] as const;
+export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "payment", "customer_name", "customer_email", "accepts_substitute", "status"] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 export type ColumnMapping = Partial<Record<ImportField, string>>;
 /** A date column is optional when the start column carries the date too. */
@@ -9,11 +9,11 @@ export const REQUIRED_FIELDS: ImportField[] = ["class", "start", "instructor"];
 export const FIELD_LABELS: Record<ImportField, string> = {
   class: "Class name", date: "Date", start: "Start time", end: "End time", duration: "Duration (minutes)", instructor: "Instructor",
   room: "Room", capacity: "Capacity", price: "Price paid", customer_name: "Customer name", customer_email: "Customer email", accepts_substitute: "Accepts a substitute",
-  status: "Booking status",
+  status: "Booking status", payment: "Paid with",
 };
 
 const SYNONYMS: Record<ImportField, string[]> = {
-  class: ["class", "classname", "classtitle", "title", "service", "servicename", "session", "sessionname", "program", "activity"],
+  class: ["class", "classname", "classtitle", "title", "servicename", "session", "sessionname", "program", "activity"],
   date: ["date", "classdate", "sessiondate", "day", "visitdate"],
   start: ["start", "starttime", "time", "begins", "classtime", "from", "startsat"],
   end: ["end", "endtime", "finishes", "to", "endsat"],
@@ -21,6 +21,7 @@ const SYNONYMS: Record<ImportField, string[]> = {
   instructor: ["instructor", "instructorname", "teacher", "staff", "staffname", "trainer", "coach", "leader"],
   room: ["room", "roomname", "location", "space", "resource", "studioroom"],
   capacity: ["capacity", "maxcapacity", "spots", "classsize", "maxattendees", "spaces"],
+  payment: ["payment", "paymentmethod", "paidwith", "pricingoption", "pricing", "service", "pass", "membership"],
   price: ["price", "pricepaid", "amount", "amountpaid", "paid", "cost", "fee", "total"],
   customer_name: ["customer", "customername", "client", "clientname", "member", "membername", "name", "attendee", "attendeename", "fullname"],
   customer_email: ["email", "customeremail", "clientemail", "memberemail", "emailaddress", "attendeeemail"],
@@ -51,4 +52,12 @@ const KEYWORDS: [ClassType, RegExp][] = [
 /** Class name -> one of Rebook's class types by keyword, or undefined for the AI and the owner to decide. */
 export function ruleClassType(name: string): ClassType | undefined {
   return KEYWORDS.find(([, pattern]) => pattern.test(name))?.[0];
+}
+
+/** A pass describes the booking's visit, not a payment captured by Rebook. */
+export function paymentEntitlement(value: string): Booking["entitlement"] {
+  const name = value.trim().slice(0, 60);
+  if (/pack|class pass|classpass|credits|\b\d+\s*-?\s*(class|visit)/i.test(value)) return { kind: "pack", name };
+  if (/member|unlimited|monthly|annual|autopay/i.test(value)) return { kind: "membership", name };
+  return undefined;
 }

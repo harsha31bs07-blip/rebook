@@ -36,6 +36,7 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 | --- | --- | --- | --- |
 | Paste a forwarded message: "Fwd from Maya: so sorry, fever since last night, can't teach today" | Reads forwarded texts, Hinglish ("Maya bimaar hai, kal class nahi le paayegi") and shorthand that the rules parser cannot | Negations, maybes, corrections, past events and questions never reach the model; its reading must match the names, days and times you wrote; you confirm "AI read this as…" before anything is planned | [interpret.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/ai/interpret.ts#L249-L294), [live report](docs/interpretation-messy-eval.md) |
 | On a customer's private link, type what works | Turns "anything after 6 this week, otherwise refund me" into one concrete class or refund | Proposes only; the class must be one of that customer's real options, every amount and the reply about money come from the server, and the customer confirms | [assistant.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/choices/assistant.ts#L18-L59), [live report](docs/customer-assistant-eval.md) |
+| Class packs and memberships | Imported pricing options return a visit or release a membership seat, with no PayPal refund | Balances stay in the booking system | [entitlements.ts](lib/domain/entitlements.ts) |
 | [/import](https://rebook-by9u.onrender.com/import) > **Use a sample week** | Matches the export's columns and class names ("Slow Burn" is yoga) that exact-name rules cannot | Only column headers and class names are sent, never customer details; every match is shown with how it was made and the owner can change it; no AI runs when the studio is created | [service.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/import/service.ts) |
 | Dashboard > Ask Recovery analyst | Answers cost and refund questions from the workspace ledger and edits the AG Studio report | Tool-backed, timestamped answers | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L85-L122) |
 
@@ -159,9 +160,11 @@ Rebook is built to sit beside a studio's booking system (Mindbody, Glofox, Momen
 - **Reach:** SMS alongside email, sent from the studio's own number.
 - **Credits:** pack and membership credits synced with the booking system's own ledger.
 
-The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) is the same as in the demo. A pilot would still need what a one-week demo leaves out: pack and membership entitlements, per-instructor pay rules, waitlists, and a way to correct a recovery after it is approved.
+The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) is the same as in the demo. A pilot would still need what a one-week demo leaves out: per-instructor pay rules, waitlists, and a way to correct a recovery after it is approved.
 
 ## Honest limits
+
+- Packs and memberships return visits or release seats without cash refunds; balances stay in the booking system.
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.
 - Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.

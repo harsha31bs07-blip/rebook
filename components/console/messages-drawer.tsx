@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CustomerMessage } from "@/lib/ai/messages";
 import type { OwnerCustomerChoices } from "@/lib/choices/service";
 import { api } from "../../lib/client/api";
+import { entitlementLabel, entitlementPaymentLabel } from "../../lib/domain/entitlements";
 import { draftOutbox, messageDeepLinks, outboxMessage, outboxState, revisedAt, summarizeOutbox, waitingCustomers, type OutboxCustomer } from "../../lib/choices/outbox";
 
 export default function MessagesDrawer({ messages, links = [], outbox, workspaceId, onUpdated, onClose }: {
@@ -123,8 +124,8 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
         {emailLabel && <p className="email-status" role="status" aria-live="polite" aria-atomic="true">Email {reminders ? "reminder " : ""}for {row.customerName}: {emailLabel}</p>}
         {reminders && reminder && <p className="outbox-reminder-text">{outboxMessage(row, undefined, true)}</p>}
         {row.changes.map((change) => <article className="message-card" key={change.bookingId}>
-          <span className="muted">{change.kind === "receipt" ? "Refund receipt" : change.kind === "choice" ? "Private choice link" : "Message draft"}</span>
-          <h4>{change.subject}</h4><p>{change.body}</p>
+            <span className="muted">{change.kind === "receipt" ? change.entitlement ? "Booking receipt" : "Refund receipt" : change.kind === "choice" ? "Private choice link" : "Message draft"}</span>
+            <h4>{change.subject}</h4><p>{change.body}</p>{change.entitlement && <p className="muted">{(change.kind === "receipt" || change.reply?.status.startsWith("Returns 1 visit") ? entitlementLabel : entitlementPaymentLabel)(change.entitlement)}</p>}
           <p aria-live="polite" aria-atomic="true">{change.reply ? `Replied: ${change.reply.status}` : ""}</p>
           {change.path && <div className="message-links"><a href={change.path} target="_blank" rel="noopener noreferrer" aria-label={`Open as customer: ${row.customerName}, ${change.subject}`}>Open as customer</a>{row.changes.length === 1 && <button disabled={!canShare || disabled} aria-label={`Copy link for ${row.customerName}, ${change.subject}`} onClick={() => void copy(row, change.path)}>Copy link</button>}</div>}
         </article>)}

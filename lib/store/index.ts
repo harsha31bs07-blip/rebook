@@ -424,7 +424,7 @@ export class Repository {
           ? plan.results.find((item) => item.bookingId === action.bookingId)?.error : undefined) }
         : { bookingId: action.bookingId, status: "REQUESTED", ...(plan.status === "executing" ? {} : { error: "Refund has not been submitted yet" }) };
     });
-    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING", "CREDIT_RESTORED"].includes(item.status))
+    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING", "CREDIT_RESTORED", "VISIT_RETURNED"].includes(item.status))
       ? "partially_failed" : "executed";
     return { ...plan, results, status };
   }

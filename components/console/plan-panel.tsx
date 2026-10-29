@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api";
 import type { Placement, State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
+import { entitlementLabel } from "../../lib/domain/entitlements";
 import { formatMoney, toCents } from "@/lib/domain/time";
 import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
 import type { summarizeOutbox } from "../../lib/choices/outbox";
@@ -52,7 +53,7 @@ export function RefundResults({ results, state, workspaceId }: { results: Execut
     const booking = state.bookings.find((item) => item.id === result.bookingId);
     const customer = state.customers.find((item) => item.id === booking?.customerId);
     return <div className="refund-row" key={result.bookingId}>
-      <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{result.status === "CREDIT_RESTORED" ? "Returned to your studio credit" : result.status === "SIMULATED" ? "Simulated" : result.status === "NEEDS_REVIEW" ? "Needs review" : result.status.toLowerCase()}</span></div>
+      <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{booking?.entitlement ? entitlementLabel(booking.entitlement) : result.status === "CREDIT_RESTORED" ? "Returned to your studio credit" : result.status === "SIMULATED" ? "Simulated" : result.status === "NEEDS_REVIEW" ? "Needs review" : result.status.toLowerCase()}</span></div>
       {customer?.prefs.availabilityKnown === false && <small className="muted">availability not given</small>}
       {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{result.status === "NEEDS_REVIEW" ? result.error : ["REQUESTED", "UNKNOWN", "PENDING"].includes(result.status) ? "PayPal hasn't confirmed this refund yet. Retry checks its status before another attempt." : "This refund needs attention. Retry to reconcile with PayPal."}</p>}
     </div>;
@@ -89,6 +90,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     wasProposed.current = proposed;
   }, [proposed]);
   const recovery = summarizeRecovery(outcomes ?? recoveryOutcomes(state, [{ ...plan, results }], [], [], new Set(creditPaidBookingIds)));
+  const plannedReturns = plan.bookingActions.filter((action) => action.action === "refund" && state.bookings.find((booking) => booking.id === action.bookingId)?.entitlement).length;
   const previous = plan.lastAdjustmentTotals;
   const refunds = previous ? totals.refunded - previous.refunded : 0;
   const revenue = previous ? toCents(totals.revenueKept) - toCents(previous.revenueKept) : 0;
@@ -107,13 +109,13 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
         <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
         <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
         <div><span>Refunds planned</span><strong className="danger-text">{totals.refunded}</strong><small>bookings</small></div>
-        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small></div>
+        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(totals.revenueKept)}</strong><small>{money(totals.refundAmount)} in refunds</small>{plannedReturns > 0 && <small>{plannedReturns} visits to return</small>}</div>
       </> : <>
         <div><span>Kept or moved</span><strong className="success">{recovery.kept + recovery.moved}</strong><small>in the new schedule - {recovery.kept} kept / {recovery.moved} moved</small></div>
         <div><span>Refunded</span><strong className="danger-text">{recovery.refunded}</strong><small>completed - {recovery.simulatedRefunded} simulated separately</small></div>
         <div><span>Pending</span><strong>{recovery.pending}</strong><small>refund requested / awaiting PayPal</small></div>
         <div><span>No reply yet</span><strong>{recovery.noReply}</strong><small>customer confirmation outstanding</small></div>
-        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>Kept as studio credit: {money(recovery.keptAsCredit.toFixed(2))}</small><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small></div>
+        <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>Kept as studio credit: {money(recovery.keptAsCredit.toFixed(2))}</small><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small>{recovery.visitsReturned > 0 && <small>{recovery.visitsReturned} visits returned</small>}</div>
       </>}
     </div>
     {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul role="list">{plan.sessionChanges.map((change) => {

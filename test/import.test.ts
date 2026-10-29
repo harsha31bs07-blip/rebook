@@ -47,7 +47,7 @@ describe("reading an export", () => {
   });
   it("matches a Mindbody-style export's columns by rule and leaves unknown columns alone", () => {
     expect(sampleMapping).toEqual({ class: "Class Name", date: "Class Date", start: "Start Time", end: "End Time", instructor: "Staff", room: "Location",
-      capacity: "Capacity", price: "Price Paid", customer_name: "Client Name", customer_email: "Client Email" });
+      capacity: "Capacity", price: "Price Paid", payment: "Pricing Option", customer_name: "Client Name", customer_email: "Client Email" });
   });
   it("types class names by keyword, specific types first, and leaves the rest to the AI and the owner", () => {
     expect(["Sunrise Reformer", "Rhythm Ride", "Strength Sculpt", "Vinyasa Flow", "Mat Pilates", "Dance Flow", "Barre Burn", "Slow Burn"].map(ruleClassType))
@@ -180,7 +180,7 @@ describe("building the studio", () => {
     const reformer = state.sessions.find((item) => item.title === "Sunrise Reformer")!;
     expect(reformer.start).toBe("2026-11-02T11:30:00.000Z"); expect(reformer.price).toBe("28.00");
     expect(state.customers.every((customer) => customer.prefs.availabilityKnown === false && customer.email.endsWith("@example.com"))).toBe(true);
-    expect(state.bookings.every((booking) => booking.payment?.simulated)).toBe(true);
+    expect(state.bookings.every((booking) => booking.entitlement ? booking.amount === "0.00" && !booking.payment : booking.payment?.simulated)).toBe(true);
     expect(result.warnings.join(" ")).toMatch(/Moved the week of 2026-10-19 to the week of 2026-11-02/);
     expect(result.warnings.join(" ")).toMatch(/simulated.*never contacted/);
   });
@@ -232,7 +232,7 @@ describe("an imported studio works end to end", () => {
     const { id, summary } = createImportedWorkspace(sample, { mapping: sampleMapping, classTypes: sampleTypes, timezone: TZ, studioName: "Harbour Movement Co." }, repository, NOW);
     expect(summary.bookings).toBe(67);
     const { state } = repository.requireReadyWorkspace(id);
-    expect(repository.latestMoneyEvents(id).filter((event) => event.kind === "capture" && event.status === "SIMULATED")).toHaveLength(67);
+    expect(repository.latestMoneyEvents(id).filter((event) => event.kind === "capture" && event.status === "SIMULATED")).toHaveLength(state.bookings.filter((booking) => !booking.entitlement).length);
     const reading = await interpretDisruption("Ana has the flu and can't teach Monday", state, NOW.toISOString());
     expect(reading).toMatchObject({ disruption: { kind: "instructor_unavailable", instructorId: state.instructors.find((item) => item.name === "Ana Torres")!.id } });
     if (reading.kind === "clarify") throw new Error("not understood");

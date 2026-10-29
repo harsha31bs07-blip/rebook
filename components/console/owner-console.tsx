@@ -156,11 +156,12 @@ export default function OwnerConsole({ id }: { id: string }) {
       const completed = outcome.results.filter((item) => item.status === "COMPLETED").length;
       const simulated = outcome.results.filter((item) => item.status === "SIMULATED").length;
       const restored = outcome.results.filter((item) => item.status === "CREDIT_RESTORED").length;
-      const outstanding = outcome.results.length - completed - simulated - restored;
+      const returned = outcome.results.filter((item) => item.status === "VISIT_RETURNED").length;
+      const outstanding = outcome.results.length - completed - simulated - restored - returned;
       setToast(completed ? `${completed} refund${completed === 1 ? "" : "s"} completed on PayPal (sandbox)${outstanding ? ` · ${outstanding} need review` : ""}${simulated ? ` · ${simulated} simulated` : ""}`
         : simulated ? `Schedule updated · ${simulated} simulated refunds${outstanding ? ` · ${outstanding} need review` : ""}`
           : restored ? `Schedule updated · ${restored} returned to studio credit${outstanding ? ` · ${outstanding} need review` : ""}`
-            : outstanding ? "Schedule updated · review the refund results" : "Recovery approved. Your schedule is up to date.");
+            : returned ? `Schedule updated · ${returned} visits returned` : outstanding ? "Schedule updated · review the refund results" : "Recovery approved. Your schedule is up to date.");
     });
   }
   async function reset() {

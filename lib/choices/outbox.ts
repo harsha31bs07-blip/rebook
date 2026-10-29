@@ -5,8 +5,9 @@ export type DeliveryView = { status: DeliveryStatus; updatedAt: string };
 
 export type OutboxChange = {
   bookingId: string; subject: string; body: string;
+  entitlement?: CustomerMessage["entitlement"];
   kind?: "choice" | "receipt"; path?: string; expiresAt?: number;
-  sentAt?: string; revisedAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded" | "returned to your studio credit" | `kept a $${number} studio credit`; at: string };
+  sentAt?: string; revisedAt?: string; reply?: { status: "kept" | "moved" | "chose another class" | "refund requested" | "refunded" | "returned to your studio credit" | `kept a $${number} studio credit` | `Returns 1 visit · ${string}` | "Membership · no charge"; at: string };
 };
 export type OutboxCustomer = {
   customerId: string; customerName: string; planId: string; changes: OutboxChange[];
@@ -51,7 +52,7 @@ export function outboxMessage(row: OutboxCustomer, origin?: string, reminder = f
   const changes = reminder ? row.changes.filter((change) => open(change, Date.now())) : row.changes;
   const path = (change: OutboxChange) => origin ? new URL(change.path!, origin).href : change.path;
   if (reminder) return `Hi ${row.customerName}, just a reminder to choose what works for your updated class${changes.length === 1 ? "" : "es"}:\n${changes.map((change) => `${change.subject}\n${path(change)}`).join("\n\n")}\n\nThank you!`;
-  return changes.map((change) => `${change.body.replace("Doesn't work? Reply for a refund.", "Use your private link to keep your new time, find another class, or take a refund.")}\n\n${change.kind === "receipt" ? "Refund receipt" : "Private choice link"}: ${path(change)}`).join("\n\n");
+  return changes.map((change) => `${change.body.replace("Doesn't work? Reply for a refund.", "Use your private link to keep your new time, find another class, or take a refund.")}\n\n${change.kind === "receipt" ? change.entitlement ? "Booking receipt" : "Refund receipt" : "Private choice link"}: ${path(change)}`).join("\n\n");
 }
 
 export function messageDeepLinks(subject: string, body: string) {

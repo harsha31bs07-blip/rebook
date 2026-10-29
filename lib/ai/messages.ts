@@ -1,6 +1,7 @@
-import type { Plan, State } from "../domain/types";
+import type { Booking, Plan, State } from "../domain/types";
+import { entitlementMessage } from "../domain/entitlements";
 
-export type CustomerMessage = { bookingId: string; customerId: string; customerName?: string; subject: string; body: string };
+export type CustomerMessage = { bookingId: string; customerId: string; customerName?: string; subject: string; body: string; entitlement?: Booking["entitlement"] };
 
 /** Drafts only: sending and refund execution belong to the approval flow. No AI or network calls. */
 export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage[] {
@@ -19,8 +20,8 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
     let subject: string;
     let body: string;
     if (action.action === "refund") {
-      subject = `A refund for your ${session.title} booking`;
-      body = `${greeting}\n\nWe're sorry we couldn't keep your ${session.title} booking. We'll arrange a refund of ${state.studio.currency} ${action.amount}. ${action.reason}\n\n${signature}`;
+      subject = booking.entitlement ? `An update to your ${session.title} booking` : `A refund for your ${session.title} booking`;
+      body = `${greeting}\n\nWe're sorry we couldn't keep your ${session.title} booking. ${booking.entitlement ? entitlementMessage(booking.entitlement) : `We'll arrange a refund of ${state.studio.currency} ${action.amount}.`} ${action.reason}\n\n${signature}`;
     } else if (action.action === "move") {
       if (!change?.after) throw new Error(`Cannot draft moved booking ${action.bookingId}: missing replacement placement`);
       subject = `Your new time for ${session.title}`;
@@ -37,6 +38,8 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
         : roomChanged ? `Your class will take place in ${room?.name ?? "a replacement room"}.` : "Your booking is confirmed.";
       body = `${greeting}\n\n${update} Your ${session.title} class stays at ${formatTime(change?.after?.start ?? session.start)} (${state.studio.timezone}). We're looking forward to welcoming you.\n\n${signature}`;
     }
-    return { bookingId: action.bookingId, customerId: action.customerId, customerName: customer.name, subject, body };
+    if (booking.entitlement) body = body.replace("Doesn't work? Reply for a refund.", "Doesn't work? Choose another class or cancel this booking.");
+    return { bookingId: action.bookingId, customerId: action.customerId, customerName: customer.name, subject, body,
+      ...(booking.entitlement ? { entitlement: booking.entitlement } : {}) };
   });
 }

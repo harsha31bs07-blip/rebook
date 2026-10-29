@@ -39,6 +39,7 @@ export function getRefundBreakdown(data: Insights, groupBy: RefundGroup = "reaso
     groups.set(label, [...(groups.get(label) ?? []), event]);
   }
   return { ...stamp(data), groupBy, rows: [...groups].map(([label, events]) => ({ label, requests: events.length,
+    visitsReturned: events.filter((row) => row.status === "VISIT_RETURNED").length,
     completedUSD: money(events.filter((row) => row.status === "COMPLETED").map((row) => row.amount)),
     simulatedUSD: money(events.filter((row) => row.status === "SIMULATED").map((row) => row.amount)),
     pendingUSD: money(events.filter((row) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(row.status)).map((row) => row.amount)),

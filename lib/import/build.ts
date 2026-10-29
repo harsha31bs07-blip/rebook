@@ -4,7 +4,7 @@ import { addLocalDays, fromCents, localParts, zonedTimeToUtc } from "../domain/t
 import { nextWeekStart } from "../seed/seed";
 import { feasibilityErrors } from "../solver/validate";
 import { parseCsv } from "./csv";
-import { REQUIRED_FIELDS, type ColumnMapping, type ImportField } from "./fields";
+import { paymentEntitlement, REQUIRED_FIELDS, type ColumnMapping, type ImportField } from "./fields";
 
 export const IMPORT_LIMITS = { bytes: 512 * 1024, rows: 3000, classes: 400 };
 export type ImportInput = { mapping: ColumnMapping; classTypes: Record<string, ClassType>; timezone: string; studioName?: string; dateOrder?: "mdy" | "dmy" };
@@ -90,7 +90,7 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
 
   type Draft = { title: string; type: ClassType; date: string; start: number; end: number; startInstant?: string; endInstant?: string; instructor: string; room: string; capacity?: number; price?: string; line: number };
   const classes = new Map<string, Draft>(), people = new Map<string, { name: string; accepts?: boolean }>();
-  const seats: { classKey: string; email: string; price?: string; line: number }[] = [];
+  const seats: { classKey: string; email: string; price?: string; entitlement?: Booking["entitlement"]; line: number }[] = [];
   let assumedDuration = false, assumedRoom = false;
   const untyped = new Map<string, number>();
   const omitted = { cancelled: 0, waitlisted: 0, removed: 0 }, unknownStatuses = new Set<string>();
@@ -117,8 +117,9 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     const room = cell(row, "room") || "Main studio";
     if (!cell(row, "room")) assumedRoom = true;
     const capacity = parseInt(cell(row, "capacity"), 10);
-    const price = money(cell(row, "price"));
-    if (cell(row, "price") && price === undefined) return rowError(line, `can't read the price "${cell(row, "price")}". Rebook reads US dollars only; use a non-negative amount like 20.00 or $20.00.`);
+    const entitlement = paymentEntitlement(cell(row, "payment"));
+    const price = entitlement ? undefined : money(cell(row, "price"));
+    if (!entitlement && cell(row, "price") && price === undefined) return rowError(line, `can't read the price "${cell(row, "price")}". Rebook reads US dollars only; use a non-negative amount like 20.00 or $20.00.`);
     const classKey = [title, date, start, instructor.toLowerCase(), room.toLowerCase()].join("|");
     const draft = classes.get(classKey) ?? { title, type, date, start, end, startInstant: startParts ? new Date(startCell).toISOString() : undefined, endInstant: endParts ? new Date(endCell).toISOString() : undefined, instructor, room, line };
     if (capacity > 0 && capacity <= 500) draft.capacity = Math.max(draft.capacity ?? 0, capacity);
@@ -137,7 +138,7 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     if (/^(n|no|false|0)$/.test(accepts)) person.accepts = false;
     else if (/^(y|yes|true|1)$/.test(accepts) && person.accepts === undefined) person.accepts = true;
     people.set(email, person);
-    seats.push({ classKey, email, price, line });
+    seats.push({ classKey, email, price, entitlement, line });
   });
   // One line per class, not per booking row.
   errors.unshift(...[...untyped].map(([title, count]) => `Choose a class type for "${title}" (${count} ${count === 1 ? "row" : "rows"}).`));
@@ -208,9 +209,12 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     if (seen.has(`${session}|${customer}`)) { warnings.push(`Row ${seat.line}: a repeated booking for the same person and class was counted once.`); continue; }
     seen.add(`${session}|${customer}`);
     const id = slug("booking", bookings.length), price = seat.price ?? sessions.find((item) => item.id === session)!.price;
-    bookings.push({ id, sessionId: session, customerId: customer, status: "confirmed", amount: price, bookedAt: new Date(now.getTime() - 86_400_000 + bookings.length * 1000).toISOString(),
-      payment: { orderId: `IMPORT-ORDER-${id}`, captureId: `IMPORT-CAP-${id}`, simulated: true } });
+    bookings.push({ id, sessionId: session, customerId: customer, status: "confirmed", amount: seat.entitlement ? "0.00" : price, bookedAt: new Date(now.getTime() - 86_400_000 + bookings.length * 1000).toISOString(),
+      ...(seat.entitlement ? { entitlement: seat.entitlement } : { payment: { orderId: `IMPORT-ORDER-${id}`, captureId: `IMPORT-CAP-${id}`, simulated: true } }) });
   }
+  const packs = bookings.filter((booking) => booking.entitlement?.kind === "pack").length;
+  const memberships = bookings.filter((booking) => booking.entitlement?.kind === "membership").length;
+  if (packs || memberships) warnings.push(`${packs} bookings use a class pack and ${memberships} a membership: Rebook returns visits instead of refunding cash, and your booking system keeps the balances.`);
   const first = Math.min(...drafts.map((draft) => draft.start)), last = Math.max(...drafts.map((draft) => draft.end));
   const weekdays = [...new Set(sessions.map((session) => localParts(session.start, tz).weekday))].sort((a, b) => (a + 6) % 7 - (b + 6) % 7);
   const openHours = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, weekdays.includes(day) ? [{ open: clock(first), close: clock(last) }] : []]));
@@ -233,7 +237,7 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
   if (assumedDuration) warnings.push("No end time or duration: classes are assumed to last 60 minutes.");
   if (assumedRoom) warnings.push("No room column: every class is in one room, \"Main studio\".");
   if (assumedCapacity) warnings.push("No capacity: classes hold 12, or everyone booked if that is more.");
-  if (assumedPrice) warnings.push("No price: each booking is valued at $20.00.");
+  if (assumedPrice) warnings.push(packs || memberships ? "No cash price: classes default to $20.00; pack and membership bookings have no charge." : "No price: each booking is valued at $20.00.");
   if (customers.length) warnings.push("Customer availability isn't in the export: Rebook assumes they can take any time and lets each choose on their own page.");
   warnings.push("Payments are simulated for imported bookings; no PayPal money moves. Customer emails are never contacted.");
   Object.assign(summary, { classes: sessions.length, instructors: instructors.length, rooms: rooms.length, customers: customers.length, bookings: bookings.length });

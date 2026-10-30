@@ -653,3 +653,9 @@ textarea { resize: vertical; min-height: 120px; }
 .agent-connect button { width: auto; margin-left: 6px; padding: 4px 10px; font-size: 12px; }
 .studio-tool > .agent-connect { margin: 0 0 14px; padding: 0; border: 0; }
 .studio-tool > .agent-connect h3 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.recovery-headline { margin: 12px 0 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+.recovery-headline h3 { margin: 0 0 6px; font-size: 15px; }
+.recovery-headline.handled { border-color: #86efac; background: #f0fdf4; }
+.recovery-headline.handled h3::before { content: "✓ "; color: #15803d; }
+.recovery-net { margin: 0 0 8px; font-size: 13px; }
+.recovery-headline ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 12px; color: var(--muted); }

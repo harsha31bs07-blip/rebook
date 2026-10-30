@@ -1,7 +1,7 @@
 import type { AgReportState } from "ag-studio";
 import type { StudioRegistry } from "@/components/insights/widgets";
 
-export const REPORT_STATE_VERSION = 5;
+export const REPORT_STATE_VERSION = 6;
 export const REPORT_TRACKS = 30;
 export function reportLayout(canvasHeight: number) {
   return { rowHeight: Math.max(8, Math.floor((canvasHeight - 24) / REPORT_TRACKS)), pagePadding: 12, minWidth: 720 };
@@ -43,11 +43,12 @@ export const initialReport: AgReportState<StudioRegistry> = {
     }, filter: { widget: { reasons: [{ field: { id: "money_events.kind" }, model: { operator: "isIn", value: ["refund"] } }] } }, widgetLayout: { impact: at(0, 0, 13, 15), receipts: at(13, 0, 11, 15), actions: at(0, 15, 14, 15), reasons: at(14, 15, 10, 15) } },
     { id: "money", widgets: {
       credits: kpi("Kept as studio credit", { id: "studio_credit_kpi" }, "Revenue retained; included in net revenue"),
+      wonBack: kpi("Won back from waitlist", { id: "waitlist_won_back_kpi" }, "Freed seats resold after a recovery"),
       net: kpi("Net revenue", { id: "net_revenue_kpi" }, "Captures less issued refunds"),
       cashflow: { type: "column-chart-grouped", dataMapping: { categoryKey: [{ id: "money_events.local_day" }], valueKey: [sum("money_events.captured"), sum("money_events.issued_refund")] }, sort: [{ field: { id: "money_events.local_day" }, direction: "asc" }], format: title("Captures vs refunds · receipt date") },
       receipts: { type: "refund-receipts", dataMapping: { rows: receiptFields }, format: title("Refund receipts") },
       ledger: { type: "grid", dataMapping: { cols: "local_day kind display_amount status payment_mode".split(" ").map((field) => ({ id: `money_events.${field}` })) }, sort: [{ field: { id: "money_events.created_at" }, direction: "desc" }], format: title("Payment ledger · latest status per request") },
-    }, widgetLayout: { net: at(0, 0, 7, 7), credits: at(7, 0, 17, 7), cashflow: at(7, 7, 17, 10), receipts: at(0, 7, 7, 23), ledger: at(7, 17, 17, 13) } },
+    }, widgetLayout: { net: at(0, 0, 7, 7), credits: at(7, 0, 9, 7), wonBack: at(16, 0, 8, 7), cashflow: at(7, 7, 17, 10), receipts: at(0, 7, 7, 23), ledger: at(7, 17, 17, 13) } },
   ],
 };
 

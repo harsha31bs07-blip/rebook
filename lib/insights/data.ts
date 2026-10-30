@@ -3,15 +3,22 @@ import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlement
 import { packBalance } from "../domain/pack-balances";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
-import type { CheckoutReservation, Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
+import type { CheckoutReservation, Credit, CustomerLink, LedgerEvent, StoredPlan, WaitlistOffer } from "../store";
 import { recoveryOutcomes, summarizeRecovery } from "../recovery/outcomes";
 import { paymentsNeedingAttention } from "../recovery/payment-attention";
 
 const dollars = (amount: string) => toCents(amount) / 100;
 
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
-export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = [], checkouts: CheckoutReservation[] = []) {
+export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = [], checkouts: CheckoutReservation[] = [], offers: WaitlistOffer[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
+  // A seat refilled from the waitlist is credited to the latest recovery applied before its offer.
+  const appliedOrder = [...applied].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const wonBack = (plan: StoredPlan) => {
+    const next = appliedOrder[appliedOrder.indexOf(plan) + 1]?.createdAt ?? "￿";
+    return offers.filter((offer) => offer.status === "claimed" && offer.createdAt >= plan.createdAt && offer.createdAt < next)
+      .reduce((sum, offer) => sum + toCents(state.bookings.find((booking) => booking.id === offer.bookingId)?.amount ?? "0.00"), 0) / 100;
+  };
   const creditPaidBookingIds = new Set([...checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id),
     ...credits.flatMap((credit) => credit.redemptions.map((item) => item.bookingId))]);
   const outcomes = recoveryOutcomes(state, plans, ledger, links, creditPaidBookingIds);
@@ -115,7 +122,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
         kept: active ? recovery.kept : plan.totals.kept, moved: active ? recovery.moved : plan.totals.moved, refunded: active ? recovery.refunded : plan.totals.refunded,
         pending: recovery.pending, no_reply: recovery.noReply, simulated_refunded: recovery.simulatedRefunded,
         visits_returned: recovery.visitsReturned,
-        credited: recovery.credited, kept_as_credit: recovery.keptAsCredit,
+        credited: recovery.credited, kept_as_credit: recovery.keptAsCredit, waitlist_won_back: active ? wonBack(plan) : 0,
         refund_amount: plannedAmount(true), revenue_kept: active ? recovery.revenueKept : plannedAmount(false),
         planned_refund_amount: plannedAmount(true),
         pending_refund_amount: amountFor(["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"]),

@@ -21,6 +21,6 @@ it.each(["claimed", "declined", "expired", "withdrawn"] as const)("renders a pla
 });
 it("renders waiting counts, held offers and final outcomes in the console panel", () => {
   const html = renderToStaticMarkup(<WaitlistPanel timezone="America/New_York" onMessages={vi.fn()} classes={[{ sessionId: "class", title: "Yoga Flow", start: "2026-11-09T12:00:00.000Z", waiting: 2,
-    offers: ["offered", "claimed", "declined", "expired", "withdrawn"].map((status, index) => ({ id: String(index), status: status as "offered", expiresAt: data.expiresAt, customerName: "Avery" })) }]} />);
+    offers: ["offered", "claimed", "declined", "expired", "withdrawn"].map((status, index) => ({ id: String(index), status: status as "offered", expiresAt: data.expiresAt, createdAt: "2026-11-08T06:00:00Z", customerName: "Avery" })) }]} />);
   for (const copy of ["Waitlist", "2 waiting", "Yoga Flow · Nov 9, 7:00 AM", "1 open offer<", "held until", "claimed", "declined", "expired", "Message waitlist customers", 'id="waitlist"']) expect(html).toContain(copy);
 });

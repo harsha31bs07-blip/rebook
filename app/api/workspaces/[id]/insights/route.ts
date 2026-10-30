@@ -10,6 +10,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const repository = getRepository();
     const { state } = repository.requireReadyWorkspace(id);
     void sweepRefunds(repository, id).catch(() => console.error("Refund reconciliation sweep failed"));
-    return buildInsights(state, repository.listPlans(id), repository.listLedger(id), repository.listCustomerLinks(id), repository.listCredits(id), repository.listCheckout(id));
+    return buildInsights(state, repository.listPlans(id), repository.listLedger(id), repository.listCustomerLinks(id), repository.listCredits(id), repository.listCheckout(id), repository.listWaitlistOffers(id));
   });
 }

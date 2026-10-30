@@ -14,6 +14,8 @@ import type { summarizeOutbox } from "../../lib/choices/outbox";
 import { planCovers } from "../../lib/recovery/covers";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
 import NextSteps from "./next-steps";
+import RecoveryHeadline from "./recovery-headline";
+import type { ownerWaitlist } from "../../lib/waitlist/service";
 import PayPalVerification from "./paypal-verification";
 
 const BookingGrid = dynamic(() => import("./booking-grid"), { ssr: false, loading: () => <div className="booking-grid skeleton" role="status" aria-label="Loading booking actions" /> });
@@ -64,13 +66,14 @@ export function RefundResults({ results, state, workspaceId, ledger }: { results
   })}{workspaceId && returnedPacks && <p><a href={`/api/workspaces/${workspaceId}/pack-balances`}>Download pack balance changes (CSV)</a><br /><span className="muted">Apply these in your booking system so balances match.</span></p>}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, ledger, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, ledger, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, waitlist, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   ledger?: LedgerEvent[];
   outcomes?: RecoveryOutcome[];
   creditPaidBookingIds?: string[];
   outboxSummary?: ReturnType<typeof summarizeOutbox>;
   coverLinks?: OwnerCover[];
+  waitlist?: ReturnType<typeof ownerWaitlist>;
   customerPath?: string; onPreview?: (party: "customer" | "instructor") => void;
   onWithdraw?: () => void;
   approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: (confirmedCoverSessionIds?: string[]) => void; onDiscard: () => void; onMessages: () => void;
@@ -111,6 +114,7 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.correctionOf && <p className="notice" role="status">This undoes the recovery you approved for this disruption. Review the restored schedule, then approve.</p>}
     {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
+    {plan.status === "executed" && !plan.correctionOf && <RecoveryHeadline recovery={recovery} disruption={plan.disruption} timezone={state.studio.timezone} approvedAt={plan.createdAt} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} waitlist={waitlist} />}
     {proposed && timeSaved}
     <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
       {proposed ? <>

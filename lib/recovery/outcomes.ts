@@ -55,7 +55,7 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
       refunded: fullySettled && !simulatedAmount ? 1 : 0, simulated_refunded: fullySettled && simulatedAmount > 0 ? 1 : 0,
       visits_returned: fullySettled && visitReturned ? 1 : 0,
       pending: pending ? 1 : 0, no_reply: noReply ? 1 : 0,
-      revenue_kept: saved ? Math.max(0, originalAmount - refundedAmount) / 100 : 0,
+      revenue_kept: saved ? Math.max(0, originalAmount - refundedAmount) / 100 : 0, original_amount: originalAmount / 100,
       completed_refund_amount: completedAmount / 100, simulated_refund_amount: simulatedAmount / 100,
       payment_state: reversed && !refundIntent ? "reversed" : pending ? failed ? "needs_attention" : "pending" : visitReturned ? "visit_returned" : creditRestored ? "credit_restored" : entitlement ? entitlement.kind : simulatedAmount ? "simulated_refund" : completedAmount ? "completed_refund" : creditPaid ? "credit" : "captured",
       final: !noReply && !pending && !failed,
@@ -66,10 +66,10 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
 export type RecoveryOutcome = ReturnType<typeof recoveryOutcomes>[number];
 
 export function summarizeRecovery(outcomes: RecoveryOutcome[]) {
-  const sum = (field: "kept" | "moved" | "saved" | "credited" | "kept_as_credit" | "refunded" | "simulated_refunded" | "visits_returned" | "pending" | "no_reply" | "revenue_kept" | "completed_refund_amount" | "simulated_refund_amount") =>
+  const sum = (field: "kept" | "moved" | "saved" | "credited" | "kept_as_credit" | "refunded" | "simulated_refunded" | "visits_returned" | "pending" | "no_reply" | "revenue_kept" | "original_amount" | "completed_refund_amount" | "simulated_refund_amount") =>
     outcomes.reduce((total, item) => total + Math.round(item[field] * 100), 0) / 100;
   return { affected: outcomes.length, kept: sum("kept"), moved: sum("moved"), saved: sum("saved"), refunded: sum("refunded"),
-    simulatedRefunded: sum("simulated_refunded"), visitsReturned: sum("visits_returned"), pending: sum("pending"), noReply: sum("no_reply"), revenueKept: sum("revenue_kept"),
+    simulatedRefunded: sum("simulated_refunded"), visitsReturned: sum("visits_returned"), pending: sum("pending"), noReply: sum("no_reply"), revenueKept: sum("revenue_kept"), atStake: sum("original_amount"),
     completedRefundAmount: sum("completed_refund_amount"), simulatedRefundAmount: sum("simulated_refund_amount"), credited: sum("credited"), keptAsCredit: sum("kept_as_credit"),
     noReplyCustomers: new Set(outcomes.filter((item) => item.no_reply).map((item) => item.customer_id)).size,
     complete: outcomes.length > 0 && outcomes.every((item) => item.final) };

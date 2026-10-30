@@ -17,6 +17,7 @@ import MoveToPopover from "./move-to-popover";
 import { draftCustomerMessages } from "../../lib/ai/messages";
 import { formatMoney, localParts } from "../../lib/domain/time";
 import type { OwnerAdjustment } from "../../lib/solver/adjust";
+import WaitlistPanel from "./waitlist-panel";
 import MessagesDrawer from "./messages-drawer";
 import { summarizeOutbox } from "../../lib/choices/outbox";
 import ConsoleHeader from "./console-header";
@@ -35,6 +36,7 @@ function ScheduleSkeleton() {
 }
 
 export default function OwnerConsole({ id }: { id: string }) {
+  const [waitlistMessagesOpen, setWaitlistMessagesOpen] = useState(false);
   const [moveSession, setMoveSession] = useState<string>();
   const [movedSession, setMovedSession] = useState<{ id: string; version: number }>();
   const [busy, setBusy] = useState("");
@@ -140,7 +142,7 @@ export default function OwnerConsole({ id }: { id: string }) {
       }
       setToast("undo" in input ? "Last adjustment undone. Review the restored placement and totals." : "Class moved. Review the updated placement and totals.");
       setDetails((previous) => previous ? { ...previous, plan: adjusted,
-        messages: draftCustomerMessages(adjusted, currentState),
+        messages: draftCustomerMessages(adjusted, currentState, workspace?.customerChoices?.packReturns ?? workspace?.ledger),
         explanation: { headline: "Your adjusted recovery plan is ready", source: "template", bullets: [
           `${totals.kept} bookings stay at their original time; ${totals.moved} move to a new time.`,
           `${totals.refunded} refunds total ${formatMoney(totals.refundAmount, currentState.studio.currency)}; ${formatMoney(totals.revenueKept, currentState.studio.currency)} in revenue stays with your studio.`,
@@ -221,10 +223,11 @@ export default function OwnerConsole({ id }: { id: string }) {
         {ready && state ? <>
           {(error || loadError) && (retryRefunds ? <div className="error error-box" role="alert">{error || loadError}<button disabled={Boolean(busy)} onClick={() => void approve()}>Retry</button></div> : <p className="error error-box" role="alert">{error || loadError}</p>)}
           {restoreError && <div className="warning" role="alert">{restoreError}<button disabled={Boolean(busy)} onClick={() => void restore()}>Retry</button></div>}
-          {details && plan ? <><PlanPanel details={details} plan={plan} coverLinks={workspace.covers} onPreview={setPreviewParty}
+          {details && plan ? <><PlanPanel details={details} plan={plan} ledger={workspace.customerChoices?.packReturns ?? workspace.ledger} coverLinks={workspace.covers} onPreview={setPreviewParty}
             customerPath={workspace.customerChoices?.links.find((link) => link.planId === plan.id && link.kind === "choice")?.path} disruptionText={text} state={basis ?? state} creditPaidBookingIds={workspace.customerChoices?.creditPaidBookingIds} outboxSummary={workspace.customerChoices?.outbox ? summarizeOutbox(workspace.customerChoices.outbox.filter((row) => row.planId === plan.id)) : undefined} outcomes={workspace.plans.some((item) => item.id === plan.id && item.status !== "proposed") ? workspace.customerChoices?.outcomes?.filter((item) => item.plan_id === plan.id) : undefined} busy={Boolean(busy)} approving={busy === "approve"} results={results} approvalRequested={approvalRequested === plan.id} onUndo={plan.lastAdjustment ? () => void adjust({ undo: true }).catch(() => {}) : undefined} onMove={adjustable ? setMoveSession : undefined} onWithdraw={canWithdraw ? () => void withdraw() : undefined} onApprove={(confirmedIds) => void approve(confirmedIds)} onDiscard={() => void discard()} onMessages={() => setMessagesOpen(true)} />{!["proposed", "executing"].includes(plan.status) && <button className="full-width" onClick={clearPlan} disabled={Boolean(busy)}>Plan another recovery</button>}</>
             : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={(value) => run("interpret", () => interpretText(value))} onReport={reportDisruption} onEdit={() => setInterpretation(undefined)} onPlan={createPlan} />}
           <CoverPay workspaceId={id} covers={workspace.covers?.filter((cover) => cover.planId === plan?.id || cover.planId === plan?.correctionOf)} onUpdated={() => { void refresh().catch(() => {}); }} />
+          <WaitlistPanel classes={workspace.waitlist} timezone={state.studio.timezone} onMessages={() => setWaitlistMessagesOpen(true)} />
           <PaymentsAttention workspaceId={id} payments={workspace.paymentsNeedingAttention} onUpdated={() => { void refresh().catch(() => setError("Refund checked. Refresh the workspace to see its latest status.")); }} />
           {history.length > 0 && <section className="history"><h3>History <span>{history.length}</span></h3>{history.map((item) => <div key={item.id}><button disabled={Boolean(busy)} onClick={() => void run("history", async () => { const next = await api.details(id, item.id); setDetails(next); setBasis({ ...state, sessions: next.sessions }); })}><strong>{item.totals.sessionsAffected} sessions · {item.totals.refunded} refunds</strong><span>{item.correctedBy ? "corrected" : item.correctionOf ? "correction · " + item.status.replaceAll("_", " ") : item.status.replaceAll("_", " ")} · {new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</span></button><CoverRecord plan={item} state={state} links={workspace.covers} /></div>)}</section>}
           {(workspace.customerChoices?.links.length ?? 0) > 0 && <section className="customer-replies" aria-labelledby="replies-title"><div className="replies-heading"><h3 id="replies-title">Replies</h3><span className="muted">Updates live</span></div><ul aria-live="polite">{workspace.customerChoices?.replies.length ? workspace.customerChoices.replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><time dateTime={reply.at}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(reply.at))}</time></li>) : <li className="muted">Waiting for customers. Open a private link from Customer messages to try a reply.</li>}</ul></section>}
@@ -246,6 +249,7 @@ export default function OwnerConsole({ id }: { id: string }) {
     {previewParty && details && <PartyPreview initial={previewParty} onClose={() => { setPreviewParty(undefined); void refresh().catch(() => {}); }}
       customerPath={workspace?.customerChoices?.links.find((link) => link.planId === details.plan.id && link.kind === "choice")?.path}
       coverPath={workspace?.covers?.find((cover) => cover.planId === details.plan.id && cover.current)?.path} instructor={workspace?.covers?.find((cover) => cover.planId === details.plan.id && cover.current)?.instructor} />}
-    {messagesOpen && details && <MessagesDrawer workspaceId={id} messages={details.messages} links={workspace?.customerChoices?.links.filter((link) => link.planId === details.plan.id)} outbox={details.plan.status !== "proposed" ? workspace?.customerChoices?.outbox?.filter((row) => row.planId === details.plan.id) : undefined} onUpdated={() => { void refresh().catch(() => setError("Outbox saved. The workspace refresh failed; updates will retry shortly.")); }} onClose={() => setMessagesOpen(false)} />}
+    {waitlistMessagesOpen && <MessagesDrawer workspaceId={id} messages={[]} outbox={workspace?.customerChoices?.outbox.filter((row) => row.waitlistOffer)} onUpdated={() => { void refresh().catch(() => {}); }} onClose={() => setWaitlistMessagesOpen(false)} />}
+    {messagesOpen && details && <MessagesDrawer workspaceId={id} messages={details.messages} links={workspace?.customerChoices?.links.filter((link) => link.planId === details.plan.id)} outbox={details.plan.status !== "proposed" ? workspace?.customerChoices?.outbox?.filter((row) => row.planId === details.plan.id || row.waitlistOffer) : undefined} onUpdated={() => { void refresh().catch(() => setError("Outbox saved. The workspace refresh failed; updates will retry shortly.")); }} onClose={() => setMessagesOpen(false)} />}
   </main>;
 }

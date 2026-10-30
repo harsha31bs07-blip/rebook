@@ -28,6 +28,8 @@ export async function sendCustomerEmail(workspaceId: string, input: { planId: st
     repository.saveDelivery({ ...delivery, status: result.kind === "accepted" ? "sent" : result.kind === "rejected" ? "failed" : "unknown",
       messageId: result.kind === "accepted" ? result.messageId : undefined, reason: result.kind === "rejected" ? result.reason : undefined, updatedAt: now });
     if (result.kind === "accepted") {
+      const offer = repository.listWaitlistOffers(workspaceId).find((item) => item.id === input.planId && item.customerId === input.customerId);
+      if (offer) repository.saveWaitlistOffer({ ...offer, sentAt: now });
       for (const link of repository.listCustomerLinks(workspaceId).filter((link) => link.planId === input.planId && row.changes.some((change) => change.bookingId === link.bookingId))) {
         repository.saveCustomerLink({ ...link, sentAt: now });
       }

@@ -5,6 +5,8 @@ import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry, enableDevValidations, themeQuartz, type ColDef, type GetRowIdParams, type ICellRendererParams } from "ag-grid-community";
 import { entitlementLabel, entitlementPaymentLabel } from "../../lib/domain/entitlements";
 import type { Plan, State } from "@/lib/domain/types";
+import type { LedgerEvent } from "../../lib/store";
+import { plannedPackBalances } from "../../lib/domain/pack-balances";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 if (process.env.NODE_ENV !== "production") enableDevValidations();
@@ -26,16 +28,20 @@ const columns: ColDef<ActionRow>[] = [
   { field: "amount", headerName: "Amount", width: 240, type: "numericColumn", valueFormatter: ({ value, data }) => data?.entitlement ?? `$${Number(value).toFixed(2)}` },
 ];
 
-export default function BookingGrid({ plan, state }: { plan: Plan; state: State }) {
+export default function BookingGrid({ plan, state, ledger }: { plan: Plan; state: State; ledger?: LedgerEvent[] }) {
   const [filter, setFilter] = useState("");
-  const rows = useMemo<ActionRow[]>(() => plan.bookingActions.map((action) => {
-    const booking = state.bookings.find((item) => item.id === action.bookingId);
-    const customer = state.customers.find((item) => item.id === action.customerId);
-    return { id: action.bookingId, customer: customer?.name ?? "Customer",
-      class: state.sessions.find((item) => item.id === booking?.sessionId)?.title ?? "Cancelled class",
-      action: action.action, reason: `${customer?.prefs.availabilityKnown === false ? "availability not given · " : ""}${action.reason}`, amount: Number(action.amount),
-      entitlement: booking?.entitlement ? (action.action === "refund" ? entitlementLabel : entitlementPaymentLabel)(booking.entitlement) : undefined };
-  }), [plan, state]);
+  const rows = useMemo<ActionRow[]>(() => {
+    const balances = plannedPackBalances(state, ledger ?? [], plan);
+    return plan.bookingActions.map((action) => {
+      const booking = state.bookings.find((item) => item.id === action.bookingId);
+      const customer = state.customers.find((item) => item.id === action.customerId);
+      const balance = balances.get(action.bookingId);
+      return { id: action.bookingId, customer: customer?.name ?? "Customer",
+        class: state.sessions.find((item) => item.id === booking?.sessionId)?.title ?? "Cancelled class",
+        action: action.action, reason: `${customer?.prefs.availabilityKnown === false ? "availability not given · " : ""}${action.reason}`, amount: Number(action.amount),
+        entitlement: booking?.entitlement ? action.action === "refund" ? entitlementLabel(booking.entitlement, balance) : entitlementPaymentLabel(booking.entitlement, balance?.before) : undefined };
+    });
+  }, [plan, state, ledger]);
   return <section className="booking-section" aria-label="Booking actions">
     <div className="section-label"><h3>Booking actions</h3><span>{rows.length}</span></div>
     <label className="sr-only" htmlFor="booking-search">Filter booking actions</label>

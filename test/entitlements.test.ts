@@ -176,7 +176,7 @@ it("imports the mixed sample week and returns visits when its instructor is sick
   const input = { mapping: ruleMapping(parseCsv(csv)[0]), classTypes: { "Sunrise Reformer": "pilates", "Vinyasa Flow": "yoga", "Rhythm Ride": "spin", "Slow Burn": "yoga", "Strength Sculpt": "hiit", "Mat Pilates": "pilates" } as const, timezone: "America/New_York" };
   const imported = buildImport(csv, input);
   expect(imported.errors).toEqual([]); expect(imported.summary).toMatchObject({ classes: 15, bookings: 67, customers: 21 });
-  expect(imported.warnings.join(" ")).toContain("12 bookings use a class pack and 11 a membership: Rebook returns visits instead of refunding cash, and your booking system keeps the balances.");
+  expect(imported.warnings.join(" ")).toContain("12 bookings use a class pack and 11 a membership: Rebook returns visits instead of refunding cash. Imported pack balances and returned visits are tracked");
   const { id } = createImportedWorkspace(csv, input, repository);
   const state = repository.requireWorkspace(id).state;
   const entitlementBookings = state.bookings.filter((booking) => booking.entitlement);

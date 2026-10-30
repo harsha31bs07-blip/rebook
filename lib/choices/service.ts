@@ -1,9 +1,11 @@
+import { fillFreedSeats, waitlistOutbox } from "../waitlist/service";
 import { z } from "zod";
 import { draftCustomerMessages } from "../ai/messages";
 import { pausedSessionIds, seatsLeft, sessionAvailable } from "../checkout/service";
 import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc } from "../domain/time";
 import type { State } from "../domain/types";
 import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlements";
+import { packBalance, packReturnBalance, packReturns } from "../domain/pack-balances";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
 import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
@@ -21,7 +23,7 @@ export const ChoiceInputSchema = z.discriminatedUnion("action", [
 export type ChoiceInput = z.infer<typeof ChoiceInputSchema>;
 
 export function createCustomerLinks(plan: StoredPlan, before: State, after: State, repository: Repository): void {
-  const messages = draftCustomerMessages(plan, before);
+  const messages = draftCustomerMessages(plan, before, repository.listLedger(plan.workspaceId));
   const checkouts = new Map(repository.listCheckout(plan.workspaceId).map((row) => [row.id, row]));
   for (const action of plan.bookingActions) {
     const booking = before.bookings.find((item) => item.id === action.bookingId)!;
@@ -66,13 +68,14 @@ function alternatives(link: CustomerLink, repository: Repository) {
   const payment = creditPayment(link, repository);
   const maxPrice = Math.min(toCents(booking.amount), payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
   const paused = pausedSessionIds(link.workspaceId, repository);
+  const reservations = repository.listCheckout(link.workspaceId), offers = repository.listWaitlistOffers(link.workspaceId);
   return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session, paused)
     && Date.parse(session.start) >= Date.parse(state.studio.weekStart) && Date.parse(session.start) < end
-    && (booking.entitlement || toCents(session.price) <= maxPrice) && seatsLeft(state, session, repository.listCheckout(link.workspaceId)) > 0
+    && (booking.entitlement || toCents(session.price) <= maxPrice) && seatsLeft(state, session, reservations, undefined, offers) > 0
     && !state.bookings.some((other) => other.id !== booking.id && other.customerId === booking.customerId && ["confirmed", "moved"].includes(other.status)
       && state.sessions.some((booked) => booked.id === other.sessionId && overlaps(booked.start, booked.end, session.start, session.end))))
     .sort((a, b) => Number(b.classType === link.before.classType) - Number(a.classType === link.before.classType) || a.start.localeCompare(b.start))
-    .map((session) => ({ ...session, seatsLeft: seatsLeft(state, session, repository.listCheckout(link.workspaceId)),
+    .map((session) => ({ ...session, seatsLeft: seatsLeft(state, session, reservations, undefined, offers),
       instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team",
       difference: booking.entitlement ? "0.00" : fromCents(maxPrice - toCents(session.price)) }));
 }
@@ -96,11 +99,12 @@ export function view(link: CustomerLink, repository: Repository) {
   const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && link.reply?.action !== "credit" && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
   const newerCorrection = newest && newest.id !== link.id && repository.getPlan(link.workspaceId, newest.planId)?.correctionOf;
+  const balance = booking.entitlement?.kind === "pack" ? packBalance(state, repository.listLedger(link.workspaceId), booking.customerId, booking.entitlement.name) : null;
   return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: newerCorrection ? newest.message : link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
     kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
-    refundable: fromCents(remainingCaptured(link, repository)), ...(booking.entitlement ? { entitlement: booking.entitlement } : {}), ...(payment.paidWith ? { paidWith: payment.paidWith, creditRefundable: fromCents(payment.remaining) } : {}), receipt: receiptFor(link, repository),
+    refundable: fromCents(remainingCaptured(link, repository)), ...(booking.entitlement ? { entitlement: booking.entitlement } : {}), ...(balance !== null ? { packBalance: balance } : {}), ...(payment.paidWith ? { paidWith: payment.paidWith, creditRefundable: fromCents(payment.remaining) } : {}), receipt: receiptFor(link, repository),
     ...(credit ? { credit: { ...spendableCredit(credit, repository), path: creditPath(credit, repository), readableUntil: customerLinkReadableUntil(link),
       emailed: repository.listDeliveries(link.workspaceId).find((item) => item.kind === `credit:${link.id}`)?.status } } : {}),
     alternatives: canChoose ? alternatives(link, repository) : [] };
@@ -185,6 +189,7 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
       repository.saveCustomerLink(link);
     });
     await finishRefund(link, repository, owner);
+    fillFreedSeats(link.workspaceId, repository);
     return view(link, repository);
   });
 }
@@ -205,6 +210,7 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
   const outbox = new Map<string, OutboxCustomer>();
   const plans = repository.listPlans(workspaceId);
   const checkouts = repository.listCheckout(workspaceId), deliveries = repository.listDeliveries(workspaceId);
+  const ledger = repository.listLedger(workspaceId);
   for (const link of links.toSorted((a, b) => Number(b.kind === "choice") - Number(a.kind === "choice"))) {
     const booking = state.bookings.find((item) => item.id === link.bookingId);
     if (!booking) continue;
@@ -214,9 +220,11 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     const action = plans.find((plan) => plan.id === link.planId)?.bookingActions.find((item) => item.bookingId === link.bookingId);
     const reply = link.reply;
     const receipt = receiptFor(link, repository);
+    const balance = packReturnBalance(state, ledger, booking);
     row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind, ...(booking.entitlement ? { entitlement: booking.entitlement } : {}),
+      ...(balance ? { packBalance: balance } : {}),
       path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt, ...(link.revisedAt ? { revisedAt: link.revisedAt } : {}),
-      reply: receipt?.status === "VISIT_RETURNED" && booking.entitlement ? { at: reply?.at ?? link.createdAt, status: entitlementLabel(booking.entitlement) }
+      reply: receipt?.status === "VISIT_RETURNED" && booking.entitlement ? { at: reply?.at ?? link.createdAt, status: entitlementLabel(booking.entitlement, balance) }
         : receipt?.status === "CREDIT_RESTORED" ? { at: reply?.at ?? link.createdAt, status: "returned to your studio credit" }
         : reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
     outbox.set(key, row);
@@ -231,8 +239,10 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
     }
   }
   const creditPaidBookingIds = checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id);
+  const returnedPacks = packReturns(ledger).filter((event) => state.bookings.find((booking) => booking.id === event.bookingId)?.entitlement?.kind === "pack");
   return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links, new Set(creditPaidBookingIds)), creditPaidBookingIds,
-    outbox: [...outbox.values()],
+    ...(returnedPacks.length ? { packReturns: returnedPacks } : {}),
+    outbox: [...outbox.values(), ...waitlistOutbox(workspaceId, repository)],
     links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
     path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
     replies: links.filter((link) => link.reply).map((link) => {
@@ -255,7 +265,9 @@ export async function markCustomerContact(workspaceId: string, planId: string, c
     const { state } = repository.requireReadyWorkspace(workspaceId);
     const links = repository.listCustomerLinks(workspaceId).filter((link) => link.planId === planId
       && state.bookings.some((booking) => booking.id === link.bookingId && booking.customerId === customerId));
-    if (!links.length) throw new StoreError(404, "Customer message not found in this recovery.");
+    const offer = repository.listWaitlistOffers(workspaceId).find((item) => item.id === planId && item.customerId === customerId && item.status === "offered");
+    if (offer) repository.saveWaitlistOffer({ ...offer, sentAt: sent ? new Date().toISOString() : undefined });
+    if (!links.length && !offer) throw new StoreError(404, "Customer message not found in this recovery.");
     const sentAt = sent ? new Date().toISOString() : undefined;
     for (const link of links) repository.saveCustomerLink({ ...link, sentAt });
     return ownerCustomerChoices(workspaceId, repository);

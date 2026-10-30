@@ -69,8 +69,8 @@ export default function CustomerChoicePage({ token }: { token: string }) {
     weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
   const receipt = data?.receipt;
   const entitlement = data?.entitlement;
-  const returned = entitlement ? entitlementReceipt(entitlement) : undefined;
-  const cancelLabel = entitlement?.kind === "pack" ? `Return the visit to my ${entitlement.name}` : "Cancel this booking";
+  const returned = entitlement ? entitlementReceipt(entitlement, data?.packBalance, data?.after?.start ?? data?.before.start, data?.studio.timezone) : undefined;
+  const cancelLabel = entitlement?.kind === "pack" ? `Return the visit to my ${entitlement.name}${data?.packBalance !== undefined && !receipt ? ` (${data.packBalance + 1} left after)` : ""}` : "Cancel this booking";
   const restored = receipt?.status === "CREDIT_RESTORED";
   const completed = receipt && ["COMPLETED", "SIMULATED", "CREDIT_RESTORED", "VISIT_RETURNED"].includes(receipt.status);
   useEffect(() => {
@@ -91,6 +91,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
         <span className="choice-arrow" aria-hidden="true">→</span>
         <div><p className="eyebrow">{data.kind === "receipt" || data.reply?.action === "refund" || data.reply?.action === "credit" ? "Your update" : "Your new class"}</p><h2>{data.reply?.action === "credit" ? "Kept as studio credit" : data.reply?.action === "refund" || data.kind === "receipt" ? entitlement ? cancelLabel : data.paidWith === "credit" ? "Return to your studio credit" : "Refund to your original payment" : data.after?.title}</h2>{data.after && data.reply?.action !== "refund" && data.reply?.action !== "credit" && <><p>{when(data.after.start)}</p><span className="muted">with {data.after.instructor}</span></>}</div>
       </section>
+      {entitlement?.kind === "pack" && data.packBalance !== undefined && <p className="muted">{entitlement.name} · {data.packBalance} visits left</p>}
       <details key={data.reply?.action === "refund" ? "original" : "current"} className="choice-message" open={data.reply?.action !== "refund"}><summary>{data.reply?.action === "refund" ? "Original message from your studio" : "A note from your studio"}</summary><p>{data.message.body}</p></details>
       <div aria-live="polite" aria-atomic="true" role="status" className="choice-status">
         {busy ? <p>Saving your choice…</p> : receipt ? <><h2 ref={resultHeading} tabIndex={-1}>{returned && receipt.status === "VISIT_RETURNED" ? returned : restored ? "Returned to your studio credit" : completed ? "Refund completed" : ["FAILED", "NEEDS_REVIEW"].includes(receipt.status) ? "Refund needs attention" : "Refund pending"}</h2>{!entitlement && <p>${receipt.amount} {restored ? "returned to your studio credit" : data.reply?.action === "move" ? "price difference" : "to your original payment"}{restored ? "" : receipt.status === "SIMULATED" ? " · simulated" : " · PayPal"}</p>}{!entitlement && receipt.paypalId && <p className="choice-receipt-id">Refund ID: <strong>{receipt.paypalId}</strong></p>}<p className="muted">{completed ? "Your receipt is saved here." : "This page updates automatically as your refund is confirmed."}</p></>

@@ -1,4 +1,4 @@
-import type { Booking, ClassType, Customer, Instructor, Room, Session, State } from "../domain/types";
+import type { Booking, ClassType, Customer, Instructor, Room, Session, State, WaitlistEntry } from "../domain/types";
 import { StateSchema } from "../domain/schemas";
 import { addLocalDays, fromCents, localParts, zonedTimeToUtc } from "../domain/time";
 import { nextWeekStart } from "../seed/seed";
@@ -79,7 +79,8 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
   const tz = input.timezone;
   const cell = (row: string[], field: ImportField) => { const header = input.mapping[field]; return header ? row[headers.indexOf(header)]?.trim() ?? "" : ""; };
   const rowError = (line: number, message: string) => { if (errors.length < 20) errors.push(`Row ${line}: ${message}`); else if (errors.length === 20) errors.push("More rows have problems; fix these first."); };
-  const numericDates = rows.flatMap((row, index) => [...new Set([cell(row, "date") || cell(row, "start"), cell(row, "end")])].flatMap((value) => {
+  const numericDates = rows.flatMap((row, index) => [...new Set([cell(row, "date") || cell(row, "start"), cell(row, "end"),
+    ...(paymentEntitlement(cell(row, "payment"))?.kind === "pack" ? [cell(row, "expires")] : [])])].flatMap((value) => {
     const match = value.match(/^(\d{1,2})[/.-](\d{1,2})[/.-]\d{2,4}\b/);
     return match ? [{ first: +match[1], second: +match[2], value, line: index + 2 }] : [];
   }));
@@ -90,10 +91,10 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
 
   type Draft = { title: string; type: ClassType; date: string; start: number; end: number; startInstant?: string; endInstant?: string; instructor: string; room: string; capacity?: number; price?: string; line: number };
   const classes = new Map<string, Draft>(), people = new Map<string, { name: string; accepts?: boolean }>();
-  const seats: { classKey: string; email: string; price?: string; entitlement?: Booking["entitlement"]; line: number }[] = [];
-  let assumedDuration = false, assumedRoom = false;
+  const seats: { classKey: string; email: string; price?: string; entitlement?: Booking["entitlement"]; waitlisted?: boolean; line: number }[] = [];
+  let assumedDuration = false, assumedRoom = false, ignoredPackFields = false;
   const untyped = new Map<string, number>();
-  const omitted = { cancelled: 0, waitlisted: 0, removed: 0 }, unknownStatuses = new Set<string>();
+  const omitted = { cancelled: 0, removed: 0 }, unknownStatuses = new Set<string>();
   rows.forEach((row, index) => {
     const line = index + 2, title = cell(row, "class"), instructor = cell(row, "instructor");
     if (!title) return rowError(line, "no class name.");
@@ -118,6 +119,14 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     if (!cell(row, "room")) assumedRoom = true;
     const capacity = parseInt(cell(row, "capacity"), 10);
     const entitlement = paymentEntitlement(cell(row, "payment"));
+    const visits = cell(row, "visitsLeft"), expiry = cell(row, "expires");
+    if (entitlement?.kind === "pack") {
+      if (visits && (!/^\d+$/.test(visits) || !Number.isSafeInteger(Number(visits)))) return rowError(line, `Visits left must be a non-negative integer, not "${visits}".`);
+      const expires = expiry ? readDate(expiry, dateOrder.value) : undefined;
+      if (expiry && !expires) return rowError(line, `can't read the pack expiry "${expiry}".`);
+      if (visits) entitlement.visitsLeft = Number(visits);
+      if (expires) entitlement.expires = expires;
+    } else if (visits || expiry) ignoredPackFields = true;
     const price = entitlement ? undefined : money(cell(row, "price"));
     if (!entitlement && cell(row, "price") && price === undefined) return rowError(line, `can't read the price "${cell(row, "price")}". Rebook reads US dollars only; use a non-negative amount like 20.00 or $20.00.`);
     const classKey = [title, date, start, instructor.toLowerCase(), room.toLowerCase()].join("|");
@@ -127,9 +136,9 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     classes.set(classKey, draft);
     const status = cell(row, "status").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
     if (/^(cancelled|canceled|late cancel|late cancelled|late canceled|late cancellation)$/.test(status)) { omitted.cancelled++; return; }
-    if (/^(waitlist|waitlisted|wait list|wait listed)$/.test(status)) { omitted.waitlisted++; return; }
+    const waitlisted = /^(waitlist|waitlisted|wait list|wait listed)$/.test(status);
     if (status === "removed") { omitted.removed++; return; }
-    if (status && !/^(booked|confirmed|attended|present|checked in|completed|no show)$/.test(status)) unknownStatuses.add(status);
+    if (status && !waitlisted && !/^(booked|confirmed|attended|present|checked in|completed|no show)$/.test(status)) unknownStatuses.add(status);
     const email = cell(row, "customer_email").toLowerCase(), name = cell(row, "customer_name");
     if (!email && !name) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rowError(line, name ? `${name} has no valid email address.` : `"${email}" is not an email address.`);
@@ -138,7 +147,7 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     if (/^(n|no|false|0)$/.test(accepts)) person.accepts = false;
     else if (/^(y|yes|true|1)$/.test(accepts) && person.accepts === undefined) person.accepts = true;
     people.set(email, person);
-    seats.push({ classKey, email, price, entitlement, line });
+    seats.push({ classKey, email, price, entitlement, waitlisted, line });
   });
   // One line per class, not per booking row.
   errors.unshift(...[...untyped].map(([title, count]) => `Choose a class type for "${title}" (${count} ${count === 1 ? "row" : "rows"}).`));
@@ -168,7 +177,7 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
   const instructorId = new Map(instructorNames.map((name, index) => [name.toLowerCase(), slug("instructor", index)]));
   const roomId = new Map(roomNames.map((name, index) => [name.toLowerCase(), slug("room", index)]));
   const booked = new Map<string, number>();
-  for (const seat of seats) booked.set(seat.classKey, (booked.get(seat.classKey) ?? 0) + 1);
+  for (const seat of seats.filter((seat) => !seat.waitlisted)) booked.set(seat.classKey, (booked.get(seat.classKey) ?? 0) + 1);
   let assumedCapacity = false, assumedPrice = false;
   const sessionId = new Map<string, string>();
   let raisedCapacity = 0;
@@ -202,26 +211,35 @@ export function buildImport(csv: string, input: ImportInput, now = new Date()): 
     prefs: { acceptsSubstitute: people.get(email)!.accepts ?? true, availabilityKnown: false,
       windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) } }));
   const customerId = new Map(emails.map((email, index) => [email, customers[index].id]));
-  const seen = new Set<string>(), bookings: Booking[] = [];
+  const seen = new Set<string>(), bookings: Booking[] = [], waitlist: WaitlistEntry[] = [];
   for (const seat of seats) {
     const session = sessionId.get(seat.classKey), customer = customerId.get(seat.email);
     if (!session || !customer) continue;
+    if (seat.waitlisted) {
+      if (!waitlist.some((entry) => entry.sessionId === session && entry.customerId === customer)) waitlist.push({ id: slug("waitlist", waitlist.length), sessionId: session, customerId: customer,
+        joinedAt: new Date(now.getTime() - 86_400_000 + seat.line * 1000).toISOString(), ...(seat.entitlement ? { entitlement: seat.entitlement } : {}) });
+      continue;
+    }
     if (seen.has(`${session}|${customer}`)) { warnings.push(`Row ${seat.line}: a repeated booking for the same person and class was counted once.`); continue; }
     seen.add(`${session}|${customer}`);
     const id = slug("booking", bookings.length), price = seat.price ?? sessions.find((item) => item.id === session)!.price;
     bookings.push({ id, sessionId: session, customerId: customer, status: "confirmed", amount: seat.entitlement ? "0.00" : price, bookedAt: new Date(now.getTime() - 86_400_000 + bookings.length * 1000).toISOString(),
       ...(seat.entitlement ? { entitlement: seat.entitlement } : { payment: { orderId: `IMPORT-ORDER-${id}`, captureId: `IMPORT-CAP-${id}`, simulated: true } }) });
   }
+  if (waitlist.length) warnings.push(`${seats.filter((seat) => seat.waitlisted).length} waitlisted rows joined their class waitlists.`);
   const packs = bookings.filter((booking) => booking.entitlement?.kind === "pack").length;
   const memberships = bookings.filter((booking) => booking.entitlement?.kind === "membership").length;
-  if (packs || memberships) warnings.push(`${packs} bookings use a class pack and ${memberships} a membership: Rebook returns visits instead of refunding cash, and your booking system keeps the balances.`);
+  if (packs || memberships) warnings.push(bookings.some((booking) => booking.entitlement?.visitsLeft !== undefined)
+    ? `${packs} bookings use a class pack and ${memberships} a membership: Rebook returns visits instead of refunding cash. Imported pack balances and returned visits are tracked; export the balance changes to apply in your booking system.`
+    : `${packs} bookings use a class pack and ${memberships} a membership: Rebook returns visits instead of refunding cash, and your booking system keeps the balances.`);
+  if (ignoredPackFields) warnings.push("Visits left and pack expiry were ignored on cash or membership rows; these fields apply only to packs.");
   const first = Math.min(...drafts.map((draft) => draft.start)), last = Math.max(...drafts.map((draft) => draft.end));
   const weekdays = [...new Set(sessions.map((session) => localParts(session.start, tz).weekday))].sort((a, b) => (a + 6) % 7 - (b + 6) % 7);
   const openHours = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, weekdays.includes(day) ? [{ open: clock(first), close: clock(last) }] : []]));
   warnings.push(`Opening hours aren't in the export: Rebook assumes you open ${weekdays.map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day]).join(", ")} from ${clock(first)} to ${clock(last)}, when your classes run.`);
   warnings.push("Instructors are assumed to teach only the class types they teach this week, and to be free whenever they are not teaching.");
   const state: State = { studio: { id: "studio", name: input.studioName?.trim().slice(0, 80) || "Your studio", timezone: tz,
-    weekStart: zonedTimeToUtc(summary.weekOf, "00:00", tz), openHours, currency: "USD" }, instructors, rooms, sessions, customers, bookings };
+    weekStart: zonedTimeToUtc(summary.weekOf, "00:00", tz), openHours, currency: "USD" }, instructors, rooms, sessions, customers, bookings, ...(waitlist.length ? { waitlist } : {}) };
 
   for (const session of sessions) {
     const problems = feasibilityErrors(state, session).filter((problem) => /double booking|daily limit/.test(problem));

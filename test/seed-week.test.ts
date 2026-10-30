@@ -92,7 +92,7 @@ describe("seeded demo weeks", () => {
     for (const session of state.sessions) {
       const occupancy = state.bookings.filter((booking) => booking.sessionId === session.id).length / session.capacity;
       expect(occupancy, session.id).toBeGreaterThanOrEqual(0.5);
-      expect(occupancy).toBeLessThanOrEqual(0.85);
+      expect(occupancy).toBeLessThanOrEqual(state.waitlist?.some((entry) => entry.sessionId === session.id) ? 1 : 0.85);
     }
     const flood = replan(state, floodDisruptionFor(week, tz), options);
     expect(flood.totals).toEqual({ sessionsAffected: 1, kept: 7, moved: 0, refunded: 0, refundAmount: "0.00", revenueKept: "126.00" });

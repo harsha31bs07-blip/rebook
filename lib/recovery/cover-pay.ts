@@ -6,19 +6,21 @@ import { PayPalError } from "../paypal/client";
 import { createPayout, getPayout } from "../paypal/payouts";
 import { getRepository, StoreError, withWorkspaceLock, type CoverLink, type CoverPayout, type Repository, type StoredPlan } from "../store";
 import { planCovers } from "./covers";
+import { coverAttendees, coverFee, payRule, PayRuleUpdateSchema } from "./pay-rules";
 
-/** The studio's standard per-class cover fee for the demo. */
-export const COVER_FEE = "35.00";
+export { COVER_FEE } from "./pay-rules";
 export const CoverTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const ACTIVE = ["REQUESTED", "PENDING", "UNCLAIMED", "ONHOLD"];
 const ITEM_STATUSES = ["SUCCESS", "FAILED", "PENDING", "UNCLAIMED", "RETURNED", "ONHOLD", "BLOCKED", "REFUNDED", "REVERSED"] as const;
 
 /** After approval, each substitute gets a private accept/decline link; an owner-confirmed cover starts accepted. */
 export function createCoverLinks(plan: StoredPlan, basis: State, repository: Repository): void {
+  const { state } = repository.requireWorkspace(plan.workspaceId);
   for (const cover of planCovers(plan, basis)) {
     const confirmed = plan.coverConfirmations?.find((item) => item.sessionId === cover.sessionId && item.instructorId === cover.instructorId);
     repository.createCoverLink({ workspaceId: plan.workspaceId, planId: plan.id, sessionId: cover.sessionId, instructorId: cover.instructorId,
-      status: confirmed ? "accepted" : "asked", ...(confirmed ? { respondedAt: confirmed.confirmedAt, respondedBy: "owner" as const } : {}), fee: COVER_FEE });
+      status: confirmed ? "accepted" : "asked", ...(confirmed ? { respondedAt: confirmed.confirmedAt, respondedBy: "owner" as const } : {}),
+      fee: coverFee(payRule(state, cover.instructorId), coverAttendees(state, cover.sessionId)) });
   }
 }
 
@@ -33,6 +35,12 @@ function details(link: CoverLink, repository: Repository) {
     payout: payout && { status: payout.status, amount: payout.amount, itemId: payout.itemId, error: payout.error } };
 }
 const payoutLocks = (payout?: { status: string }) => !!payout && ACTIVE.concat("SUCCESS").includes(payout.status);
+const editablePay = (payout?: { status: string }) => !payout || payout.status === "FAILED";
+function feeDetails(link: CoverLink, state: State, session: Session | undefined, payout?: { status: string; amount: string }) {
+  const rule = payRule(state, link.instructorId), attendees = coverAttendees(state, link.sessionId);
+  return { rule, attendees, fee: editablePay(payout) ? coverFee(rule, attendees) : payout!.amount,
+    estimate: editablePay(payout) && rule.perAttendee !== undefined && !!session && Date.parse(session.start) > Date.now() };
+}
 
 /** Public instructor view: the class, the fee and the payout. No customer data. */
 export function coverView(token: string, repository = getRepository()) {
@@ -44,7 +52,8 @@ export function coverView(token: string, repository = getRepository()) {
 function viewOf(link: CoverLink, repository: Repository) {
   const { state, session, instructor, original, payout, current } = details(link, repository);
   if (!session) throw new StoreError(410, "This class is no longer on the schedule.");
-  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: link.withdrawnBy ? "withdrawn" as const : current ? link.status : "replaced" as const, fee: link.fee, instructor, original,
+  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, status: link.withdrawnBy ? "withdrawn" as const : current ? link.status : "replaced" as const,
+    ...feeDetails(link, state, session, payout), instructor, original,
     class: { title: session.title, start: session.start, end: session.end, room: state.rooms.find((room) => room.id === session.roomId)?.name ?? "Studio" },
     payout, canRespond: current && !payoutLocks(payout) && Date.parse(session.start) > Date.now() };
 }
@@ -92,7 +101,7 @@ export async function askNextCover(workspaceId: string, planId: string, sessionI
     const previous = state.instructors.find((item) => item.id === session.instructorId)?.name;
     session.instructorId = next.id;
     repository.saveState(workspaceId, state);
-    repository.createCoverLink({ workspaceId, planId, sessionId, instructorId: next.id, status: "asked", fee: COVER_FEE });
+    repository.createCoverLink({ workspaceId, planId, sessionId, instructorId: next.id, status: "asked", fee: coverFee(payRule(state, next.id), coverAttendees(state, sessionId)) });
     // Customers still booked were told who would teach. Rewrite their message and mark it unsent so the owner sends the update.
     const revisedAt = new Date().toISOString();
     for (const link of repository.listCustomerLinks(workspaceId).filter((item) => item.planId === planId
@@ -114,13 +123,31 @@ export function ownerCovers(workspaceId: string, repository = getRepository()) {
     const when = session ? new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(session.start)) : "";
     const plan = current && link.status === "declined" && session && Date.parse(session.start) > Date.now() ? repository.getPlan(workspaceId, link.planId) : undefined;
     const next = plan && session ? nextCover(state, plan, session, links.filter((item) => item.planId === link.planId && item.sessionId === link.sessionId).map((item) => item.instructorId)) : undefined;
-    return { planId: link.planId, sessionId: link.sessionId, instructor, original, class: session?.title ?? "Class", when,
+    return { planId: link.planId, sessionId: link.sessionId, instructorId: link.instructorId, instructor, original, class: session?.title ?? "Class", when,
       status: link.withdrawnBy ? "withdrawn" as const : current || link.status === "declined" ? link.status : "replaced" as const, current,
-      respondedBy: link.respondedBy, fee: link.fee, path: `/i/${repository.coverToken(link)}`, payout,
+      respondedBy: link.respondedBy, ...feeDetails(link, state, session, payout), path: `/i/${repository.coverToken(link)}`, payout,
       payee: Boolean(process.env.PAYPAL_PAYOUT_RECEIVER?.trim()), ...(plan ? { next: next?.name ?? null } : {}) };
   });
 }
 export type OwnerCover = ReturnType<typeof ownerCovers>[number];
+
+export async function updateInstructorPay(workspaceId: string, instructorId: string, input: z.infer<typeof PayRuleUpdateSchema>, repository = getRepository()) {
+  const update = PayRuleUpdateSchema.parse(input);
+  await withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
+    const { state } = repository.requireReadyWorkspace(workspaceId);
+    const instructor = state.instructors.find((item) => item.id === instructorId);
+    if (!instructor) throw new StoreError(404, "Instructor not found");
+    if ("reset" in update) delete instructor.pay;
+    else instructor.pay = update;
+    repository.saveState(workspaceId, state);
+    const payouts = repository.listCoverPayouts(workspaceId);
+    for (const link of repository.listCoverLinks(workspaceId).filter((item) => item.instructorId === instructorId)) {
+      const payout = payouts.find((item) => item.planId === link.planId && item.sessionId === link.sessionId && item.instructorId === instructorId);
+      if (editablePay(payout)) repository.saveCoverLink({ ...link, fee: coverFee(payRule(state, instructorId), coverAttendees(state, link.sessionId)) });
+    }
+  }));
+  return ownerCovers(workspaceId, repository);
+}
 
 /** Replays of an unconfirmed payout stop a day inside PayPal's 30-day duplicate check on sender_batch_id. */
 const PAYOUT_REPLAY_DAYS = 29;
@@ -147,8 +174,11 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
         throw new StoreError(409, "PayPal never confirmed this payout and it is too old to resend safely. Check PayPal before paying another way.");
       }
       const now = new Date().toISOString(), attempt = previous?.status === "REQUESTED" ? previous.attempt : (previous?.attempt ?? 0) + 1;
+      const { state } = repository.requireWorkspace(workspaceId);
+      const fee = previous?.status === "REQUESTED" ? previous.amount : coverFee(payRule(state, link.instructorId), coverAttendees(state, sessionId));
+      repository.saveCoverLink({ ...link, fee });
       const next: CoverPayout = previous?.status === "REQUESTED" ? { ...previous, updatedAt: now } : { workspaceId, planId, sessionId, instructorId: link.instructorId,
-        amount: link.fee, attempt, requestId: `cover-${planId}-${sessionId}-${attempt}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120), status: "REQUESTED", createdAt: now, updatedAt: now };
+        amount: fee, attempt, requestId: `cover-${planId}-${sessionId}-${attempt}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120), status: "REQUESTED", createdAt: now, updatedAt: now };
       repository.saveCoverPayout(next); return next;
     });
     const studio = repository.requireWorkspace(workspaceId).state.studio.name;

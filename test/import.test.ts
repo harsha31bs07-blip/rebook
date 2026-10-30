@@ -47,7 +47,7 @@ describe("reading an export", () => {
   });
   it("matches a Mindbody-style export's columns by rule and leaves unknown columns alone", () => {
     expect(sampleMapping).toEqual({ class: "Class Name", date: "Class Date", start: "Start Time", end: "End Time", instructor: "Staff", room: "Location",
-      capacity: "Capacity", price: "Price Paid", payment: "Pricing Option", customer_name: "Client Name", customer_email: "Client Email" });
+      capacity: "Capacity", price: "Price Paid", payment: "Pricing Option", customer_name: "Client Name", customer_email: "Client Email", visitsLeft: "Visits Left", expires: "Pack expires" });
   });
   it("types class names by keyword, specific types first, and leaves the rest to the AI and the owner", () => {
     expect(["Sunrise Reformer", "Rhythm Ride", "Strength Sculpt", "Vinyasa Flow", "Mat Pilates", "Dance Flow", "Barre Burn", "Slow Burn"].map(ruleClassType))
@@ -137,10 +137,12 @@ describe("building the studio", () => {
   });
   it("leaves cancelled, waitlisted and removed rows out of bookings but keeps their classes", () => {
     const statuses = ["Cancelled", "canceled", "Late Cancel", "waitlist", "WAITLISTED", "removed", "confirmed", "attended", "", "unusual", "unusual"];
-    const result = readExport(["Class", "Date", "Start", "Instructor", "Booking status", "Email"], statuses.map((status, index) => ["Yoga", "2026-11-09", index === 0 ? "09:00" : "07:00", "Ana", status, index < 6 ? "bad email" : `person${index}@example.com`]));
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Booking status", "Email"], statuses.map((status, index) => ["Yoga", "2026-11-09", index === 0 ? "09:00" : "07:00", "Ana", status, index < 3 || index === 5 ? "bad email" : `person${index}@example.com`]));
     expect(result.errors).toEqual([]);
-    expect(result.summary).toMatchObject({ classes: 2, bookings: 5, customers: 5 });
-    expect(result.warnings).toContain("Left out 3 cancelled and 2 waitlisted and 1 removed rows: they are not bookings.");
+    expect(result.summary).toMatchObject({ classes: 2, bookings: 5, customers: 7 });
+    expect(result.state?.waitlist).toHaveLength(2);
+    expect(result.warnings).toContain("2 waitlisted rows joined their class waitlists.");
+    expect(result.warnings).toContain("Left out 3 cancelled and 1 removed rows: they are not bookings.");
     expect(result.warnings.filter((warning) => warning.includes("Unrecognized booking statuses"))).toEqual(['Unrecognized booking statuses were counted as bookings: "unusual".']);
     for (const header of ["status", "booking status", "attendance", "visit status"]) expect(ruleMapping([header])).toEqual({ status: header });
   });
@@ -148,6 +150,17 @@ describe("building the studio", () => {
     const result = readExport(["Class", "Date", "Start", "Instructor", "Status"], ["a", "b", "c", "d", "e", "f"].map((status) => ["Yoga", "2026-11-09", "07:00", "Ana", status]));
     expect(result.errors).toEqual([]);
     expect(result.warnings.find((warning) => warning.includes("Unrecognized"))).toBe('Unrecognized booking statuses were counted as bookings: "a", "b", "c", "d", "e", and more.');
+  });
+  it("imports waitlist entitlements in row order without consuming class capacity", () => {
+    const result = readExport(["Class", "Date", "Start", "Instructor", "Status", "Email", "Payment", "Capacity"], [
+      ["Yoga", "2026-11-09", "07:00", "Ana", "waitlisted", "pack@example.com", "10-class pack", "1"],
+      ["Yoga", "2026-11-09", "07:00", "Ana", "waitlisted", "member@example.com", "Monthly membership", "1"],
+    ]);
+    expect(result.errors).toEqual([]);
+    expect(result.state?.bookings).toEqual([]);
+    expect(result.state?.sessions[0].capacity).toBe(1);
+    expect(result.state?.waitlist?.map((entry) => entry.entitlement)).toEqual([{ kind: "pack", name: "10-class pack" }, { kind: "membership", name: "Monthly membership" }]);
+    expect(Date.parse(result.state!.waitlist![0].joinedAt)).toBeLessThan(Date.parse(result.state!.waitlist![1].joinedAt));
   });
   it("opens only exported weekdays and explains hours, instructor qualifications and raised capacities", () => {
     const result = readExport(["Class", "Date", "Start", "End", "Instructor", "Capacity", "Email"], [

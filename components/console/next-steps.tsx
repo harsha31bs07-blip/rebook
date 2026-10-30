@@ -19,6 +19,7 @@ export default function NextSteps({ workspaceId, summary, covers, customerPath, 
       <div className="next-actions"><button onClick={onMessages}>Message customers</button>{customerPath && <button onClick={() => onPreview("customer")}>See a customer’s page</button>}</div></li>
     {cover && <li><div><strong>{cover.instructor} covers {cover.class}</strong><span>{cover.instructor} {COVER[cover.status]}{cover.payout ? ` · ${PAID[cover.payout.status] ?? cover.payout.status.toLowerCase()}` : cover.status === "accepted" ? ` · $${cover.fee} to pay` : ""}</span></div>
       <div className="next-actions"><button onClick={() => onPreview("instructor")}>See {cover.instructor}’s page</button>{cover.status === "accepted" && !cover.payout && <a href="#cover-instructors">Pay with PayPal</a>}</div></li>}
+    <li><div><strong>Fill freed seats</strong><span>Waitlist offers and replies</span></div><div className="next-actions"><a href="#waitlist">Open waitlist</a></div></li>
     <li><div><strong>See what Monday cost</strong><span>Dashboard and Recovery analyst</span></div>
       <div className="next-actions"><Link href={`/w/${workspaceId}/dashboard#recovery-analyst`}>Open dashboard</Link></div></li>
   </ol></section>;

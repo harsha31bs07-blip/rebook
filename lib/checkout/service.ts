@@ -4,12 +4,16 @@ import type { Session, State } from "../domain/types";
 import { fromCents, overlaps, toCents } from "../domain/time";
 import { activeConstraints } from "../solver/constraints";
 import { captureOrder, createBookingOrder, getOrder, PayPalError, type PayPalOrder } from "../paypal/client";
-import { getRepository, StoreError, withWorkspaceLock, type CheckoutReservation, type Repository } from "../store";
+import { getRepository, StoreError, withWorkspaceLock, type CheckoutReservation, type WaitlistOffer, type Repository } from "../store";
 import { envLimit, limits } from "../api/limits";
 import { spendableCredit } from "../credits/balance";
 
+import { checkoutHoldsSeat, heldOffers, offerHoldsSeat } from "../waitlist/capacity";
+
+export const WaitlistTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const CheckoutInputSchema = z.strictObject({
   sessionId: z.string().min(1).max(100),
+  waitlistToken: WaitlistTokenSchema.optional(),
   customer: z.strictObject({ name: z.string().trim().min(1).max(100), email: z.string().trim().pipe(z.email().max(254)) }),
   availability: z.strictObject({
     times: z.array(z.enum(["mornings", "afternoons", "evenings"])).max(3).refine((values) => new Set(values).size === values.length, "Choose distinct times").optional(),
@@ -33,6 +37,7 @@ export function studioCredit(workspaceId: string, token: string, repository = ge
 }
 export async function redeemCredit(workspaceId: string, input: CreditCheckoutInput, requestId: string, repository = getRepository()): Promise<Receipt> {
   input = CreditCheckoutInputSchema.parse(input);
+  if (input.waitlistToken) throw new StoreError(409, "Please use your waitlist offer to claim this spot.");
   return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
     const credit = requireCredit(workspaceId, input.creditToken, repository);
     const previous = repository.listCheckout(workspaceId).find((row) => row.requestId === requestId || row.requestAliases?.includes(requestId));
@@ -47,7 +52,7 @@ export async function redeemCredit(workspaceId: string, input: CreditCheckoutInp
     if (pausedSessionIds(workspaceId, repository).has(input.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
     const session = state.sessions.find((item) => item.id === input.sessionId);
     if (!session || !sessionAvailable(state, session)) throw new StoreError(409, "This class is no longer available");
-    if (!seatsLeft(state, session, repository.listCheckout(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
+    if (!seatsLeft(state, session, repository.listCheckout(workspaceId), undefined, repository.listWaitlistOffers(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
     const balance = spendableCredit(credit, repository);
     const price = toCents(session.price), remaining = toCents(credit.remaining);
     if (price <= 0) throw new StoreError(409, "This class cannot be purchased");
@@ -81,19 +86,21 @@ export function sessionAvailable(state: State, session: Session, paused: Readonl
     overlaps(session.start, session.end, constraint.from, constraint.to) && (constraint.kind === "closure" ||
       (constraint.kind === "instructor_unavailable" ? constraint.instructorId === session.instructorId : constraint.roomId === session.roomId)));
 }
-const holdsSeat = (row: CheckoutReservation) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now());
-export function seatsLeft(state: State, session: Session, reservations: CheckoutReservation[], excluding?: string): number {
+const holdsSeat = checkoutHoldsSeat;
+export function seatsLeft(state: State, session: Session, reservations: CheckoutReservation[], excluding?: string, offers: WaitlistOffer[] = [], excludingOffer?: string): number {
   return Math.max(0, session.capacity - state.bookings.filter((booking) => booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)).length
-    - reservations.filter((row) => row.id !== excluding && row.sessionId === session.id && holdsSeat(row)).length);
+    - reservations.filter((row) => row.id !== excluding && row.sessionId === session.id && holdsSeat(row)).length
+    - heldOffers(session.id, offers, reservations, excludingOffer));
 }
 export function bookingCatalog(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireReadyWorkspace(workspaceId);
   const reservations = repository.listCheckout(workspaceId);
+  const offers = repository.listWaitlistOffers(workspaceId);
   const paused = pausedSessionIds(workspaceId, repository);
   const { name, timezone, weekStart, currency } = state.studio;
   return { studio: { name, timezone, weekStart, currency }, sessions: state.sessions.filter((session) => sessionAvailable(state, session)).sort((a, b) => a.start.localeCompare(b.start)).map((session) => ({
     id: session.id, classType: session.classType, title: session.title, start: session.start, end: session.end, price: session.price, capacity: session.capacity,
-    bookingPaused: paused.has(session.id), seatsLeft: seatsLeft(state, session, reservations),
+    bookingPaused: paused.has(session.id), seatsLeft: seatsLeft(state, session, reservations, undefined, offers),
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team",
     room: state.rooms.find((item) => item.id === session.roomId)?.name ?? "Studio",
   })) };
@@ -105,13 +112,17 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
     let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId || item.requestAliases?.includes(requestId));
     if (row?.paidWith === "credit") throw new StoreError(409, "This checkout key belongs to a studio credit booking");
     if (row && (row.sessionId !== input.sessionId || JSON.stringify(row.customer) !== JSON.stringify(input.customer)
-      || JSON.stringify(row.availability) !== JSON.stringify(input.availability))) throw new StoreError(409, "This checkout key belongs to another booking");
+      || JSON.stringify(row.availability) !== JSON.stringify(input.availability)
+      || row.waitlistOfferId !== (input.waitlistToken ? repository.waitlistOfferByToken(input.waitlistToken)?.id : undefined))) throw new StoreError(409, "This checkout key belongs to another booking");
     if (row?.status === "failed" || (row?.status === "pending" && row.expiresAt <= Date.now())) throw new StoreError(410, "Your seat hold expired. Start checkout again.", "RESTART_CHECKOUT");
     if (row?.orderId) return { orderId: row.orderId };
     if (pausedSessionIds(workspaceId, repository).has(input.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
     if (!row) {
-      const unresolved = repository.listCheckout(workspaceId).find((item) => item.status === "capturing" &&
-        item.sessionId === input.sessionId && item.customer.email.toLowerCase() === input.customer.email.toLowerCase());
+      const offered = input.waitlistToken ? repository.waitlistOfferByToken(input.waitlistToken) : undefined;
+      if (input.waitlistToken && (!offered || offered.workspaceId !== workspaceId || offered.sessionId !== input.sessionId
+        || offered.status !== "offered")) throw new StoreError(410, "This waitlist offer is no longer available.");
+      const unresolved = repository.listCheckout(workspaceId).find((item) => (item.status === "capturing" || (offered && item.waitlistOfferId === offered.id && holdsSeat(item))) &&
+        item.waitlistOfferId === offered?.id && item.sessionId === input.sessionId && item.customer.email.toLowerCase() === input.customer.email.toLowerCase());
       if (unresolved?.orderId) {
         if (JSON.stringify(unresolved.customer) !== JSON.stringify(input.customer) || JSON.stringify(unresolved.availability) !== JSON.stringify(input.availability)
           || (unresolved.requestAliases?.length ?? 0) >= 32) {
@@ -121,20 +132,36 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
         repository.saveCheckout({ ...unresolved, requestAliases: [...(unresolved.requestAliases ?? []), requestId] });
         return { orderId: unresolved.orderId };
       }
-      row = repository.transaction(() => {
+      const created = repository.transaction(() => {
         const { state, bookingId } = repository.requireReadyWorkspace(workspaceId);
         const session = state.sessions.find((item) => item.id === input.sessionId);
         if (!session || !sessionAvailable(state, session)) throw new StoreError(409, "This class is no longer available");
-        if (!seatsLeft(state, session, repository.listCheckout(workspaceId))) throw new StoreError(409, "This class is full. Please choose another class.");
         if (toCents(session.price) <= 0) throw new StoreError(409, "This class cannot be purchased");
         limits.take([{ key: "captures", max: envLimit("MAX_REAL_CAPTURES_PER_HOUR", 1500), ms: 3_600_000 }]);
+        const offer = input.waitlistToken ? repository.waitlistOfferByToken(input.waitlistToken) : undefined;
+        if (input.waitlistToken) {
+          const customer = state.customers.find((item) => item.id === offer?.customerId);
+          if (!offer || !offerHoldsSeat(offer, repository.listCheckout(workspaceId)) || !customer
+            || state.waitlist?.find((entry) => entry.id === offer.entryId)?.entitlement
+            || customer.name !== input.customer.name || customer.email !== input.customer.email
+            || repository.listCheckout(workspaceId).some((item) => item.waitlistOfferId === offer.id && holdsSeat(item))) {
+            throw new StoreError(409, "This waitlist offer is no longer available.");
+          }
+        }
+        if (!seatsLeft(state, session, repository.listCheckout(workspaceId), undefined, repository.listWaitlistOffers(workspaceId), offer?.id)
+          || offer && state.bookings.some((booking) => booking.sessionId === session.id && booking.customerId === offer.customerId && ["confirmed", "moved"].includes(booking.status))) {
+          if (offer) { repository.saveWaitlistOffer({ ...offer, status: "expired" }); return undefined; }
+          throw new StoreError(409, "This class is full. Please choose another class.");
+        }
         const reservationId = randomUUID();
         const reservation: CheckoutReservation = { id: reservationId, workspaceId, requestId, sessionId: session.id,
-          customer: input.customer, availability: input.availability, amount: session.price, currency: state.studio.currency, session,
+          customer: input.customer, availability: input.availability, waitlistOfferId: offer?.id, amount: session.price, currency: state.studio.currency, session,
           paypalCustomId: `${bookingId}:${reservationId}`, expiresAt: Date.now() + 10 * 60_000, status: "pending" };
         repository.saveCheckout(reservation);
         return reservation;
       });
+      if (!created) throw new StoreError(409, "Sorry, this spot was just taken.");
+      row = created;
     }
     const reservation = row;
     try {
@@ -189,7 +216,25 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
     }
     const { state } = repository.requireReadyWorkspace(row.workspaceId);
     if (!state.bookings.some((booking) => booking.id === row.id)) {
-      const customer = state.customers.find((item) => item.email.trim().toLowerCase() === row.customer.email.trim().toLowerCase());
+      const offer = row.waitlistOfferId ? repository.listWaitlistOffers(row.workspaceId).find((item) => item.id === row.waitlistOfferId) : undefined;
+      if (offer) {
+        const session = state.sessions.find((item) => item.id === row.sessionId);
+        if (!session || offer.status !== "offered" || !seatsLeft(state, session, repository.listCheckout(row.workspaceId), row.id, repository.listWaitlistOffers(row.workspaceId), offer.id)
+          || state.bookings.some((booking) => booking.sessionId === row.sessionId && booking.customerId === offer.customerId && ["confirmed", "moved"].includes(booking.status))) {
+          repository.saveWaitlistOffer({ ...offer, status: offer.status === "withdrawn" ? "withdrawn" : "expired", bookingId: row.id });
+          state.bookings.push({ id: row.id, customerId: offer.customerId, sessionId: row.sessionId, amount: row.amount, status: "refund_pending",
+            bookedAt: new Date().toISOString(), payment: { orderId: row.orderId!, captureId: capture.id, simulated: false } });
+          repository.saveState(row.workspaceId, state);
+          repository.appendLedger({ workspaceId: row.workspaceId, bookingId: row.id, kind: "capture", amount: row.amount,
+            paypalId: capture.id, captureId: capture.id, requestId: `checkout:${row.id}`, status: "COMPLETED", debugId: order.debugId });
+          repository.appendLedger({ workspaceId: row.workspaceId, bookingId: row.id, kind: "refund", amount: row.amount,
+            paypalId: "", captureId: capture.id, requestId: `waitlist:${row.id}`, status: "FAILED",
+            error: "This waitlist payment completed after the seat was lost. Retry to refund it." });
+          repository.saveCheckout({ ...row, captureId: capture.id, status: "confirmed", webhookConfirmed });
+          return;
+        }
+      }
+      const customer = state.customers.find((item) => offer ? item.id === offer.customerId : item.email.trim().toLowerCase() === row.customer.email.trim().toLowerCase());
       const customerId = customer?.id ?? `customer-${row.id}`;
       if (!customer) state.customers.push({ id: customerId, ...row.customer, prefs: checkoutPreferences(row.availability) });
       else if (row.availability) customer.prefs = { ...customer.prefs, ...checkoutPreferences(row.availability) };
@@ -197,6 +242,7 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
         bookedAt: new Date().toISOString(),
         payment: { orderId: row.orderId!, captureId: capture.id, simulated: false } });
       repository.saveState(row.workspaceId, state);
+      if (offer) repository.saveWaitlistOffer({ ...offer, status: "claimed", bookingId: row.id, respondedAt: new Date().toISOString() });
     }
     repository.appendLedger({ workspaceId: row.workspaceId, bookingId: row.id, kind: "capture", amount: row.amount,
       paypalId: capture.id, captureId: capture.id, requestId: `checkout:${row.id}`, status: "COMPLETED", debugId: order.debugId });
@@ -221,7 +267,8 @@ function checkoutReceipt(row: CheckoutReservation, repository: Repository) {
       (session.title !== row.session.title || session.start !== row.session.start || session.end !== row.session.end) } : undefined;
   return { orderId: row.orderId, ...(row.paidWith ? { paidWith: row.paidWith } : {}), bookingId: row.id, status: row.status, class: row.session.title, start: row.session.start, end: row.session.end,
     amount: row.amount, currency: row.currency, captureId: row.captureId, webhookConfigured: row.paidWith !== "credit" && Boolean(process.env.PAYPAL_WEBHOOK_ID),
-    webhookConfirmed: Boolean(row.webhookConfirmed), current };
+    webhookConfirmed: Boolean(row.webhookConfirmed), current,
+    ...(row.waitlistOfferId && repository.listWaitlistOffers(row.workspaceId).some((offer) => offer.id === row.waitlistOfferId && ["expired", "withdrawn"].includes(offer.status) && offer.bookingId === row.id) ? { spotTaken: true } : {}) };
 }
 export type Receipt = ReturnType<typeof receipt>;
 
@@ -269,9 +316,14 @@ export async function captureCheckout(workspaceId: string, orderId: string, repo
     if (row.status === "pending" && pausedSessionIds(workspaceId, repository).has(row.sessionId)) throw new StoreError(409, BOOKING_PAUSED_MESSAGE, "BOOKING_PAUSED");
     if (!session || !sessionAvailable(state, session) || session.start !== row.session.start || session.end !== row.session.end
       || session.roomId !== row.session.roomId || session.instructorId !== row.session.instructorId
-      || !seatsLeft(state, session, repository.listCheckout(workspaceId), row.id)) {
+      || !seatsLeft(state, session, repository.listCheckout(workspaceId), row.id, repository.listWaitlistOffers(workspaceId), row.waitlistOfferId)) {
       if (row.status === "capturing") throw new StoreError(409, "Your payment is being reconciled. Check its status before starting again.", "CHECK_PAYMENT_STATUS");
       repository.saveCheckout({ ...row, status: "failed" });
+      if (row.waitlistOfferId) {
+        const offer = repository.listWaitlistOffers(workspaceId).find((item) => item.id === row!.waitlistOfferId);
+        if (offer) repository.saveWaitlistOffer({ ...offer, status: offer.status === "withdrawn" ? "withdrawn" : "expired" });
+        throw new StoreError(409, "Sorry, this spot was just taken.", "RESTART_CHECKOUT");
+      }
       throw new StoreError(409, "This class changed during checkout. Please choose a class again.", "RESTART_CHECKOUT");
     }
     row = { ...row, status: "capturing" };

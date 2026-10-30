@@ -1,10 +1,13 @@
 import type { Booking, Plan, State } from "../domain/types";
 import { entitlementMessage } from "../domain/entitlements";
+import { plannedPackBalances, type PackBalanceChange } from "../domain/pack-balances";
+import type { LedgerEvent } from "../store";
 
-export type CustomerMessage = { bookingId: string; customerId: string; customerName?: string; subject: string; body: string; entitlement?: Booking["entitlement"] };
+export type CustomerMessage = { bookingId: string; customerId: string; customerName?: string; subject: string; body: string; entitlement?: Booking["entitlement"]; packBalance?: PackBalanceChange };
 
 /** Drafts only: sending and refund execution belong to the approval flow. No AI or network calls. */
-export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage[] {
+export function draftCustomerMessages(plan: Plan, state: State, ledger: LedgerEvent[] = []): CustomerMessage[] {
+  const balances = plannedPackBalances(state, ledger, plan);
   const formatTime = (instant: string) => new Intl.DateTimeFormat("en-US", {
     timeZone: state.studio.timezone, weekday: "long", year: "numeric", month: "long", day: "numeric",
     hour: "numeric", minute: "2-digit", timeZoneName: "short",
@@ -17,6 +20,7 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
     const change = plan.sessionChanges.find((item) => item.sessionId === session.id);
     const greeting = `Hi ${customer.name},`;
     const signature = `Thank you for being part of ${state.studio.name}.`;
+    const changeBalance = balances.get(booking.id), before = changeBalance?.before;
     let subject: string;
     let body: string;
     if (plan.correctionOf) {
@@ -31,7 +35,7 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
       body = `${greeting}\n\n${update}${roomUpdate}\n\n${signature}`;
     } else if (action.action === "refund") {
       subject = booking.entitlement ? `An update to your ${session.title} booking` : `A refund for your ${session.title} booking`;
-      body = `${greeting}\n\nWe're sorry we couldn't keep your ${session.title} booking. ${booking.entitlement ? entitlementMessage(booking.entitlement) : `We'll arrange a refund of ${state.studio.currency} ${action.amount}.`} ${action.reason}\n\n${signature}`;
+      body = `${greeting}\n\nWe're sorry we couldn't keep your ${session.title} booking. ${booking.entitlement ? entitlementMessage(booking.entitlement, before, session.start, state.studio.timezone) : `We'll arrange a refund of ${state.studio.currency} ${action.amount}.`} ${action.reason}\n\n${signature}`;
     } else if (action.action === "move") {
       if (!change?.after) throw new Error(`Cannot draft moved booking ${action.bookingId}: missing replacement placement`);
       subject = `Your new time for ${session.title}`;
@@ -50,6 +54,6 @@ export function draftCustomerMessages(plan: Plan, state: State): CustomerMessage
     }
     if (booking.entitlement) body = body.replace("Doesn't work? Reply for a refund.", "Doesn't work? Choose another class or cancel this booking.");
     return { bookingId: action.bookingId, customerId: action.customerId, customerName: customer.name, subject, body,
-      ...(booking.entitlement ? { entitlement: booking.entitlement } : {}) };
+      ...(booking.entitlement ? { entitlement: booking.entitlement } : {}), ...(changeBalance ? { packBalance: changeBalance } : {}) };
   });
 }

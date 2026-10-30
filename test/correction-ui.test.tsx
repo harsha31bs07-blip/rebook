@@ -38,7 +38,8 @@ it("offers a secondary withdrawal action on an eligible approved plan and shows 
 });
 
 it("keeps settled cover pay visible and removes the payout action after withdrawal", () => {
-  const cover: OwnerCover = { planId: "earlier-plan", sessionId: "yoga", instructor: "Alex Rivera", original: "Maya Chen", class: "Yoga Flow", when: "Monday",
+  const cover: OwnerCover = { planId: "earlier-plan", sessionId: "yoga", instructorId: "instructor-02", instructor: "Alex Rivera", original: "Maya Chen", class: "Yoga Flow", when: "Monday",
+    rule: { perClass: "35.00" }, attendees: 6, estimate: false,
     status: "withdrawn", current: false, respondedBy: "instructor", fee: "35.00", path: "/i/token", payee: true,
     payout: { status: "SUCCESS", amount: "35.00", itemId: "PAID", error: undefined } };
   const html = renderToStaticMarkup(<CoverPay workspaceId="workspace" covers={[cover]} onUpdated={vi.fn()} />);

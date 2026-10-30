@@ -44,9 +44,9 @@ export function CreditPayment({ id, token, remaining, session, customer, availab
       : <p>Your studio credit covers classes up to ${remaining}. Choose another class to use it.</p>}
     {error && <p className="error" role="alert">{error}</p>}</div>;
 }
-export function Payments({ id, session, customer, availability, validate, clientId, sandbox, onSuccess, onLockChange }: {
+export function Payments({ id, session, customer, availability, waitlistToken, validate, clientId, sandbox, onSuccess, onLockChange }: {
   id: string; session: Class; customer: { name: string; email: string }; validate(): boolean;
-  availability?: CheckoutInput["availability"];
+  availability?: CheckoutInput["availability"]; waitlistToken?: string;
   clientId: string; sandbox: boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -76,7 +76,7 @@ export function Payments({ id, session, customer, availability, validate, client
     key.current ||= crypto.randomUUID();
     try {
       order.current ??= await request<{ orderId: string }>(base, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
-        body: JSON.stringify({ sessionId: session.id, customer: current.current.customer, availability: current.current.availability }) });
+        body: JSON.stringify({ sessionId: session.id, customer: current.current.customer, availability: current.current.availability, waitlistToken }) });
       setHasOrder(true);
       return order.current;
     } catch (cause) {
@@ -86,7 +86,7 @@ export function Payments({ id, session, customer, availability, validate, client
       }
       throw cause;
     }
-  }, [base, session.id]);
+  }, [base, session.id, waitlistToken]);
   const cancel = useCallback(async () => {
     if (order.current) {
       try {

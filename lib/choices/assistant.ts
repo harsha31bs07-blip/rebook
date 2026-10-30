@@ -50,7 +50,7 @@ export async function proposeChoice(token: string, message: string, repository =
   const refundable = choice.paidWith === "credit" ? choice.creditRefundable ?? "0.00" : choice.refundable;
   if (choice.entitlement && proposal.action === "credit") return clarify("Would you like to keep your class or cancel this booking?");
   if (choice.entitlement && proposal.action === "refund") return { ...base, action: "refund", refund: "0.00",
-    reply: `${entitlementMessage(choice.entitlement)} Nothing changes until you confirm.` };
+    reply: `${entitlementMessage(choice.entitlement, choice.packBalance, choice.after?.start ?? choice.before.start, timezone)} Nothing changes until you confirm.` };
   if (proposal.action === "credit" && (choice.paidWith === "credit" || toCents(choice.refundable) <= 0)) return clarify("There is no captured amount available for a new studio credit. Would you like to keep your class?");
   if (proposal.action === "refund" && toCents(refundable) <= 0) return clarify("There is no captured amount available to refund. Would you like to keep your class?");
   if (proposal.action === "clarify") return clarify(proposal.reply);

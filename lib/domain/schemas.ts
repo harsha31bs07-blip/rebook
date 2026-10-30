@@ -17,11 +17,13 @@ export const StudioSchema = z.object({
   // Weekdays use the studio's IANA time zone: 0 is Sunday. Missing weekdays are closed.
   openHours: z.record(z.coerce.number().int().min(0).max(6), z.array(HoursSchema)),
   currency: z.literal("USD"),
+  coverPay: z.object({ perClass: MoneySchema, perAttendee: MoneySchema.optional(), cap: MoneySchema.optional() }).optional(),
 });
 export const InstructorSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), skills: z.array(ClassTypeSchema),
   maxSessionsPerDay: z.number().int().positive(),
   unavailability: z.array(WindowSchema).optional(),
+  pay: z.object({ perClass: MoneySchema, perAttendee: MoneySchema.optional(), cap: MoneySchema.optional() }).optional(),
 });
 export const RoomSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), capacity: z.number().int().positive(),
@@ -51,9 +53,15 @@ export const BookingSchema = z.object({
   status: z.enum(["confirmed", "moved", "refund_pending", "refunded", "cancelled"]),
   amount: MoneySchema,
   payment: z.object({ orderId: z.string(), captureId: z.string(), simulated: z.boolean().optional(), unknown: z.boolean().optional() }).optional(),
-  entitlement: z.object({ kind: z.enum(["pack", "membership"]), name: z.string().trim().min(1).max(60) }).optional(),
+  entitlement: z.object({ kind: z.enum(["pack", "membership"]), name: z.string().trim().min(1).max(60),
+    visitsLeft: z.number().int().nonnegative().optional(), expires: z.iso.date().optional(),
+  }).refine((value) => value.kind === "pack" || value.visitsLeft === undefined, "Only packs have a visit balance").optional(),
 }).refine((booking) => !booking.entitlement || (booking.amount === "0.00" && !booking.payment),
   "Entitlement bookings must have zero amount and no payment");
+export const WaitlistEntrySchema = z.object({
+  id: z.string().min(1), sessionId: z.string().min(1), customerId: z.string().min(1), joinedAt: IsoSchema,
+  entitlement: BookingSchema.shape.entitlement,
+});
 const DisruptionBase = { from: IsoSchema, to: IsoSchema, reason: z.string().optional() };
 export const DisruptionSchema = z.discriminatedUnion("kind", [
   z.object({ ...DisruptionBase, kind: z.literal("instructor_unavailable"), instructorId: z.string() }),
@@ -63,6 +71,7 @@ export const DisruptionSchema = z.discriminatedUnion("kind", [
 export const StateSchema = z.object({
   studio: StudioSchema, instructors: z.array(InstructorSchema), rooms: z.array(RoomSchema),
   sessions: z.array(SessionSchema), customers: z.array(CustomerSchema), bookings: z.array(BookingSchema),
+  waitlist: z.array(WaitlistEntrySchema).optional(),
 });
 export const RemedySchema = z.enum(["substitute", "move_room", "move_time", "cancel"]);
 export const SessionChangeSchema = z.object({
@@ -117,3 +126,5 @@ export type BookingAction = z.infer<typeof BookingActionSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 export type Weights = z.infer<typeof WeightsSchema>;
 export type ReplanOptions = z.infer<typeof ReplanOptionsSchema>;
+
+export type WaitlistEntry = z.infer<typeof WaitlistEntrySchema>;

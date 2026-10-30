@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoverView } from "@/lib/recovery/cover-pay";
+import { describePayRule } from "../../lib/recovery/pay-rules";
 
 const PAYOUT_LABELS: Record<string, string> = { REQUESTED: "Sending to PayPal", PENDING: "Processing with PayPal", SUCCESS: "Paid",
   UNCLAIMED: "Waiting for you to claim it in PayPal", ONHOLD: "On hold at PayPal", FAILED: "Payment failed", RETURNED: "Returned", BLOCKED: "Blocked",
@@ -39,7 +40,8 @@ export default function CoverPage({ token }: { token: string }) {
   return <main id="main-content" tabIndex={-1} className="customer-booking customer-choice">
     <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A cover request from your studio.</span></header>
     <section className="choice-intro"><p className="eyebrow">{data?.studio.name ?? "Your studio"}</p><h1 ref={heading} tabIndex={-1}>{title}</h1>
-      {data && <p className="muted">{data.status === "withdrawn" ? `The disruption was withdrawn. ${data.original} is back.${data.payout ? " Your existing payout stays recorded." : " This cover can no longer be accepted or paid."}` : `${data.original} is unavailable. Cover fee $${data.fee}, paid with PayPal.`}</p>}</section>
+      {data && <p className="muted">{data.status === "withdrawn" ? `The disruption was withdrawn. ${data.original} is back.${data.payout ? " Your existing payout stays recorded." : " This cover can no longer be accepted or paid."}` : `${data.original} is unavailable. Cover fee $${data.fee}, paid with PayPal.`}</p>}
+      {data?.rule.perAttendee !== undefined && <p className="muted">{describePayRule(data.rule)} · {data.attendees} booked{data.estimate ? " · Estimate — final after the class" : ""}</p>}</section>
     {error && <p className="error error-box" role="alert">{error}</p>}
     {error.includes("free server") && <Link href="/">Start a fresh demo</Link>}
     {!data && !error && <p role="status">Opening your cover request…</p>}

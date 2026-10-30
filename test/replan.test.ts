@@ -338,7 +338,8 @@ describe("seed and determinism", () => {
     for (const session of state.sessions) {
       const bookings = state.bookings.filter((booking) => booking.sessionId === session.id);
       expect(bookings.length / session.capacity).toBeGreaterThanOrEqual(0.5);
-      expect(bookings.length / session.capacity).toBeLessThanOrEqual(0.85);
+      // Classes with a waitlist are full; the rest have room.
+      expect(bookings.length / session.capacity).toBeLessThanOrEqual(state.waitlist?.some((entry) => entry.sessionId === session.id) ? 1 : 0.85);
       expect(["18.00", "22.00", "25.00"]).toContain(session.price);
       const local = localParts(session.start, tz);
       if (local.weekday === 0 || local.weekday === 6) expect(local.minutesOfDay).toBeLessThan(12 * 60);

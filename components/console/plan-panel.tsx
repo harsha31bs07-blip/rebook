@@ -6,6 +6,8 @@ import type { PlanDetails, PublicPlan, ExecutionResult } from "@/lib/client/api"
 import type { Placement, State } from "@/lib/domain/types";
 import { disruptionLabel } from "@/lib/client/scheduler-mapping";
 import { entitlementLabel } from "../../lib/domain/entitlements";
+import { packReturnBalance } from "../../lib/domain/pack-balances";
+import type { LedgerEvent } from "../../lib/store";
 import { formatMoney, toCents } from "@/lib/domain/time";
 import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../../lib/recovery/outcomes";
 import type { summarizeOutbox } from "../../lib/choices/outbox";
@@ -48,21 +50,23 @@ export function ApprovalDialog({ unconfirmed, busy, correction = false, onApprov
   </dialog>;
 }
 
-export function RefundResults({ results, state, workspaceId }: { results: ExecutionResult[]; state: State; workspaceId?: string }) {
+export function RefundResults({ results, state, workspaceId, ledger }: { results: ExecutionResult[]; state: State; workspaceId?: string; ledger?: LedgerEvent[] }) {
   if (!results.length && !workspaceId) return null;
+  const returnedPacks = [...results, ...(ledger ?? [])].some((result) => result.status === "VISIT_RETURNED" && state.bookings.find((booking) => booking.id === result.bookingId)?.entitlement?.kind === "pack");
   return <section className="refund-results" aria-label="Refund progress"><h3>Refund results</h3>{results.map((result) => {
     const booking = state.bookings.find((item) => item.id === result.bookingId);
     const customer = state.customers.find((item) => item.id === booking?.customerId);
     return <div className="refund-row" key={result.bookingId}>
-      <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{booking?.entitlement ? entitlementLabel(booking.entitlement) : result.status === "CREDIT_RESTORED" ? "Returned to your studio credit" : result.status === "SIMULATED" ? "Simulated" : result.status === "NEEDS_REVIEW" ? "Needs review" : result.status.toLowerCase()}</span></div>
+      <div><strong>{customer?.name ?? result.bookingId}</strong><span className={`result-status status-${result.status.toLowerCase()}`}>{booking?.entitlement ? entitlementLabel(booking.entitlement, packReturnBalance(state, ledger ?? [], booking)) : result.status === "CREDIT_RESTORED" ? "Returned to your studio credit" : result.status === "SIMULATED" ? "Simulated" : result.status === "NEEDS_REVIEW" ? "Needs review" : result.status.toLowerCase()}</span></div>
       {customer?.prefs.availabilityKnown === false && <small className="muted">availability not given</small>}
       {result.paypalId && <code>{result.paypalId}</code>}{result.error && <p className="error">{result.status === "NEEDS_REVIEW" ? result.error : ["REQUESTED", "UNKNOWN", "PENDING"].includes(result.status) ? "PayPal hasn't confirmed this refund yet. Retry checks its status before another attempt." : "This refund needs attention. Retry to reconcile with PayPal."}</p>}
     </div>;
-  })}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
+  })}{workspaceId && returnedPacks && <p><a href={`/api/workspaces/${workspaceId}/pack-balances`}>Download pack balance changes (CSV)</a><br /><span className="muted">Apply these in your booking system so balances match.</span></p>}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, ledger, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
+  ledger?: LedgerEvent[];
   outcomes?: RecoveryOutcome[];
   creditPaidBookingIds?: string[];
   outboxSummary?: ReturnType<typeof summarizeOutbox>;
@@ -146,8 +150,8 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
-    <RefundResults key={plan.id} results={results} state={state} workspaceId={!plan.correctionOf && ["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
+    <RefundResults key={plan.id} results={results} state={state} ledger={ledger} workspaceId={!plan.correctionOf && ["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
     <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
-    <BookingGrid plan={plan} state={state} />
+    <BookingGrid plan={plan} state={state} ledger={ledger} />
   </>;
 }

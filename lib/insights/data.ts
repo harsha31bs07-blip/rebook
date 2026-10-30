@@ -1,5 +1,6 @@
 import type { State } from "../domain/types";
 import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlements";
+import { packBalance } from "../domain/pack-balances";
 import { localParts, toCents } from "../domain/time";
 import { disruptionLabel, weekBounds } from "../client/scheduler-mapping";
 import type { CheckoutReservation, Credit, CustomerLink, LedgerEvent, StoredPlan } from "../store";
@@ -82,6 +83,7 @@ export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerE
     }),
     bookings: state.bookings.map((booking) => ({
       id: booking.id, session_id: booking.sessionId, customer_id: booking.customerId,
+      ...(booking.entitlement?.kind === "pack" ? { pack_balance: packBalance(state, ledger, booking.customerId, booking.entitlement.name) } : {}),
       status: booking.status, amount: dollars(booking.amount),
       revenue_kept: creditPaidBookingIds.has(booking.id) ? 0 : outcomes.find((item) => item.booking_id === booking.id)?.revenue_kept ??
         (["confirmed", "moved"].includes(booking.status) ? Math.max(0, toCents(booking.amount) - moneyEvents.filter((event) => event.booking_id === booking.id).reduce((sum, event) => sum + Math.round(event.issued_refund * 100), 0)) / 100 : 0),

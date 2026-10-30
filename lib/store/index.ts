@@ -50,6 +50,11 @@ export type Credit = {
   // One cumulative return per booking, including any earlier lower-price move. Optional for older rows.
   restorations?: { bookingId: string; amount: string; at: string }[];
 };
+export type WaitlistOffer = {
+  id: string; workspaceId: string; entryId: string; sessionId: string; customerId: string;
+  status: "offered" | "claimed" | "declined" | "expired" | "withdrawn";
+  expiresAt: string; createdAt: string; respondedAt?: string; bookingId?: string; sentAt?: string;
+};
 export type CoverLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
   status: "asked" | "accepted" | "declined"; respondedAt?: string; respondedBy?: "instructor" | "owner"; fee: string;
@@ -69,7 +74,7 @@ type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
 export type CheckoutReservation = {
   id: string; workspaceId: string; requestId: string; sessionId: string;
-  requestAliases?: string[];
+  requestAliases?: string[]; waitlistOfferId?: string;
   customer: { name: string; email: string }; amount: string; currency: "USD";
   availability?: { times?: ("mornings" | "afternoons" | "evenings")[]; days?: ("weekdays" | "weekends")[]; acceptsSubstitute?: boolean };
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
@@ -124,6 +129,16 @@ export class Repository {
         PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
       );
       CREATE TABLE IF NOT EXISTS email_checks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, checked_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS waitlist_offers (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS waitlist_workspace ON waitlist_offers(workspace_id);
+      CREATE TABLE IF NOT EXISTS waitlist_deliveries (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES waitlist_offers(id) ON DELETE CASCADE, customer_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
+      );
       CREATE TABLE IF NOT EXISTS cover_links (
         id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -170,13 +185,14 @@ export class Repository {
   listDeliveries(workspaceId: string): Delivery[] {
     // A process that died after reserving a send cannot prove whether Brevo accepted it.
     // Update only a still-queued row, so another process's completed attempt cannot be overwritten.
-    this.db.prepare(`UPDATE deliveries SET data = json_set(data, '$.status', 'unknown', '$.updatedAt', ?)
+    for (const table of ["deliveries", "waitlist_deliveries"]) this.db.prepare(`UPDATE ${table} SET data = json_set(data, '$.status', 'unknown', '$.updatedAt', ?)
       WHERE workspace_id = ? AND json_extract(data, '$.status') = 'queued' AND json_extract(data, '$.updatedAt') < ?`)
       .run(new Date().toISOString(), workspaceId, new Date(Date.now() - 30_000).toISOString());
-    return (this.db.prepare("SELECT data FROM deliveries WHERE workspace_id = ?").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+    return (this.db.prepare("SELECT data FROM deliveries WHERE workspace_id = ? UNION ALL SELECT data FROM waitlist_deliveries WHERE workspace_id = ?").all(workspaceId, workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
   }
   saveDelivery(delivery: Delivery): void {
-    this.db.prepare("INSERT INTO deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, plan_id, customer_id, kind) DO UPDATE SET data = excluded.data")
+    const table = this.listWaitlistOffers(delivery.workspaceId).some((offer) => offer.id === delivery.planId) ? "waitlist_deliveries" : "deliveries";
+    this.db.prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, plan_id, customer_id, kind) DO UPDATE SET data = excluded.data`)
       .run(delivery.workspaceId, delivery.planId, delivery.customerId, delivery.kind, JSON.stringify(delivery));
   }
   queueDelivery(key: Pick<Delivery, "workspaceId" | "planId" | "customerId" | "kind">, resend = false, beforeQueue: () => void = () => {}, revisedAt?: string): Delivery {
@@ -210,6 +226,26 @@ export class Repository {
   coverToken(link: Pick<CoverLink, "id">): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
     return createHmac("sha256", secret).update(`cover:${link.id}`).digest("base64url");
+  }
+  waitlistToken(offer: Pick<WaitlistOffer, "id">): string {
+    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
+    return createHmac("sha256", secret).update(`waitlist:${offer.id}`).digest("base64url");
+  }
+  createWaitlistOffer(input: Omit<WaitlistOffer, "id" | "createdAt" | "status">): WaitlistOffer {
+    const offer: WaitlistOffer = { ...input, id: randomUUID(), createdAt: new Date().toISOString(), status: "offered" };
+    const hash = createHash("sha256").update(this.waitlistToken(offer)).digest("hex");
+    this.db.prepare("INSERT INTO waitlist_offers VALUES (?, ?, ?, ?)").run(offer.id, hash, offer.workspaceId, JSON.stringify(offer));
+    return offer;
+  }
+  listWaitlistOffers(workspaceId: string): WaitlistOffer[] {
+    return (this.db.prepare("SELECT data FROM waitlist_offers WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
+  }
+  waitlistOfferByToken(token: string): WaitlistOffer | undefined {
+    const row = this.db.prepare("SELECT data FROM waitlist_offers WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  saveWaitlistOffer(offer: WaitlistOffer): void {
+    this.db.prepare("UPDATE waitlist_offers SET data = ? WHERE id = ? AND workspace_id = ?").run(JSON.stringify(offer), offer.id, offer.workspaceId);
   }
   creditToken(credit: Pick<Credit, "id">): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
@@ -451,6 +487,7 @@ export class Repository {
     }
   }
   clearPlans(workspaceId: string): void {
+    this.db.prepare("DELETE FROM waitlist_offers WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }
   appendLedger(input: LedgerInput): LedgerEvent {
@@ -586,6 +623,7 @@ export class Repository {
       for (const { id } of candidates) {
         // A private recovery link must remain usable for its advertised lifetime.
         if (this.listCustomerLinks(id).some((link) => customerLinkReadableUntil(link) > Date.now())) continue;
+        if (this.listWaitlistOffers(id).some((offer) => offer.status === "offered" && Date.parse(offer.expiresAt) > Date.now())) continue;
         if (this.listCredits(id).some((credit) => credit.status === "available" && toCents(credit.remaining) > 0)) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;

@@ -58,6 +58,21 @@ it("shows the button in approved refund results even for a cover-only recovery",
   expect(renderToStaticMarkup(createElement(RefundResults, { state, results: [], workspaceId: "workspace1" }))).toContain("Verify with PayPal");
 });
 
+it("shows pack balance changes and the booking-system CSV download after a visit return", () => {
+  const state = seedStudio(), booking = state.bookings[0];
+  booking.entitlement = { kind: "pack", name: "10 Class Pack", visitsLeft: 3 };
+  const html = renderToStaticMarkup(createElement(RefundResults, { state, results: [{ bookingId: booking.id, status: "VISIT_RETURNED" }], workspaceId: "workspace1" }));
+  expect(html).toContain("Returns 1 visit · 10 Class Pack · 3 → 4 left");
+  expect(html).toContain('href="/api/workspaces/workspace1/pack-balances"');
+  expect(html).toContain("Download pack balance changes (CSV)");
+  expect(html).toContain("Apply these in your booking system so balances match.");
+  const later = renderToStaticMarkup(createElement(RefundResults, { state, results: [], workspaceId: "workspace1", ledger: [{
+    id: "event", workspaceId: "workspace1", bookingId: booking.id, kind: "refund", requestId: "choice:link", amount: "0.00", status: "VISIT_RETURNED",
+    paypalId: "", captureId: "", createdAt: "2026-11-05T12:00:00Z",
+  }] }));
+  expect(later).toContain("Download pack balance changes (CSV)");
+});
+
 it("disables the button and announces progress, then shows the server verification", async () => {
   let resolve!: (response: Response) => void;
   const fetch = vi.fn(() => new Promise<Response>((done) => { resolve = done; })); vi.stubGlobal("fetch", fetch);

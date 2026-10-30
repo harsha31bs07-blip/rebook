@@ -1,3 +1,5 @@
+import { fillFreedSeats, withdrawWaitlistOffers } from "../waitlist/service";
+import { heldOffers } from "../waitlist/capacity";
 import { isDeepStrictEqual } from "node:util";
 import { applyPlan, planTimeErrors, validate } from "../solver/validate";
 import { activateConstraint, deactivateConstraint } from "../solver/constraints";
@@ -56,6 +58,12 @@ export async function executePlan(workspaceId: string, planId: string, repositor
         const previous = workspace.state.bookings.find((item) => item.id === booking.id)!;
         if (["refunded", "refund_pending", "cancelled"].includes(previous.status)) booking.status = previous.status;
       }
+      const changedIds = new Set(plan.sessionChanges.map((change) => change.sessionId));
+      const offers = repository.listWaitlistOffers(workspaceId).filter((offer) => !changedIds.has(offer.sessionId)), reservations = repository.listCheckout(workspaceId);
+      for (const session of next.sessions) {
+        const booked = next.bookings.filter((booking) => booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)).length;
+        if (booked + heldOffers(session.id, offers, reservations) > session.capacity) throw new StoreError(409, "A waitlist offer holds a seat in this class. Refresh the recovery after it is answered or expires.");
+      }
       const covers = planCovers(plan, basis);
       if (confirmedCoverSessionIds.some((id) => !covers.some((cover) => cover.sessionId === id))) throw new StoreError(400, "A cover confirmation does not match this recovery preview.");
       const coverConfirmations = covers.filter((cover) => confirmedCoverSessionIds.includes(cover.sessionId)).map((cover) => ({
@@ -63,6 +71,7 @@ export async function executePlan(workspaceId: string, planId: string, repositor
       }));
       plan = { ...plan, status: "executing", basis, coverConfirmations };
       repository.transaction(() => {
+        withdrawWaitlistOffers(workspaceId, changedIds, repository);
         repository.saveState(workspaceId, next); repository.savePlan(plan!); repository.discardOtherProposals(workspaceId, planId);
         if (plan!.correctionOf) {
           const original = repository.getPlan(workspaceId, plan!.correctionOf)!;
@@ -108,6 +117,7 @@ export async function executePlan(workspaceId: string, planId: string, repositor
     const results = ordered.filter((item): item is ExecutionResult => !!item);
     plan = { ...plan, results, status: results.some((result) => !["COMPLETED", "PENDING", "SIMULATED", "CREDIT_RESTORED", "VISIT_RETURNED"].includes(result.status)) ? "partially_failed" : "executed" };
     repository.savePlan(plan);
+    fillFreedSeats(workspaceId, repository);
     const view = repository.getPlan(workspaceId, planId)!;
     return { plan: view, results: view.results };
   });

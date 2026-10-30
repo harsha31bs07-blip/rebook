@@ -7,6 +7,7 @@ import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../sto
 import type { OwnerCustomerChoices } from "../choices/service";
 import type { PaymentAttention } from "../recovery/payment-attention";
 import type { OwnerCover } from "../recovery/cover-pay";
+import type { PayRule } from "../recovery/pay-rules";
 import type { MoneyVerification } from "../paypal/verify";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
@@ -17,6 +18,7 @@ export type WorkspaceResponse = Workspace & {
   customerChoices?: OwnerCustomerChoices;
   paymentsNeedingAttention?: PaymentAttention[];
   covers?: OwnerCover[];
+  waitlist?: ReturnType<typeof import("../waitlist/service").ownerWaitlist>;
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };
@@ -56,6 +58,7 @@ export const api = {
   approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
   checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),
   payCover: (id: string, planId: string, sessionId: string) => request<OwnerCover[]>(`${workspacePath(id)}/covers/pay`, { planId, sessionId }),
+  instructorPay: (id: string, instructorId: string, input: PayRule | { reset: true }) => request<OwnerCover[]>(`${workspacePath(id)}/instructors/${encodeURIComponent(instructorId)}/pay`, input, undefined, "PATCH"),
   askNextCover: (id: string, planId: string, sessionId: string) => request<OwnerCover[]>(`${workspacePath(id)}/covers/next`, { planId, sessionId }),
   retryRefund: (id: string, requestId: string) => request<{ status: string }>(`${workspacePath(id)}/refunds/retry`, { requestId }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),

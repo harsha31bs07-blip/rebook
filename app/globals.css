@@ -43,6 +43,7 @@
 @media (max-width: 760px) { .customer-booking { padding: 0 16px 40px; } .booking-layout { grid-template-columns: 1fr; } .booking-checkout { position: static; max-height: none; overflow-y: visible; } .booking-header { margin-bottom: 28px; } }
 
 .customer-choice { max-width: 800px; }
+.waitlist-offer { overflow-wrap: anywhere; }
 .choice-intro { margin-bottom: 32px; }
 .choice-intro h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.1; letter-spacing: -1.8px; margin: 12px 0 16px; }
 .choice-intro > p:last-child { font-size: 16px; }
@@ -270,6 +271,10 @@ textarea { resize: vertical; min-height: 120px; }
 .refund-row > div { display: flex; justify-content: space-between; gap: 8px; }
 .refund-row strong { font-weight: 500; }
 .refund-row code { display: block; font-size: 10px; color: #64748b; overflow-wrap: anywhere; margin-top: 6px; }
+.cover-pay .button-row { flex-wrap: wrap; }
+.cover-pay-rule { display: grid; gap: 8px; margin-top: 12px; min-width: 0; }
+.cover-pay-rule label { display: grid; gap: 4px; }
+.cover-pay-rule input { min-width: 0; font-size: 16px; }
 .paypal-verification { min-width: 0; margin-top: 12px; overflow-wrap: anywhere; }
 .paypal-verification button { min-height: 44px; max-width: 100%; white-space: normal; }
 .paypal-verification summary { cursor: pointer; min-height: 44px; padding-block: 12px; }

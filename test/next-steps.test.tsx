@@ -6,7 +6,8 @@ import PartyPreview from "../components/console/party-preview";
 import type { OwnerCover } from "../lib/recovery/cover-pay";
 
 const cover = (overrides: Partial<OwnerCover> = {}) => ({ planId: "plan", sessionId: "session-001", instructor: "Alex Rivera", original: "Maya Chen", class: "Yoga Flow",
-  when: "Mon 7:00 AM", status: "accepted", current: true, respondedBy: "instructor", fee: "35.00", path: "/i/cover-token", payout: undefined, payee: true, ...overrides }) as OwnerCover;
+  when: "Mon 7:00 AM", instructorId: "instructor-02", rule: { perClass: "35.00" }, attendees: 6, estimate: false,
+  status: "accepted", current: true, respondedBy: "instructor", fee: "35.00", path: "/i/cover-token", payout: undefined, payee: true, ...overrides }) as OwnerCover;
 
 it("offers the next qualified instructor in one click after a decline, and keeps the decline as history", () => {
   const declined = renderToStaticMarkup(<CoverPay workspaceId="ws" covers={[cover({ status: "declined", next: "Priya Shah" })]} onUpdated={vi.fn()} />);

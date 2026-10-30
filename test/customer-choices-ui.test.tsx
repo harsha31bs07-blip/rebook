@@ -127,6 +127,18 @@ it.each([
   expect(renderToStaticMarkup(tree)).not.toMatch(/\$|PayPal|Refund ID|original payment|Refund pending/);
 });
 
+it("shows a known pack balance, the balance after returning a visit, and the expiry on the receipt", async () => {
+  data = { ...data, before: { ...data.before, start: "2026-11-05T15:00:00Z" }, entitlement: { kind: "pack", name: "10 Class Pack", visitsLeft: 3, expires: "2026-11-20" }, packBalance: 3, refundable: "0.00" };
+  render(); await settle();
+  const label = "Return the visit to my 10 Class Pack (4 left after)";
+  expect(renderToStaticMarkup(tree)).toContain("10 Class Pack · 3 visits left");
+  expect(button(label)).toBeDefined();
+  data = { ...data, packBalance: 4, canChoose: false, kind: "receipt", receipt: { amount: "0.00", status: "VISIT_RETURNED", paypalId: "", error: undefined } };
+  (button(label).props.onClick as () => void)(); await settle();
+  expect(renderToStaticMarkup(tree)).toContain("Visit returned to your 10 Class Pack · 4 visits left");
+  expect(renderToStaticMarkup(tree)).toContain("It expires on Nov 20.");
+});
+
 it("shows unavailable backing without offering to spend the credit", async () => {
   data = { ...data, canChoose: false, reply: { action: "credit", at: new Date().toISOString() },
     credit: { amount: "22.00", remaining: "0.00", status: "unavailable", path: "/b/public#credit=private", readableUntil: 0, emailed: undefined } };

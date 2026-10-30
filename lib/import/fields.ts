@@ -1,7 +1,7 @@
 import type { Booking, ClassType } from "../domain/types";
 
 /** The columns Rebook reads from a booking export: one row per booking (or per class with no bookings). */
-export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "payment", "customer_name", "customer_email", "accepts_substitute", "status"] as const;
+export const IMPORT_FIELDS = ["class", "date", "start", "end", "duration", "instructor", "room", "capacity", "price", "payment", "customer_name", "customer_email", "accepts_substitute", "status", "visitsLeft", "expires"] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 export type ColumnMapping = Partial<Record<ImportField, string>>;
 /** A date column is optional when the start column carries the date too. */
@@ -9,10 +9,12 @@ export const REQUIRED_FIELDS: ImportField[] = ["class", "start", "instructor"];
 export const FIELD_LABELS: Record<ImportField, string> = {
   class: "Class name", date: "Date", start: "Start time", end: "End time", duration: "Duration (minutes)", instructor: "Instructor",
   room: "Room", capacity: "Capacity", price: "Price paid", customer_name: "Customer name", customer_email: "Customer email", accepts_substitute: "Accepts a substitute",
-  status: "Booking status", payment: "Paid with",
+  status: "Booking status", payment: "Paid with", visitsLeft: "Visits left", expires: "Pack expires",
 };
 
 const SYNONYMS: Record<ImportField, string[]> = {
+  visitsLeft: ["visitsleft", "remaining", "remainingvisits", "classesleft", "creditsleft", "sessionsremaining", "balance"],
+  expires: ["packexpires", "expires", "expiry", "expiration", "expirationdate", "validuntil"],
   class: ["class", "classname", "classtitle", "title", "servicename", "session", "sessionname", "program", "activity"],
   date: ["date", "classdate", "sessiondate", "day", "visitdate"],
   start: ["start", "starttime", "time", "begins", "classtime", "from", "startsat"],

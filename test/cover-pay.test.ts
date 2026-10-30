@@ -14,6 +14,8 @@ import { POST as instructorPost } from "../app/api/instructor/[token]/route";
 import { POST as payPost } from "../app/api/workspaces/[id]/covers/pay/route";
 import { limits } from "../lib/api/limits";
 import { pausedSessionIds } from "../lib/checkout/service";
+import { coverAttendees, coverFee, payRule } from "../lib/recovery/pay-rules";
+import { PATCH as payRulePatch } from "../app/api/workspaces/[id]/instructors/[instructorId]/pay/route";
 
 let repository: Repository, directory: string, workspaceId: string, planId: string, sessionId: string, token: string;
 let payouts: (init: RequestInit) => Response | Promise<Response>;
@@ -21,8 +23,8 @@ const calls: { url: string; init: RequestInit }[] = [];
 const created = (batch = "BATCH-1") => Response.json({ batch_header: { payout_batch_id: batch, batch_status: "PENDING" } }, { status: 201 });
 const payoutRows = () => repository.listCoverPayouts(workspaceId);
 
-async function approved(confirm = false) {
-  const state = seedStudio(); for (const booking of state.bookings) booking.payment!.simulated = true;
+async function approved(confirm = false, configure?: (state: ReturnType<typeof seedStudio>) => void) {
+  const state = seedStudio(); configure?.(state); for (const booking of state.bookings) booking.payment!.simulated = true;
   const workspace = repository.createWorkspace(state); workspaceId = workspace.id;
   for (const booking of state.bookings) repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "capture", amount: booking.amount,
     paypalId: booking.payment!.captureId, captureId: booking.payment!.captureId, requestId: `capture:${booking.id}`, status: "SIMULATED" });
@@ -50,6 +52,17 @@ beforeEach(() => {
 afterEach(() => { closeRepository(); rmSync(directory, { recursive: true, force: true }); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 const posts = () => calls.filter((call) => call.url.endsWith("/v1/payments/payouts") && call.init.method === "POST");
 const requestId = (call: { init: RequestInit }) => new Headers(call.init.headers).get("PayPal-Request-Id");
+const patchRule = (body: unknown, instructorId = "instructor-02", origin = "http://localhost") => payRulePatch(new Request(`http://localhost/api/workspaces/${workspaceId}/instructors/${instructorId}/pay`, {
+  method: "PATCH", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body),
+}), { params: Promise.resolve({ id: workspaceId, instructorId }) });
+function setAttendees(count: number) {
+  const state = repository.requireWorkspace(workspaceId).state;
+  const bookings = state.bookings.filter((booking) => booking.sessionId === sessionId);
+  const template = bookings.find((booking) => ["confirmed", "moved"].includes(booking.status))!;
+  state.bookings = state.bookings.filter((booking) => booking.sessionId !== sessionId);
+  state.bookings.push(...Array.from({ length: count }, (_, index) => ({ ...template, id: `attendee-${index}`, status: "confirmed" as const })));
+  repository.saveState(workspaceId, state);
+}
 
 it("asks the substitute on a private link after approval, without touching the hero totals", async () => {
   const plan = await approved();
@@ -66,6 +79,102 @@ it("asks the substitute on a private link after approval, without touching the h
 it("starts accepted when the owner confirmed the cover at approval", async () => {
   await approved(true);
   expect(ownerCovers(workspaceId, repository)[0]).toMatchObject({ status: "accepted", respondedBy: "owner" });
+});
+
+it("prices initial links from the substitute's rule and the applied active bookings", async () => {
+  await approved(false, (state) => { state.instructors[1].pay = { perClass: "30.00", perAttendee: "2.00", cap: "50.00" }; });
+  const state = repository.requireWorkspace(workspaceId).state, attendees = coverAttendees(state, sessionId);
+  expect(repository.listCoverLinks(workspaceId)[0].fee).toBe(coverFee(payRule(state, "instructor-02"), attendees));
+  expect(coverView(token, repository)).toMatchObject({ attendees, estimate: true });
+});
+
+it("gives Jordan a capped attendee-based link after Alex declines", async () => {
+  await approved();
+  await respondToCover(token, "decline", repository);
+  setAttendees(6);
+  const covers = await askNextCover(workspaceId, planId, sessionId, repository), jordan = covers.find((cover) => cover.current)!;
+  expect(jordan).toMatchObject({ instructor: "Jordan Lee", fee: "42.00", attendees: 6, estimate: true });
+  expect(repository.listCoverLinks(workspaceId).find((link) => link.instructorId === "instructor-04")?.fee).toBe("42.00");
+  setAttendees(12);
+  expect(coverView(jordan.path.slice(3), repository)).toMatchObject({ fee: "50.00", attendees: 12, estimate: true });
+  expect(ownerCovers(workspaceId, repository).find((cover) => cover.current)).toMatchObject({ fee: "50.00", estimate: true });
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.parse(coverView(jordan.path.slice(3), repository).class.start));
+  expect(coverView(jordan.path.slice(3), repository)).toMatchObject({ fee: "50.00", estimate: false });
+});
+
+it("stores the recomputed final fee on the link and payout before sending, then freezes it", async () => {
+  await approved(true);
+  expect((await patchRule({ perClass: "30.00", perAttendee: "2.00", cap: "50.00" })).status).toBe(200);
+  setAttendees(6);
+  payouts = () => {
+    expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", amount: "42.00" });
+    expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("42.00");
+    return created();
+  };
+  await payCover(workspaceId, planId, sessionId, repository);
+  setAttendees(12);
+  expect(coverView(token, repository)).toMatchObject({ fee: "42.00", estimate: false, payout: { amount: "42.00", status: "PENDING" } });
+  repository.saveCoverPayout({ ...payoutRows()[0], status: "SUCCESS" });
+  expect(ownerCovers(workspaceId, repository)[0]).toMatchObject({ fee: "42.00", estimate: false });
+  expect(payoutRows()[0].amount).toBe("42.00");
+});
+
+it("keeps a REQUESTED replay's amount when bookings and the rule change", async () => {
+  await approved(true);
+  await patchRule({ perClass: "30.00", perAttendee: "2.00" }); setAttendees(6);
+  payouts = () => { throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  await patchRule({ perClass: "40.00", perAttendee: "3.00" }); setAttendees(12);
+  expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("42.00");
+  expect(coverView(token, repository)).toMatchObject({ fee: "42.00", estimate: false });
+  payouts = () => created(); await payCover(workspaceId, planId, sessionId, repository);
+  expect(posts().map((call) => JSON.parse(call.init.body as string).items[0].amount.value)).toEqual(["42.00", "42.00"]);
+  expect(payoutRows()[0]).toMatchObject({ amount: "42.00", attempt: 1 });
+});
+
+it("validates owner pay-rule edits, updates unpaid links, and resets to the studio default", async () => {
+  await approved();
+  expect((await patchRule({ perClass: "45.00" }, "instructor-02", "https://evil.example")).status).toBe(403);
+  for (const input of [{ perClass: "-1.00" }, { perClass: "500.01" }, { perClass: "35" }, { perClass: 35 },
+    { perClass: "35.00", perAttendee: "500.01" }, { perClass: "35.00", cap: "34.99" }, { perClass: "35.00", cap: "501.00" }, { reset: true, perClass: "30.00" }]) {
+    expect((await patchRule(input)).status).toBe(400);
+  }
+  expect((await patchRule({ perClass: "45.00" }, "missing")).status).toBe(404);
+  const state = repository.requireWorkspace(workspaceId).state; state.studio.coverPay = { perClass: "32.00" }; repository.saveState(workspaceId, state);
+  const response = await patchRule({ perClass: "30.00", perAttendee: "2.00", cap: "50.00" });
+  expect(response.status).toBe(200);
+  const count = coverAttendees(repository.requireWorkspace(workspaceId).state, sessionId), fee = coverFee({ perClass: "30.00", perAttendee: "2.00", cap: "50.00" }, count);
+  expect(await response.json()).toEqual([expect.objectContaining({ fee, rule: { perClass: "30.00", perAttendee: "2.00", cap: "50.00" } })]);
+  expect(repository.listCoverLinks(workspaceId)[0].fee).toBe(fee);
+  expect((await patchRule({ reset: true })).status).toBe(200);
+  expect(repository.requireWorkspace(workspaceId).state.instructors[1].pay).toBeUndefined();
+  expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("32.00");
+  expect((await patchRule({ perClass: "0.00", perAttendee: "0.00", cap: "500.00" })).status).toBe(200);
+});
+
+it("updates FAILED links but leaves pending and paid links and payout amounts untouched", async () => {
+  await approved(true);
+  payouts = () => Response.json({ name: "INSUFFICIENT_FUNDS" }, { status: 422 });
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()[0].status).toBe("FAILED");
+  expect((await patchRule({ perClass: "40.00" })).status).toBe(200);
+  expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("40.00");
+  expect(payoutRows()[0].amount).toBe("35.00");
+  payouts = () => created(); await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()[0].amount).toBe("40.00");
+  for (const status of ["PENDING", "SUCCESS"] as const) {
+    repository.saveCoverPayout({ ...payoutRows()[0], status });
+    expect((await patchRule({ perClass: "50.00" })).status).toBe(200);
+    expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("40.00");
+    expect(ownerCovers(workspaceId, repository)[0].fee).toBe("40.00");
+    expect(payoutRows()[0].amount).toBe("40.00");
+  }
+});
+
+it("rate limits pay-rule edits per workspace", async () => {
+  await approved();
+  for (let index = 0; index < 20; index++) expect((await patchRule({ perClass: "35.00" })).status).toBe(200);
+  expect((await patchRule({ reset: true })).status).toBe(429);
 });
 
 it("lets the substitute accept or decline until the class starts, and pays only an accepted cover", async () => {
@@ -253,7 +362,7 @@ it("passes a declined cover to the next qualified, free instructor in one step, 
   const nextToken = covers[1].path.slice(3);
   await respondToCover(nextToken, "accept", repository);
   await payCover(workspaceId, planId, sessionId, repository);
-  expect(payoutRows()).toEqual([expect.objectContaining({ instructorId: session.instructorId, amount: "35.00" })]);
+  expect(payoutRows()).toEqual([expect.objectContaining({ instructorId: session.instructorId, amount: coverFee(payRule(after, session.instructorId), kept.length) })]);
   expect(ownerCovers(workspaceId, repository).map((cover) => [cover.instructor, cover.payout?.status ?? "-"])).toEqual([["Alex Rivera", "-"], [next, "PENDING"]]);
   // Only a current decline can be passed on; repeating the click does nothing new.
   await expect(askNextCover(workspaceId, planId, sessionId, repository)).rejects.toThrow("Only a declined cover");

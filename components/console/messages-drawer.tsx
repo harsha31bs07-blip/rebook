@@ -7,6 +7,8 @@ import { api } from "../../lib/client/api";
 import { entitlementLabel, entitlementPaymentLabel } from "../../lib/domain/entitlements";
 import { draftOutbox, messageDeepLinks, outboxMessage, outboxState, revisedAt, summarizeOutbox, waitingCustomers, type OutboxCustomer } from "../../lib/choices/outbox";
 
+const messageKey = (row: OutboxCustomer) => `${row.planId}:${row.customerId}`;
+
 export default function MessagesDrawer({ messages, links = [], outbox, workspaceId, onUpdated, onClose }: {
   messages: CustomerMessage[]; links?: OwnerCustomerChoices["links"]; outbox?: OutboxCustomer[];
   workspaceId?: string; onUpdated?: () => void; onClose: () => void;
@@ -24,9 +26,11 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
   const rows = saved && saved.source === outbox ? saved.rows : outbox ?? draftOutbox(messages, links);
   const summary = summarizeOutbox(rows);
   const waiting = waitingCustomers(rows);
-  const reminder = reminders ? rows.find((row) => row.customerId === reminders[reminderIndex] && outboxState(row).waiting) : undefined;
+  const reminder = reminders ? rows.find((row) => messageKey(row) === reminders[reminderIndex] && outboxState(row).waiting) : undefined;
   const visible = reminders ? reminder ? [reminder] : [] : filter === "waiting" ? waiting : rows;
   const planId = rows[0]?.planId;
+  const matchesSource = (row: OutboxCustomer, snapshot = source.current) => snapshot
+    ? snapshot.some((item) => item.planId === row.planId) : row.planId === planId;
   const emailReady = rows.filter((row) => row.emailDeliverable && !outboxState(row).sent && (!row.delivery || row.delivery.status === "failed"));
   useEffect(() => {
     const element = dialog.current;
@@ -43,7 +47,7 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
       checking = true; const snapshot = source.current, version = revision.current;
       try {
         const next = await api.emailStatus(workspaceId!, planId!);
-        if (active && !inFlight.current && version === revision.current && snapshot === source.current) setSaved({ source: snapshot, rows: next.outbox.filter((row) => row.planId === planId) });
+        if (active && !inFlight.current && version === revision.current && snapshot === source.current) setSaved({ source: snapshot, rows: next.outbox.filter((row) => snapshot ? snapshot.some((item) => item.planId === row.planId) : row.planId === planId) });
       } catch { /* A status outage leaves the last known delivery state intact. */ }
       finally { checking = false; }
     }
@@ -53,10 +57,15 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
 
   async function email(row?: OutboxCustomer, resend = false) {
     if (!workspaceId || !planId || inFlight.current) return;
-    inFlight.current = true; revision.current++; setPending(`email:${row?.customerId ?? "all"}`); setConfirmEmail(undefined);
+    inFlight.current = true; revision.current++; setPending(`email:${row ? messageKey(row) : "all"}`); setConfirmEmail(undefined);
     try {
-      const next = row ? await api.email(workspaceId, row.planId, row.customerId, !!reminders, resend) : await api.emailAll(workspaceId, planId);
-      setSaved({ source: source.current, rows: next.outbox.filter((item) => item.planId === planId) });
+      let next: OwnerCustomerChoices;
+      if (row) next = await api.email(workspaceId, row.planId, row.customerId, !!reminders, resend);
+      else {
+        next = await api.emailAll(workspaceId, planId);
+        for (const target of new Set(emailReady.map((item) => item.planId).filter((id) => id !== planId))) next = await api.emailAll(workspaceId, target);
+      }
+      setSaved({ source: source.current, rows: next.outbox.filter((item) => matchesSource(item)) });
       setNotice(row ? `${row.customerName}: email status updated.` : "Customer email statuses updated."); onUpdated?.();
     } catch (error) { setNotice(`${error instanceof Error ? error.message : "Could not confirm email delivery."} Check email status before resending.`); onUpdated?.(); }
     finally { inFlight.current = false; setPending(undefined); }
@@ -64,10 +73,10 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
 
   async function mark(row: OutboxCustomer, sent: boolean) {
     if (!workspaceId || inFlight.current) return;
-    inFlight.current = true; revision.current++; setPending(row.customerId);
+    inFlight.current = true; revision.current++; setPending(messageKey(row));
     try {
       const next = await api.contact(workspaceId, row.planId, row.customerId, sent);
-      setSaved({ source: outbox, rows: next.outbox.filter((item) => item.planId === row.planId) });
+      setSaved({ source: outbox, rows: next.outbox.filter((item) => matchesSource(item)) });
       setNotice(`${row.customerName}: ${sent ? "marked Sent by owner. Finish sending in your app; you can undo here." : "sent status undone."}`);
       onUpdated?.();
     } catch (error) {
@@ -100,7 +109,7 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
     {(links.length > 0 || !!outbox?.length) && <div className="outbox-toolbar">
       <p role="status" aria-live="polite" aria-atomic="true">{summary.sent} sent · {summary.replied} replied · {summary.waiting} waiting <span className="muted">{summary.closed ? `· ${summary.closed} closed without a reply ` : ""}· {summary.notSent} not sent</span></p>
       {!!emailReady.length && workspaceId && !reminders && <button disabled={!!pending} aria-label={`Email ${emailReady.length} customers with addresses`} onClick={() => void email()}>Email {emailReady.length} customers with addresses</button>}
-      <div className="outbox-filters" aria-label="Outbox filters"><button aria-pressed={filter === "all" && !reminders} onClick={() => { setFilter("all"); setReminders(null); }}>All customers</button><button aria-pressed={filter === "waiting" && !reminders} onClick={() => { setFilter("waiting"); setReminders(null); }}>Waiting</button><button disabled={!waiting.length || !!pending} onClick={() => { setReminders(waiting.map((row) => row.customerId)); setReminderIndex(0); setNotice("Reminder ready. Choose a sharing app for each waiting customer, then select Next customer."); }}>Remind waiting</button></div>
+      <div className="outbox-filters" aria-label="Outbox filters"><button aria-pressed={filter === "all" && !reminders} onClick={() => { setFilter("all"); setReminders(null); }}>All customers</button><button aria-pressed={filter === "waiting" && !reminders} onClick={() => { setFilter("waiting"); setReminders(null); }}>Waiting</button><button disabled={!waiting.length || !!pending} onClick={() => { setReminders(waiting.map(messageKey)); setReminderIndex(0); setNotice("Reminder ready. Choose a sharing app for each waiting customer, then select Next customer."); }}>Remind waiting</button></div>
       <p className="muted">Waiting means sent, with a class choice still unanswered and open. A choice closes when the class starts or after a week. Refund receipts do not need a reply.</p>
       {reminders && <div className="outbox-reminder" role="group" aria-label="Waiting customer reminders"><p role="status" aria-live="polite">Reminder {reminderIndex + 1} of {reminders.length}{reminder ? `: ${reminder.customerName}` : ": this customer is no longer waiting."}</p><button disabled={!!pending || reminderIndex === reminders.length - 1} onClick={() => setReminderIndex(reminderIndex + 1)}>Next customer</button><button onClick={() => setReminders(null)}>Finish reminders</button></div>}
     </div>}
@@ -112,10 +121,10 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
       const canShare = !!workspaceId && row.changes.every((change) => change.path);
       const disabled = !!pending;
       const delivery = reminders ? row.reminderDelivery : row.delivery;
-      const sending = pending === `email:${row.customerId}` || (pending === "email:all" && emailReady.includes(row)) || delivery?.status === "queued";
+      const sending = pending === `email:${messageKey(row)}` || (pending === "email:all" && emailReady.includes(row)) || delivery?.status === "queued";
       const retryEmail = delivery && ["failed", "unknown", "bounced"].includes(delivery.status);
       const emailLabel = sending ? "Sending…" : delivery ? ({ queued: "Sending…", sent: "Sent", delivered: "Delivered", failed: "Failed", bounced: "Bounced", unknown: "Unknown — check before resending", deferred: "Deferred" })[delivery.status] : undefined;
-      return <li className="outbox-customer" key={row.customerId}>
+      return <li className="outbox-customer" key={`${row.planId}:${row.customerId}`}>
         <h3>{row.customerName}</h3>
         <div className="outbox-status" aria-live="polite" aria-atomic="true">
           <p>{status.replied ? "Replied" : status.sent ? "Sent" : revisedAt(row) ? "Updated · send again" : "Not sent"}{status.waiting ? " · No reply yet" : status.closed ? " · Choice closed without a reply" : ""}</p>
@@ -124,21 +133,21 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
         {emailLabel && <p className="email-status" role="status" aria-live="polite" aria-atomic="true">Email {reminders ? "reminder " : ""}for {row.customerName}: {emailLabel}</p>}
         {reminders && reminder && <p className="outbox-reminder-text">{outboxMessage(row, undefined, true)}</p>}
         {row.changes.map((change) => <article className="message-card" key={change.bookingId}>
-            <span className="muted">{change.kind === "receipt" ? change.entitlement ? "Booking receipt" : "Refund receipt" : change.kind === "choice" ? "Private choice link" : "Message draft"}</span>
-            <h4>{change.subject}</h4><p>{change.body}</p>{change.entitlement && <p className="muted">{(change.kind === "receipt" || change.reply?.status.startsWith("Returns 1 visit") ? entitlementLabel : entitlementPaymentLabel)(change.entitlement)}</p>}
+            <span className="muted">{change.kind === "receipt" ? change.entitlement ? "Booking receipt" : "Refund receipt" : change.kind === "choice" ? "Private choice link" : change.kind === "waitlist" ? "Private offer link" : "Message draft"}</span>
+            <h4>{change.subject}</h4><p>{change.body}</p>{change.entitlement && <p className="muted">{change.kind === "receipt" || change.reply?.status.startsWith("Returns 1 visit") ? entitlementLabel(change.entitlement, change.packBalance) : entitlementPaymentLabel(change.entitlement, change.packBalance?.before)}</p>}
           <p aria-live="polite" aria-atomic="true">{change.reply ? `Replied: ${change.reply.status}` : ""}</p>
           {change.path && <div className="message-links"><a href={change.path} target="_blank" rel="noopener noreferrer" aria-label={`Open as customer: ${row.customerName}, ${change.subject}`}>Open as customer</a>{row.changes.length === 1 && <button disabled={!canShare || disabled} aria-label={`Copy link for ${row.customerName}, ${change.subject}`} onClick={() => void copy(row, change.path)}>Copy link</button>}</div>}
         </article>)}
         {canShare && <div className="outbox-actions" role="group" aria-label={`Send ${reminders ? "reminder" : "message"} to ${row.customerName}`}>
           <button disabled={disabled} aria-label={`WhatsApp ${row.customerName}`} onClick={() => share(row, "whatsapp")}>WhatsApp</button>
           <button disabled={disabled} aria-label={`SMS ${row.customerName}`} onClick={() => share(row, "sms")}>SMS</button>
-          <button disabled={disabled || !row.emailDeliverable || sending || (!!delivery && !retryEmail)} aria-label={`${retryEmail ? "Send again to" : "Email"} ${row.customerName}`} aria-describedby={!row.emailDeliverable ? `demo-email-${row.customerId}` : undefined} onClick={() => retryEmail ? setConfirmEmail(row.customerId) : void email(row)}>{retryEmail ? "Send again" : "Email"}</button>
+          <button disabled={disabled || !row.emailDeliverable || sending || (!!delivery && !retryEmail)} aria-label={`${retryEmail ? "Send again to" : "Email"} ${row.customerName}`} aria-describedby={!row.emailDeliverable ? `demo-email-${row.planId}-${row.customerId}` : undefined} onClick={() => retryEmail ? setConfirmEmail(messageKey(row)) : void email(row)}>{retryEmail ? "Send again" : "Email"}</button>
           <button disabled={disabled} aria-label={`Email draft for ${row.customerName}`} onClick={() => share(row, "email")}>Email draft</button>
           <button disabled={disabled} aria-label={`Copy message for ${row.customerName}`} onClick={() => void copy(row)}>Copy</button>
           {status.sent && <button disabled={disabled} aria-label={`Undo sent for ${row.customerName}`} onClick={() => void mark(row, false)}>Undo sent</button>}
         </div>}
-        {canShare && !row.emailDeliverable && <p className="muted" id={`demo-email-${row.customerId}`}>Demo address · not sent</p>}
-        {confirmEmail === row.customerId && <div className="outbox-reminder" role="group" aria-label={`Confirm email again to ${row.customerName}`}><p>A previous email may already have arrived. Check with {row.customerName} before sending again.</p><button disabled={disabled} aria-label={`Confirm send again to ${row.customerName}`} onClick={() => void email(row, true)}>Confirm send again</button><button onClick={() => setConfirmEmail(undefined)} aria-label={`Cancel email again to ${row.customerName}`}>Cancel</button></div>}
+        {canShare && !row.emailDeliverable && <p className="muted" id={`demo-email-${row.planId}-${row.customerId}`}>Demo address · not sent</p>}
+        {confirmEmail === messageKey(row) && <div className="outbox-reminder" role="group" aria-label={`Confirm email again to ${row.customerName}`}><p>A previous email may already have arrived. Check with {row.customerName} before sending again.</p><button disabled={disabled} aria-label={`Confirm send again to ${row.customerName}`} onClick={() => void email(row, true)}>Confirm send again</button><button onClick={() => setConfirmEmail(undefined)} aria-label={`Cancel email again to ${row.customerName}`}>Cancel</button></div>}
       </li>;
     })}</ul>
   </dialog>;

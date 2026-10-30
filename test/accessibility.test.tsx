@@ -56,14 +56,19 @@ function contrast(first: string, second: string) {
 
 it("keeps muted text, status badges and class labels above 4.5:1 contrast", () => {
   const css = readFileSync("app/globals.css", "utf8");
-  const muted = css.match(/--muted:\s*(#[\da-f]{6})/)![1];
-  for (const background of ["#ffffff", "#f8fafc", "#eff6ff", "#edf4eb"]) expect(contrast(muted, background)).toBeGreaterThanOrEqual(4.5);
+  // Colours are design tokens on :root; resolve var(--token) to the hex it stands for.
+  const rootBlock = css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
+  const tokens = new Map([...rootBlock.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()]));
+  const resolve = (value: string): string => { const token = value.match(/^var\(--([a-z0-9-]+)\)$/)?.[1]; return token ? resolve(tokens.get(token)!) : value; };
+  const muted = resolve("var(--muted)");
+  for (const background of ["canvas", "surface", "surface-2", "brand-tint", "success-tint-2"]) expect(contrast(muted, resolve(`var(--${background})`)), background).toBeGreaterThanOrEqual(4.5);
   const selectors = ["success-pill", "action-keep", "action-move", "action-refund", "receipt-completed", "receipt-pending", "receipt-simulated", "receipt-failed", "warning", "notice", "class-yoga", "class-pilates", "class-spin", "class-dance", "class-hiit", "class-barre"];
+  const value = /(#[\da-f]{6}|var\(--[a-z0-9-]+\))/.source;
   for (const selector of selectors) {
     const rule = [...css.matchAll(new RegExp(`\\.${selector}[^{}]*\\{([^}]+)\\}`, "g"))]
-      .map((match) => match[1]).find((value) => /(?:^|;)\s*color:\s*#[\da-f]{6}/.test(value))!;
-    const color = rule.match(/(?:^|;)[\s]*color:\s*(#[\da-f]{6})/)![1];
-    const background = rule.match(/background(?:-color)?:\s*(#[\da-f]{6})/)![1];
+      .map((match) => match[1]).find((text) => new RegExp(`(?:^|;)\\s*color:\\s*${value}`).test(text))!;
+    const color = resolve(rule.match(new RegExp(`(?:^|;)\\s*color:\\s*${value}`))![1]);
+    const background = resolve(rule.match(new RegExp(`background(?:-color)?:\\s*${value}`))![1]);
     expect(contrast(color, background), selector).toBeGreaterThanOrEqual(4.5);
   }
 });

@@ -18,9 +18,9 @@ const clockMinutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(
 export const hourLabel = (hour: number) => hour % 24 === 0 ? "12am" : hour === 12 ? "12pm" : hour < 12 ? `${hour}am` : `${hour - 12}pm`;
 const clockOf = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
 export const classColors = {
-  yoga: ["#dbeafe", "#1e3a8a"], pilates: ["#dcfce7", "#14532d"],
-  spin: ["#fef3c7", "#78350f"], dance: ["#fce7f3", "#831843"],
-  hiit: ["#fee2e2", "#7f1d1d"], barre: ["#ede9fe", "#4c1d95"],
+  yoga: ["#e3ece2", "#2f5238"], pilates: ["#f3e2d6", "#7a3f22"],
+  spin: ["#f4e8cc", "#6b4c0b"], dance: ["#f4dfe4", "#7d2f45"],
+  hiit: ["#f1dbd4", "#7e2b1f"], barre: ["#e8e0ee", "#4f3563"],
 } as const;
 
 export function formatTime(instant: string, timezone: string) {

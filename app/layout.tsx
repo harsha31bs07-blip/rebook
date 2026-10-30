@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import localFont from "next/font/local";
+import { Instrument_Sans, Instrument_Serif } from "next/font/google";
 import { connection } from "next/server";
 import "./globals.css";
 
-const geistSans = localFont({
-  src: "./fonts/geist-latin.woff2",
-  variable: "--font-geist-sans",
-  display: "swap",
-  weight: "100 900",
-});
+// Studio Linen type: Instrument Sans for the interface, Instrument Serif for a handful of display moments.
+const uiFont = Instrument_Sans({ subsets: ["latin"], variable: "--font-ui", display: "swap" });
+const displayFont = Instrument_Serif({ subsets: ["latin"], weight: "400", variable: "--font-serif", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Rebook — a calmer week for your studio",
@@ -21,7 +18,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} h-full antialiased`}
+      className={`${uiFont.variable} ${displayFont.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col"><a className="skip-link" href="#main-content">Skip to main content</a>{children}</body>
     </html>

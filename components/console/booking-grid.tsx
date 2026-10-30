@@ -13,8 +13,8 @@ if (process.env.NODE_ENV !== "production") enableDevValidations();
 
 type ActionRow = { id: string; customer: string; class: string; action: string; reason: string; amount: number; entitlement?: string };
 const theme = themeQuartz.withParams({
-  accentColor: "#1d4ed8", foregroundColor: "#0f172a", backgroundColor: "#ffffff", borderColor: "#e2e8f0",
-  headerBackgroundColor: "#f8fafc", fontFamily: "var(--font-geist-sans), Arial, sans-serif", fontSize: 12,
+  accentColor: "var(--brand)", foregroundColor: "var(--ink)", backgroundColor: "var(--surface)", borderColor: "var(--border)",
+  headerBackgroundColor: "var(--surface-2)", fontFamily: "var(--font-ui), Arial, sans-serif", fontSize: 12,
   wrapperBorderRadius: 10, rowHeight: 40, headerHeight: 36,
 });
 const rowId = ({ data }: GetRowIdParams<ActionRow>) => data.id;

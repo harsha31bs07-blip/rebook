@@ -7,8 +7,8 @@
 .heatmapRow strong, .day { font-size: 10px; align-self: center; }
 .day { text-align: center; white-space: nowrap; }
 .cell { min-height: 0; padding: 0 3px; line-height: 1.1; font-size: 9px; border: 1px solid transparent; border-radius: 4px; }
-.cell[aria-pressed="true"] { outline: 2px solid #b45309; outline-offset: -2px; }
-.cell:focus-visible { outline: 2px solid #111827; outline-offset: -2px; }
+.cell[aria-pressed="true"] { outline: 2px solid var(--warning); outline-offset: -2px; }
+.cell:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .heatmapLegend { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); }
 .heatmapLegend button { min-height: 24px; padding: 2px 5px; font-size: 9px; white-space: nowrap; }
 .pageDescription { font-size: 11px; color: var(--muted); margin: 0; padding: 0 24px 6px; flex-shrink: 0; }

@@ -106,6 +106,7 @@ export function ownerWaitlist(workspaceId: string, repository = getRepository())
   const { state } = repository.requireWorkspace(workspaceId), offers = repository.listWaitlistOffers(workspaceId);
   return [...new Set((state.waitlist ?? []).map((entry) => entry.sessionId))].map((sessionId) => ({ sessionId,
     title: state.sessions.find((session) => session.id === sessionId)?.title ?? "Cancelled class",
+    start: state.sessions.find((session) => session.id === sessionId)?.start,
     waiting: (state.waitlist ?? []).filter((entry) => entry.sessionId === sessionId && !offers.some((offer) => offer.entryId === entry.id && offer.status !== "withdrawn")
       && !state.bookings.some((booking) => booking.sessionId === sessionId && booking.customerId === entry.customerId && ["confirmed", "moved"].includes(booking.status))).length,
     offers: offers.filter((offer) => offer.sessionId === sessionId).map((offer) => ({ id: offer.id, status: offer.status, expiresAt: offer.expiresAt,

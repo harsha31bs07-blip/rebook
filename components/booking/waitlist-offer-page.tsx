@@ -6,7 +6,7 @@ import { Payments } from "./booking-page";
 
 const CLOSED = { claimed: "You're booked.", declined: "Thanks for letting us know. We'll offer the spot to the next person.", expired: "This offer has expired. Please contact the studio for another class.", withdrawn: "This class changed. Please contact the studio for an updated class." };
 export function OfferDetails({ data }: { data: WaitlistOfferView }) {
-  const format = (value: string) => new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const format = (value: string) => new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value));
   return <><p className="eyebrow">{data.studio.name}</p><h1>{data.session?.title ?? "Your waitlist spot"}</h1>
     {data.session && <><p><time dateTime={data.session.start}>{format(data.session.start)}</time></p><p>{data.session.instructor} · {data.session.room}</p></>}
     {data.status === "offered" ? <p role="status">We&apos;ve held a spot for you until <time dateTime={data.expiresAt}>{format(data.expiresAt)}</time>.</p>
@@ -39,7 +39,9 @@ export default function WaitlistOfferPage({ token, clientId }: { token: string; 
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Please try again shortly."); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  return <main className="customer-booking customer-choice waitlist-offer" id="main-content"><section className="booking-receipt">
+  return <main className="customer-booking customer-choice waitlist-offer" id="main-content">
+    <header className="booking-header"><span className="brand">rebook<span>.</span></span><span className="muted">A spot opened on your waitlist.</span></header>
+    <section className="booking-receipt">
     {data ? <><OfferDetails data={data} />{data.status === "offered" && <>
       {paying && data.session ? <><h2>Complete your booking</h2><p>{data.customer.name} · {data.customer.email}</p>
         <Payments id={data.bookingId} session={data.session} customer={data.customer} waitlistToken={token} clientId={clientId} sandbox validate={() => true}

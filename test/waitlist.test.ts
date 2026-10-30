@@ -113,6 +113,9 @@ it.each([
   const after = repository.requireWorkspace(workspaceId).state;
   expect(after.bookings.filter((booking) => booking.id !== "prior")).toEqual(free ? [expect.objectContaining({ packVisitUsed: true, entitlement: { kind: "pack", name: "10 classes" } })] : []);
   if (free) expect(packBalance(after, repository.listLedger(workspaceId), customerId, "10 classes")).toBe(2);
+  // An unusable pack falls back to paying: checkout must accept the held offer.
+  const person = after.customers.find((customer) => customer.id === customerId)!;
+  if (!free) expect(await createOrder(workspaceId, { sessionId, customer: { name: person.name, email: person.email }, waitlistToken: token() }, randomUUID(), repository)).toMatchObject({ orderId: expect.any(String) });
 });
 it("advances on decline and lazily on owner reads after expiry", async () => {
   setup(); fillFreedSeats(workspaceId, repository);

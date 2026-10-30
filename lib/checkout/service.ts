@@ -9,6 +9,12 @@ import { envLimit, limits } from "../api/limits";
 import { spendableCredit } from "../credits/balance";
 
 import { checkoutHoldsSeat, heldOffers, offerHoldsSeat } from "../waitlist/capacity";
+import { claimEntitlement } from "../waitlist/entitlement";
+/** A usable pack or membership books the spot free on the offer page; only otherwise is the spot paid at checkout. */
+function waitlistEntitlement(state: State, offer: WaitlistOffer, session: Session, ledger: Parameters<typeof claimEntitlement>[1]) {
+  const entry = state.waitlist?.find((item) => item.id === offer.entryId);
+  return entry ? claimEntitlement(state, ledger, entry, session).entitlement : undefined;
+}
 
 export const WaitlistTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const CheckoutInputSchema = z.strictObject({
@@ -142,7 +148,7 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
         if (input.waitlistToken) {
           const customer = state.customers.find((item) => item.id === offer?.customerId);
           if (!offer || !offerHoldsSeat(offer, repository.listCheckout(workspaceId)) || !customer
-            || state.waitlist?.find((entry) => entry.id === offer.entryId)?.entitlement
+            || waitlistEntitlement(state, offer, session, repository.listLedger(workspaceId))
             || customer.name !== input.customer.name || customer.email !== input.customer.email
             || repository.listCheckout(workspaceId).some((item) => item.waitlistOfferId === offer.id && holdsSeat(item))) {
             throw new StoreError(409, "This waitlist offer is no longer available.");

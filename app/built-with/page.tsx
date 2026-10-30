@@ -1,7 +1,7 @@
 import Link from "next/link";
 import OpenDemoButton from "../../components/console/open-demo-button";
 
-export const metadata = { title: "How it's built · Rebook", description: "Where PayPal, Bryntum, AG Studio, Gemini and WebMCP power Rebook's recovery desk." };
+export const metadata = { title: "How it's built · Rebook", description: "Where PayPal, Bryntum, AG Studio, Gemini, MCP and WebMCP power Rebook's recovery desk." };
 
 type FeatureRow = [feature: string, use: string, source: string];
 
@@ -56,6 +56,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
     ["Server-side captures", "The booking capture route verifies the order, amount and class before recording a paid booking; seeded scenario bookings also use sandbox captures.", "booking", "See it: payment receipt", "lib/checkout/service.ts#L207-L253"],
     ["Payments v2 refunds", "Approve and refund returns money to the original capture. The ledger and stable PayPal-Request-Id protect retries.", "console", "See it: plan and refund", "lib/paypal/client.ts#L257-L263"],
     ["Payouts", "After a substitute accepts on their cover link, the owner pays the cover fee with a PayPal payout. The request id doubles as the batch id, so a lost response replays the same payout within PayPal's 30-day duplicate check; an older unconfirmed payout stops for a manual check.", "console", "See it: cover instructors", "lib/recovery/cover-pay.ts#L155-L203"],
+    ["Agent checkout handoff", "A customer's own AI assistant books through the studio's MCP server: the Orders v2 order carries an experience context, so the tool returns PayPal's approval link. The person approves on PayPal and returns to the studio, where the same verified capture path records the booking. The assistant can never pay.", "booking", "See it: book a class", "lib/agents/mcp.ts#L70-L87"],
     ["Ask the next instructor", "If the substitute says no, the console names the next qualified instructor who is free then and suits everyone booked; one click gives them the class and their own cover link, and the payout follows whoever teaches.", "console", "See it: cover instructors", "lib/recovery/cover-pay.ts#L75-L115"],
     ["Webhooks + signature verification", "The webhook endpoint verifies PayPal signatures before capture/refund events update the ledger. No unsigned event is trusted.", "console", "See it: refund results", "app/api/paypal/webhook/route.ts#L6-L48"],
     ["Transaction Search", "During demo preparation, Transaction Search checks uncertain seeded capture outcomes after the idempotency window expires. Inconclusive evidence stays labelled as a simulated fallback.", "console", "See it: payment preparation", "lib/demo/createWorkspace.ts#L66-L106"],
@@ -66,7 +67,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
     <article>
       <p className="eyebrow">The tools behind a calmer week</p><h1>How Rebook is built</h1>
       <p>From a broken schedule to a reviewed recovery, a sandbox refund and an auditable receipt. Each integration has a job you can try.</p>
-      <nav className="built-nav" aria-label="Built with sections">{["PayPal", "Bryntum", "AG Studio", "AI", "WebMCP"].map((name) => <a key={name} href={`#${name.toLowerCase().replaceAll(" ", "-")}`}>{name}</a>)}</nav>
+      <nav className="built-nav" aria-label="Built with sections">{["PayPal", "Bryntum", "AG Studio", "AI", "Agents"].map((name) => <a key={name} href={`#${name.toLowerCase().replaceAll(" ", "-")}`}>{name}</a>)}</nav>
       <section id="paypal"><h2>PayPal</h2><p>Real sandbox payments and refunds; no real money moves. Simulated payments elsewhere in the fictional week are labelled.</p>
         <div className="built-table"><table><thead><tr><th scope="col">API / integration</th><th scope="col">Used in Rebook</th><th scope="col">See it</th></tr></thead><tbody>{paypal.map(([name, use, destination, label, source]) => <tr key={name}><th scope="row">{name}</th><td>{use}<br /><CodeLink source={source} /></td><td>{flow(destination, label)}</td></tr>)}</tbody></table></div>
         <p>The PayPal context plugin&apos;s TypeScript skills for client initialization, calling endpoints and error handling guided the migration to the APIMatic-generated SDK. PaymentsController also reads captures and refunds during reconciliation.</p>
@@ -85,7 +86,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
         ["Why money never depends on the model", "AI cannot approve or execute payments. The owner approves a versioned plan; server validation, the ledger and PayPal determine refunds.", "lib/executor/executePlan.ts#L34-L90"],
         ["Analyst availability", "Chat explains a provider outage in plain language. The dashboard, reports and recovery workflow keep working.", "lib/insights/gemini-adapter.ts#L88-L144"],
       ]} /></section>
-      <section id="webmcp"><h2>WebMCP</h2><p>Page-scoped tools let a compatible browser assistant inspect the schedule, prepare a recovery preview, select a booking or query Studio. Owner approval and payment confirmation remain human actions.</p><Link className="built-flow" href="/agent-ready">Explore the agent-ready flow →</Link><br /><CodeLink source="lib/webmcp/studio.ts#L4-L23" /></section>
+      <section id="agents"><h2>Agents: MCP and WebMCP</h2><p>Each studio is a remote MCP server: a customer’s own assistant can list classes, book (PayPal approval link, never paying itself), join a waitlist or answer a rebooking link, and a refund needs the person’s confirmation. <CodeLink source="lib/agents/mcp.ts#L70-L87" /> Page-scoped WebMCP tools let a compatible browser assistant inspect the schedule, prepare a recovery preview, select a booking or query Studio. Owner approval and payment confirmation remain human actions.</p><Link className="built-flow" href="/agent-ready">Explore the agent-ready flow →</Link><br /><CodeLink source="lib/webmcp/studio.ts#L4-L23" /></section>
     </article>
   </main>;
 }

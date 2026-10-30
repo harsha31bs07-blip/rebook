@@ -241,7 +241,7 @@ it("explains rules fallback and hides upstream refund diagnostics behind a Retry
 it("renders every built-with section with feature tables and live-flow links", async () => {
   const html = renderToStaticMarkup(await BuiltWithPage({ searchParams: Promise.resolve({ workspace: "workspace1" }) }));
   for (const name of ["PayPal", "Orders v2", "JS SDK v6", "Server-side captures", "Payments v2 refunds", "signature verification", "Transaction Search", "APIMatic", "Bryntum Scheduler", "AG Studio", "Studio Agent Framework", "Custom tools", "WebMCP bridge", "Disruption interpretation", "Gemini first; Groq takes small requests when Gemini is busy", "Deterministic solver", "Why money never depends on the model", "Rules (AI busy)"]) expect(html).toContain(name);
-  for (const section of ["paypal", "bryntum", "ag-studio", "ai", "webmcp"]) expect(html).toContain(`id="${section}"`);
+  for (const section of ["paypal", "bryntum", "ag-studio", "ai", "agents"]) expect(html).toContain(`id="${section}"`);
   for (const href of ["/w/workspace1/book", "/w/workspace1", "/w/workspace1/dashboard#recovery-analyst", "/agent-ready"]) expect(html).toContain(`href="${href}"`);
   expect(html.match(/<table>/g)).toHaveLength(4);
   const rows = [...html.matchAll(/<tr>(.*?)<\/tr>/g)].map((match) => match[1]).filter((row) => !row.includes('scope="col"'));

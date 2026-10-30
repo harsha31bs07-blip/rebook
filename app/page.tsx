@@ -7,7 +7,7 @@ const PROOF = [
   { value: "43/45", label: "messy owner messages read correctly", detail: "Rules alone: 22. Zero dangerous guesses.", href: `${repo}/docs/interpretation-messy-eval.md`, link: "Live evaluation" },
   { value: "22/24", label: "customer requests handled correctly", detail: "One real option to confirm, or a clarifying question. Zero unsafe actions, including injection attempts.", href: `${repo}/docs/customer-assistant-eval.md`, link: "Live evaluation" },
   { value: "~7 s", label: "for six PayPal sandbox refunds after one approval, in our sandbox runs", detail: "A retry reuses the same request ID, and each refund is reconciled with PayPal.", href: "/built-with#paypal", link: "How refunds work" },
-  { value: "1,000+", label: "automated tests", detail: "Plus a scripted browser run of the whole judge path against the live site.", href: `${repo}#tests`, link: "Test notes" },
+  { value: "1,300+", label: "automated tests", detail: "Plus a scripted browser run of the whole judge path against the live site.", href: `${repo}#tests`, link: "Test notes" },
 ];
 
 export default function Home() {
@@ -26,6 +26,6 @@ export default function Home() {
       <ul className="proof-grid">{PROOF.map((item) => <li key={item.value}><strong>{item.value}</strong><p>{item.label}</p><span>{item.detail}</span>
         {item.href.startsWith("/") ? <Link href={item.href}>{item.link}</Link> : <a href={item.href} target="_blank" rel="noreferrer">{item.link}<span className="sr-only"> (opens GitHub)</span></a>}</li>)}</ul>
     </section>
-    <footer className="landing-footer"><span>Less admin. More room to move.</span><Link href="/built-with">How it&apos;s built</Link><Link href="/agent-ready">Agent-ready with WebMCP</Link><span>Rebook · A calmer week starts here.</span></footer>
+    <footer className="landing-footer"><span>Less admin. More room to move.</span><Link href="/built-with">How it&apos;s built</Link><Link href="/agent-ready">Agent-ready: MCP and WebMCP</Link><span>Rebook · A calmer week starts here.</span></footer>
   </main>;
 }

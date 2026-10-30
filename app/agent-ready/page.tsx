@@ -4,9 +4,13 @@ export default function AgentReadyPage() {
   return <main id="main-content" tabIndex={-1} className="agent-ready-page">
     <header className="landing-header"><Link href="/" className="wordmark">rebook<span className="wordmark-dot">.</span><span className="sr-only"> home</span></Link><Link href="/">Back to Rebook</Link></header>
     <article>
-      <p className="eyebrow">Agent-ready with WebMCP</p>
+      <p className="eyebrow">Agent-ready: MCP and WebMCP</p>
       <h1>Assistants prepare.<br />Humans approve money.</h1>
-      <p>Rebook publishes structured tools to compatible browser assistants. An assistant can read your week, prepare a recovery preview, or select a class. You see the result in the same interface you use yourself.</p>
+      <p>Rebook publishes structured tools in two places. Each studio is a remote MCP server that a customer’s own assistant can call from anywhere, and every page offers WebMCP tools to a compatible browser assistant. You see every result in the same interface you use yourself.</p>
+      <h2>Your customers’ own assistants (MCP)</h2>
+      <p>Each studio’s booking page shows its MCP address (<code>/api/mcp/&lt;bookingId&gt;</code>), the same public capability as the booking page. An assistant such as Claude or ChatGPT can list classes, book one, join a waitlist, or read and answer the private rebooking link the studio sent after a disruption.</p>
+      <p>It never pays. Booking holds the seat for 10 minutes and returns a PayPal approval link; the person approves the payment on PayPal and returns to the studio, where the payment is captured and checked. A refund through an assistant needs the person’s explicit confirmation first. <a href="https://github.com/harsha31bs07-blip/rebook/blob/main/docs/agents.md" target="_blank" rel="noreferrer">How the MCP server works</a></p>
+      <h2>Browser assistants (WebMCP)</h2>
       <h2>You make the call</h2>
       <p>A recovery preview does not change your schedule or issue refunds. Only the owner’s click on <strong>Approve and refund</strong> applies the plan and starts refunds. An assistant’s approval request displays “An assistant prepared this plan. Review and approve.”</p>
       <p>For a booking, an assistant can select a class and prefill your name and email. You must approve payment through PayPal or the hosted card checkout. Assistants never need your payment credentials.</p>

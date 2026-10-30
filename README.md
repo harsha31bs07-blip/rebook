@@ -16,15 +16,15 @@ The walkthrough takes about 60 seconds once your studio is ready (first load can
 2. Pick **Maya has the flu and can't teach Monday**, then **Understand disruption > Plan recovery**.
 3. Review **9 kept / 16 moved / 6 refunded**, with **$577 kept vs $135 refunded**. Alex covers yoga; dance and barre move to Tuesday. Optionally use **Move** or drag a recovery class; totals update after validation.
 4. Click **Approve and refund**. Review the six sandbox refund receipts. If PayPal is slow, **Retry** reconciles existing refunds before another attempt.
-5. In **Customer messages and links**, open a card labelled **Private choice link**. Tell the assistant what works ("anything after 6 this week, otherwise refund me") or choose **Keep**, **Pick another class** or **Refund**.
-6. Under **Cover instructors**, open Alex's cover link and accept, then press **Pay Alex $35 with PayPal**: a sandbox PayPal payout.
+5. Under **What happens next**, choose **Message customers** and open a card labelled **Private choice link**. Tell the assistant what works ("anything after 6 this week, otherwise refund me") or choose **Keep**, **Pick another class** or **Refund**.
+6. Under **What happens next**, open Alex's cover page and accept, then in **Studio tools > Cover pay** press **Pay Alex $35 with PayPal**: a sandbox PayPal payout.
 7. Open **Dashboard > Ask Recovery analyst** and ask "What did Monday's disruption cost us?", "Which class type earns the most revenue?" or "Add a bar chart of revenue by class type".
 
 **Try it on your own week:** [/import](https://rebook-by9u.onrender.com/import) reads one week of a booking-system export (one row per booking), shows every column and class type it understood for you to correct, and builds a private copy of that week to rehearse a recovery on. **Use a sample week** loads a Mindbody-style export if you don't have one to hand. If a substitute says no, the console offers the next qualified instructor who is free and suits everyone booked, in one click.
 
 ## Correct an approved recovery
 
-On an approved recovery, choose **The disruption is over — restore the schedule**. Review the proposed correction in the timeline and booking list, then **Approve correction**. `POST /api/workspaces/[id]/plans/[planId]/withdraw` previews it; the existing approve endpoint applies it. Each recovery can have one correction; discarding its preview allows another preview.
+On an approved recovery, choose **Disruption over? Restore the original schedule**. Review the proposed correction in the timeline and booking list (drag a restored class, or use Move, to fine-tune it; a correction never refunds anyone), then **Approve correction**. `POST /api/workspaces/[id]/plans/[planId]/withdraw` previews it; the existing approve endpoint applies it. Each recovery can have one correction; discarding its preview allows another preview.
 
 Corrections withdraw the disruption constraint and restore upcoming classes only when their recovery placement is unchanged and their original placement still fits. Customers get updated private links and unused substitute covers close. Refunds, studio credits and cover payouts already issued stay recorded; no new refunds are issued. Started classes, cancellations and customer moves to another class stay as they are, with warnings for anything that cannot be restored.
 
@@ -34,7 +34,7 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 
 ## Built with
 
-[See every integration in the product: /built-with](https://rebook-by9u.onrender.com/built-with). PayPal handles sandbox checkout and refunds; Bryntum Scheduler presents the recovery for review; AG Studio reports on workspace records. The APIMatic-generated PayPal Server SDK handles server payment calls. Gemini interprets disruptions and powers the Recovery analyst; Rebook's deterministic solver calculates the plan and amounts. WebMCP exposes page-scoped tools; owner approval and payment confirmation remain human actions.
+[See every integration in the product: /built-with](https://rebook-by9u.onrender.com/built-with). PayPal handles sandbox checkout and refunds; Bryntum Scheduler presents the recovery for review; AG Studio reports on workspace records. The APIMatic-generated PayPal Server SDK handles server payment calls. Gemini interprets disruptions and powers the Recovery analyst; Rebook's deterministic solver calculates the plan and amounts. Each studio is also a remote MCP server for customers' own AI assistants ([docs](docs/agents.md)), and WebMCP exposes page-scoped tools; owner approval, payment approval and refund confirmation remain human actions.
 
 ## What the AI does
 
@@ -67,7 +67,7 @@ Models: Gemini first, Groq as fallback; the deterministic solver, server validat
 | After a sandbox payment/refund, refresh its receipt or Dashboard | Verified webhook deliveries update the ledger; arrival depends on PayPal delivery and webhook configuration | [signature gate](https://github.com/harsha31bs07-blip/rebook/blob/main/app/api/paypal/webhook/route.ts#L6-L48), [ledger update](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/webhook.ts#L76-L101) |
 | Open a studio and inspect payment preparation | New scenarios use sandbox captures. When a previous attempt is uncertain and its replay window has expired, Transaction Search checks matching references and amounts; inconclusive outcomes stay labelled | [createWorkspace.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/demo/createWorkspace.ts#L66-L106), [lookup and search](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/client.ts#L229-L255) |
 | Use checkout or refund Retry | Server SDK controllers perform payment operations with server-only credentials, bounded retries and mapped errors | [client.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/paypal/client.ts#L27-L68) |
-| Approve a recovery that frees seats; open Waitlist | Offers go in join order, hold seats, and appear in the outbox; customers claim or decline on a private link | [waitlist service](lib/waitlist/service.ts), [offer page](app/s/[token]/page.tsx) |
+| Approve a recovery that frees seats; open **Studio tools > Waitlist** | Offers go in join order, hold seats, and appear in the outbox; customers claim or decline on a private link | [waitlist service](lib/waitlist/service.ts), [offer page](app/s/[token]/page.tsx) |
 
 ### Bryntum Scheduler
 
@@ -151,7 +151,7 @@ npx tsc --noEmit
 npm run lint
 ```
 
-Vitest unit/integration suites mock PayPal, Gemini and Groq; they cover solver constraints, owner adjustments, version checks, payment idempotency/reconciliation, webhooks, checkout, customer choices, Studio and WebMCP. Live sandbox, browser geometry and trial behaviour need manual verification.
+Vitest unit/integration suites mock PayPal, Gemini and Groq; they cover solver constraints, owner adjustments, version checks, payment idempotency/reconciliation, webhooks, checkout, customer choices, Studio, MCP and WebMCP. Live sandbox, browser geometry and trial behaviour need manual verification.
 
 Interpretation is measured against 177 labelled owner statements, including typos, Indian English, slang, ranges and 94 statements that must trigger a clarifying question. The latest live run with Gemini and Groq scored 174/177 (98.31%) with 0 dangerous false positives; the three misses are typos where Rebook asks "Did you mean Maya Chen?" rather than guessing. See [the live report](docs/interpretation-eval.md).
 
@@ -175,14 +175,14 @@ The core flow (interpretation, the solver, review and approval, customer links, 
 
 ## Honest limits
 
-- Waitlist offers hold a seat for up to 12 hours, closing one hour before class. The solver ignores the waitlist; approval checks held seats and rejects a recovery that would exceed capacity. Customers can claim with a pack or membership, or pay through PayPal sandbox checkout.
+- Waitlist offers hold a seat for up to 12 hours, closing one hour before class. The solver ignores the waitlist; approval checks held seats and rejects a recovery that would exceed capacity. Customers can claim with a pack or membership while it is valid (an expired or empty pack falls back to paying), or pay through PayPal sandbox checkout.
 
 - Rebook tracks imported pack balances and returns visits without cash refunds; use the sync API to apply balance changes in the booking system, or export the CSV. Membership bookings release seats without cash refunds.
 - The Mindbody connector targets the shared sandbox only (a real studio needs Mindbody's go-live approval); Glofox and Momence have no connector yet. Mindbody cannot create classes of an inactive class type, so such moves are left to the owner. Inbound events never move money, and the workspace remains limited to one studio week.
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.
 - Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.
-- The owner workspace URL acts as the owner capability for this demo; a real deployment needs owner sign-in. The separate public booking URL (`/b/<bookingId>`) is read/checkout-only and grants no owner access. Customer choice links use separate per-customer tokens.
+- The owner workspace URL acts as the owner capability for this demo; a real deployment needs owner sign-in. The separate public booking URL (`/b/<bookingId>`) and its MCP endpoint (`/api/mcp/<bookingId>`) are read/checkout-only and grant no owner access. Customer choice links use separate per-customer tokens.
 - Imported weeks carry no customer availability or PayPal payments: customers are assumed to fit any time (and choose on their own page), and refunds are simulated. Class types are limited to six families (yoga, pilates, spin, dance, HIIT, barre).
 - Corrections do not recreate cancelled classes or undo settled money. Restoration skips started classes, later schedule changes and original placements that are no longer feasible.
 - Recovery stays within one studio week. Moves respect qualifications, availability, clashes and capacity; customers who cannot move need refunds.

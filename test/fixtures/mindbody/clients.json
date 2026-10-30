@@ -1,0 +1,21 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 2
+  },
+  "Clients": [
+    {
+      "Id": "100015648",
+      "UniqueId": 100015648,
+      "FirstName": "Rowan100015648",
+      "LastName": "Vale",
+      "Email": "rowan100015648@example.com"
+    },
+    {
+      "Id": "100015625",
+      "UniqueId": 100015625,
+      "FirstName": "Rowan100015625",
+      "LastName": "Vale",
+      "Email": "rowan100015625@example.com"
+    }
+  ]
+}

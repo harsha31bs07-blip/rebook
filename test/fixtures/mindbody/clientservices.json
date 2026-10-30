@@ -1,0 +1,15 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 1
+  },
+  "ClientServices": [
+    {
+      "Id": 100257556,
+      "Name": "10 Class Card",
+      "Count": 10,
+      "Remaining": 7,
+      "ExpirationDate": "2026-12-29T00:00:00",
+      "Current": true
+    }
+  ]
+}

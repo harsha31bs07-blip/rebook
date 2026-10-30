@@ -1,0 +1,7 @@
+{
+  "Error": {
+    "Message": "At least one of the following parameters must be passed: ClassScheduleIds, ClientIds, WaitlistEntryIds, ClassIds",
+    "Code": "MissingRequiredFields",
+    "ReasonCode": null
+  }
+}

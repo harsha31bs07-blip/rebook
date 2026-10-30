@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import type { ClassType } from "@/lib/domain/types";
 import { FIELD_LABELS, IMPORT_FIELDS, REQUIRED_FIELDS, type ColumnMapping, type ImportField } from "@/lib/import/fields";
 import type { ImportPreview, Source } from "@/lib/import/service";
+import type { ImportSummary } from "@/lib/import/build";
 
 const TYPES: ClassType[] = ["yoga", "pilates", "spin", "dance", "hiit", "barre"];
 const TYPE_LABELS: Record<ClassType, string> = { yoga: "Yoga", pilates: "Pilates", spin: "Spin / cycling", dance: "Dance", hiit: "HIIT / strength", barre: "Barre" };
@@ -20,13 +21,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 /** Load an export, check every column and class type Rebook read, then create a private studio from it. */
-export default function ImportPage() {
+export default function ImportPage({ enabled = false }: { enabled?: boolean }) {
   const router = useRouter();
   const [csv, setCsv] = useState(""), [fileName, setFileName] = useState("");
   const [studioName, setStudioName] = useState(""), [timezone, setTimezone] = useState("America/New_York"), [zoneChosen, setZoneChosen] = useState(false);
   const [dateOrder, setDateOrder] = useState<"mdy" | "dmy">("mdy");
   const [preview, setPreview] = useState<ImportPreview>(), [busy, setBusy] = useState(""), [error, setError] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
+  const [mindbody, setMindbody] = useState<{ id: string; summary: ImportSummary; warnings: string[] }>();
+  async function importMindbody() {
+    setBusy("Reading Mindbody's sandbox week…"); setError("");
+    try { setMindbody(await post("/api/import/mindbody", {})); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to import Mindbody."); }
+    finally { setBusy(""); }
+  }
 
   async function read(text: string, choices?: Choices, zone = timezone, order = dateOrder) {
     setBusy("Reading your week…"); setError("");
@@ -68,6 +76,14 @@ export default function ImportPage() {
     <section className="import-intro"><p className="eyebrow">Bring your own week</p><h1>Try Rebook on your studio’s real schedule.</h1>
       <p className="landing-description">Export one week of bookings from your booking system as a CSV, one row per booking. Rebook reads it, shows you exactly what it understood, and builds a private copy of your week to rehearse a bad morning on.</p>
       <p className="muted import-privacy">Only column headers and class names are sent to the AI, never customer details. Payments are simulated and customers are never contacted. Demo studios reset when the server restarts.</p></section>
+
+    {enabled && <section className="import-step" aria-labelledby="mindbody-import-title"><h2 id="mindbody-import-title">Mindbody sandbox</h2>
+      <p>Reads one week from Mindbody&apos;s public sandbox studio.</p>
+      <button type="button" disabled={!!busy} onClick={() => void importMindbody()}>Import from Mindbody (sandbox)</button>
+      {mindbody && <><p className="import-summary" role="status"><strong>{mindbody.summary.classes}</strong> classes · <strong>{mindbody.summary.instructors}</strong> instructors · <strong>{mindbody.summary.rooms}</strong> rooms · <strong>{mindbody.summary.customers}</strong> customers · <strong>{mindbody.summary.bookings}</strong> bookings · week of {mindbody.summary.weekOf}</p>
+        <details className="import-assumptions" open><summary>What Rebook assumed</summary><ul>{mindbody.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>
+        <button type="button" onClick={() => router.push(`/w/${mindbody.id}`)}>Open the Mindbody workspace</button></>}
+    </section>}
 
     <section className="import-step" aria-labelledby="step-file"><h2 id="step-file"><span aria-hidden="true">1</span> Your booking export</h2>
       <div className="import-fields">

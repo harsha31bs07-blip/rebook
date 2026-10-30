@@ -9,6 +9,7 @@ import { nextWeekStart } from "../seed/seed";
 import { activateConstraint, preserveConstraints } from "../solver/constraints";
 import type { CoverConfirmation } from "../recovery/covers";
 import type { DeliveryStatus } from "../choices/outbox";
+import type { MindbodyLink } from "../connectors/mindbody/types";
 
 export type Delivery = { workspaceId: string; planId: string; customerId: string; kind: "message" | "reminder" | `credit:${string}`;
   status: DeliveryStatus; attemptId: string; messageId?: string; createdAt: string; updatedAt: string; reason?: string };
@@ -105,6 +106,10 @@ export class Repository {
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS mindbody_links (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL,
+        lock_owner TEXT, lock_until INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ledger (
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
@@ -195,6 +200,27 @@ export class Repository {
   syncKey(workspaceId: string): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
     return createHmac("sha256", secret).update(`sync:${workspaceId}`).digest("base64url");
+  }
+  mindbodyLink(workspaceId: string): MindbodyLink | undefined {
+    const row = this.db.prepare("SELECT data FROM mindbody_links WHERE workspace_id = ?").get(workspaceId) as JsonRow | undefined;
+    return row ? JSON.parse(row.data) as MindbodyLink : undefined;
+  }
+  saveMindbodyLink(workspaceId: string, link: MindbodyLink): void {
+    this.db.prepare(`INSERT INTO mindbody_links (workspace_id, data, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(workspace_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`).run(workspaceId, JSON.stringify(link), new Date().toISOString());
+  }
+  acquireMindbodyLock(workspaceId: string, owner: string): void {
+    const result = this.db.prepare("UPDATE mindbody_links SET lock_owner = ?, lock_until = ? WHERE workspace_id = ? AND lock_until < ?")
+      .run(owner, Date.now() + 120_000, workspaceId, Date.now());
+    if (!result.changes) throw new StoreError(409, "A Mindbody sync is already running.");
+  }
+  renewMindbodyLock(workspaceId: string, owner: string): void {
+    const result = this.db.prepare("UPDATE mindbody_links SET lock_until = ? WHERE workspace_id = ? AND lock_owner = ? AND lock_until >= ?")
+      .run(Date.now() + 120_000, workspaceId, owner, Date.now());
+    if (!result.changes) throw new StoreError(409, "Mindbody sync lease expired.");
+  }
+  releaseMindbodyLock(workspaceId: string, owner: string): void {
+    this.db.prepare("UPDATE mindbody_links SET lock_owner = NULL, lock_until = 0 WHERE workspace_id = ? AND lock_owner = ?").run(workspaceId, owner);
   }
   syncAcks(workspaceId: string): Set<string> {
     return new Set((this.db.prepare("SELECT change_id FROM sync_acks WHERE workspace_id = ?").all(workspaceId) as { change_id: string }[]).map((row) => row.change_id));
@@ -516,6 +542,7 @@ export class Repository {
     }
   }
   clearPlans(workspaceId: string): void {
+    this.db.prepare("DELETE FROM mindbody_links WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM sync_acks WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM sync_events WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM waitlist_offers WHERE workspace_id = ?").run(workspaceId);

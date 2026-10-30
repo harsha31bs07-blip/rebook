@@ -1,0 +1,13 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 1
+  },
+  "Sites": [
+    {
+      "Id": -99,
+      "Name": "Harbor Fitness",
+      "TimeZone": "America/Los_Angeles",
+      "CurrencyIsoCode": "USD"
+    }
+  ]
+}

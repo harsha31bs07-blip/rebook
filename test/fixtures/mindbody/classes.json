@@ -1,0 +1,278 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 11
+  },
+  "Classes": [
+    {
+      "Id": 19167,
+      "StartDateTime": "2026-11-02T09:15:00",
+      "EndDateTime": "2026-11-02T10:15:00",
+      "ClassDescription": {
+        "Id": 257,
+        "Name": "Bottoms Up"
+      },
+      "Staff": {
+        "Id": 100000237,
+        "FirstName": "Casey100000237",
+        "LastName": "River",
+        "DisplayName": "Coach 100000237"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 1,
+        "Name": "Practice room 1"
+      },
+      "MaxCapacity": 30,
+      "TotalBooked": 3,
+      "IsCanceled": false
+    },
+    {
+      "Id": 19365,
+      "StartDateTime": "2026-11-07T06:20:00",
+      "EndDateTime": "2026-11-07T07:20:00",
+      "ClassDescription": {
+        "Id": 223,
+        "Name": "Yoga"
+      },
+      "Staff": {
+        "Id": 100000285,
+        "FirstName": "Casey100000285",
+        "LastName": "River",
+        "DisplayName": "Coach 100000285"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 3,
+        "Name": "Practice room 3"
+      },
+      "MaxCapacity": 20,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 20547,
+      "StartDateTime": "2026-11-08T11:00:00",
+      "EndDateTime": "2026-11-08T12:00:00",
+      "ClassDescription": {
+        "Id": 287,
+        "Name": "TRX Small Group"
+      },
+      "Staff": {
+        "Id": 100000271,
+        "FirstName": "Casey100000271",
+        "LastName": "River",
+        "DisplayName": "Coach 100000271"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 1,
+        "Name": "Practice room 1"
+      },
+      "MaxCapacity": 6,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 20809,
+      "StartDateTime": "2026-11-08T09:00:00",
+      "EndDateTime": "2026-11-08T10:00:00",
+      "ClassDescription": {
+        "Id": 169,
+        "Name": "Body Jam"
+      },
+      "Staff": {
+        "Id": 100000258,
+        "FirstName": "Casey100000258",
+        "LastName": "River",
+        "DisplayName": "Coach 100000258"
+      },
+      "Location": {
+        "Id": 2,
+        "Name": "Harbor Studio 2"
+      },
+      "Resource": null,
+      "MaxCapacity": 20,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 21604,
+      "StartDateTime": "2026-11-03T17:30:00",
+      "EndDateTime": "2026-11-03T18:30:00",
+      "ClassDescription": {
+        "Id": 291,
+        "Name": "Semi-private"
+      },
+      "Staff": {
+        "Id": 100000300,
+        "FirstName": "Casey100000300",
+        "LastName": "River",
+        "DisplayName": "Coach 100000300"
+      },
+      "Location": {
+        "Id": 2,
+        "Name": "Harbor Studio 2"
+      },
+      "Resource": null,
+      "MaxCapacity": 3,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 22419,
+      "StartDateTime": "2026-11-08T05:00:00",
+      "EndDateTime": "2026-11-08T06:00:00",
+      "ClassDescription": {
+        "Id": 173,
+        "Name": "Fitness Assessments"
+      },
+      "Staff": {
+        "Id": 100000164,
+        "FirstName": "Casey100000164",
+        "LastName": "River",
+        "DisplayName": "Coach 100000164"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 12,
+        "Name": "Practice room 12"
+      },
+      "MaxCapacity": 10,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 23303,
+      "StartDateTime": "2026-11-06T08:30:00",
+      "EndDateTime": "2026-11-06T08:45:00",
+      "ClassDescription": {
+        "Id": 329,
+        "Name": "Beginner Swim"
+      },
+      "Staff": {
+        "Id": 100000282,
+        "FirstName": "Casey100000282",
+        "LastName": "River",
+        "DisplayName": "Coach 100000282"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": null,
+      "MaxCapacity": 22,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 24324,
+      "StartDateTime": "2026-11-07T16:30:00",
+      "EndDateTime": "2026-11-07T17:45:00",
+      "ClassDescription": {
+        "Id": 69,
+        "Name": "Power Yoga"
+      },
+      "Staff": {
+        "Id": 100000279,
+        "FirstName": "Casey100000279",
+        "LastName": "River",
+        "DisplayName": "Coach 100000279"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": null,
+      "MaxCapacity": 20,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 24594,
+      "StartDateTime": "2026-11-04T08:00:00",
+      "EndDateTime": "2026-11-04T09:00:00",
+      "ClassDescription": {
+        "Id": 341,
+        "Name": "Reformer Pilates "
+      },
+      "Staff": {
+        "Id": 100000320,
+        "FirstName": "Casey100000320",
+        "LastName": "River",
+        "DisplayName": "Coach 100000320"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": null,
+      "MaxCapacity": 15,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 24768,
+      "StartDateTime": "2026-11-04T09:00:00",
+      "EndDateTime": "2026-11-04T09:30:00",
+      "ClassDescription": {
+        "Id": 342,
+        "Name": "Level 5 Bikram Yoga"
+      },
+      "Staff": {
+        "Id": 100000270,
+        "FirstName": "Casey100000270",
+        "LastName": "River",
+        "DisplayName": "Coach 100000270"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 5,
+        "Name": "Practice room 5"
+      },
+      "MaxCapacity": 15,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    },
+    {
+      "Id": 25030,
+      "StartDateTime": "2026-11-03T07:00:00",
+      "EndDateTime": "2026-11-03T07:45:00",
+      "ClassDescription": {
+        "Id": 345,
+        "Name": "Pilates 101"
+      },
+      "Staff": {
+        "Id": 100000164,
+        "FirstName": "Casey100000164",
+        "LastName": "River",
+        "DisplayName": "Coach 100000164"
+      },
+      "Location": {
+        "Id": 1,
+        "Name": "Harbor Studio 1"
+      },
+      "Resource": {
+        "Id": 5,
+        "Name": "Practice room 5"
+      },
+      "MaxCapacity": 5,
+      "TotalBooked": 0,
+      "IsCanceled": false
+    }
+  ]
+}

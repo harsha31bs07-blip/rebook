@@ -1,0 +1,23 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 4
+  },
+  "Resources": [
+    {
+      "Id": 1,
+      "Name": "Practice room 1"
+    },
+    {
+      "Id": 3,
+      "Name": "Practice room 3"
+    },
+    {
+      "Id": 12,
+      "Name": "Practice room 12"
+    },
+    {
+      "Id": 5,
+      "Name": "Practice room 5"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ export type WorkspaceResponse = Workspace & {
   covers?: OwnerCover[];
   waitlist?: ReturnType<typeof import("../waitlist/service").ownerWaitlist>;
   sync?: ReturnType<typeof import("../sync/service").ownerSync>;
+  mindbody?: import("../connectors/mindbody/types").MindbodyStatus;
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };

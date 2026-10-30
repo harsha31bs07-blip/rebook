@@ -1,0 +1,45 @@
+{
+  "Class": {
+    "Id": 19167,
+    "Visits": [
+      {
+        "Id": 100343877,
+        "ClientId": "100015648",
+        "LateCancelled": false,
+        "ServiceId": 100257556,
+        "ServiceName": "10 Class Card",
+        "Service": {
+          "Id": 100257556,
+          "Name": "10 Class Card",
+          "Count": 10,
+          "Remaining": 7,
+          "ExpirationDate": "2026-12-29T00:00:00",
+          "Current": true
+        }
+      },
+      {
+        "Id": 100343800,
+        "ClientId": "100015625",
+        "LateCancelled": false,
+        "ServiceId": null,
+        "ServiceName": null,
+        "Service": null
+      },
+      {
+        "Id": 100343796,
+        "ClientId": "100015625",
+        "LateCancelled": false,
+        "ServiceId": 100257539,
+        "ServiceName": "Non Member Drop In",
+        "Service": {
+          "Id": 100257539,
+          "Name": "Non Member Drop In",
+          "Count": 1,
+          "Remaining": 0,
+          "ExpirationDate": "2027-10-28T00:00:00",
+          "Current": false
+        }
+      }
+    ]
+  }
+}

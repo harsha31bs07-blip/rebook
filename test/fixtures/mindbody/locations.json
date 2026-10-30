@@ -1,0 +1,15 @@
+{
+  "PaginationResponse": {
+    "TotalResults": 2
+  },
+  "Locations": [
+    {
+      "Id": 1,
+      "Name": "Harbor Studio 1"
+    },
+    {
+      "Id": 2,
+      "Name": "Harbor Studio 2"
+    }
+  ]
+}

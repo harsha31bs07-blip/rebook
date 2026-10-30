@@ -222,3 +222,17 @@ it("records a late paid race without taking a seat and lets the owner refund it 
   expect(await (await retryRefund(request(), ctx)).json()).toMatchObject({ status: "COMPLETED" });
   expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === row.id)?.status).toBe("refunded");
 });
+it("lets a visitor join a full class's waitlist from the public booking page, same-site only", async () => {
+  const { POST: join } = await import("../app/api/bookings/[bookingId]/waitlist/route");
+  const state = setup(); const bookingId = repository.requireWorkspace(workspaceId).bookingId;
+  const call = (body: object, origin = "http://localhost") => join(new Request(`http://localhost/api/bookings/${bookingId}/waitlist`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(body) }), { params: Promise.resolve({ bookingId }) });
+  const input = { sessionId, name: "Robin Vale", email: "robin@example.com" };
+  expect((await call(input)).status).toBe(409);
+  state.bookings.push({ id: "taken", sessionId, customerId: state.customers[5].id, status: "confirmed", amount: "22.00", bookedAt: new Date().toISOString() });
+  repository.saveState(workspaceId, state);
+  const joined = await call(input); expect(joined.status).toBe(200);
+  expect(await joined.json()).toMatchObject({ position: 4, title: state.sessions[0].title });
+  expect((await call(input)).status).toBe(200);
+  expect(repository.requireWorkspace(workspaceId).state.waitlist!.filter((entry) => entry.sessionId === sessionId)).toHaveLength(4);
+  expect((await call(input, "https://evil.example")).status).toBe(403);
+});

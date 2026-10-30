@@ -206,7 +206,8 @@ it("allows approval with no cover checks and shows who confirmed each cover in t
 
 it("scopes phone recovery flow, 44px targets and the persistent approve bar to <=760px", () => {
   const css = readFileSync("app/globals.css", "utf8");
-  const phone = css.slice(css.lastIndexOf("@media (max-width: 760px)"));
+  // Phone rules may live in more than one <=760px block (layout first, button-system touch targets last).
+  const phone = css.split("@media (max-width: 760px)").slice(1).join("");
   expect(phone).toContain(".timeline-panel.agenda-view { height: auto; }");
   expect(phone).toMatch(/\.plan-actions\s*\{[^}]*position: fixed;[^}]*inset: auto 0 0/);
   expect(phone).toContain("min-height: 44px"); expect(phone).toContain("min-width: 680px");

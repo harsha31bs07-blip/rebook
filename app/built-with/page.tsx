@@ -22,7 +22,7 @@ const bryntum: FeatureRow[] = [
 const studio: FeatureRow[] = [
   ["Report and pages", "Week overview, Disruptions and Money; saved report state per workspace.", "components/insights/studio-report.tsx#L39-L54"],
   ["Layout tools", "Edit report, measured canvas, page padding and widget layout tracks.", "lib/insights/report.ts#L5-L8"],
-  ["Theming", "studioTheme.withParams applies Rebook colours, typography, grids and chart palette.", "lib/insights/theme.ts#L3-L19"],
+  ["Theming", "studioTheme.withParams applies Rebook colours, typography, grids and chart palette.", "lib/insights/theme.ts#L3-L20"],
   ["Custom widgets and forms", "Recovery impact, Refund receipts, Week heatmap and Recovery metric; editable mappings and appearance.", "components/insights/widgets.tsx#L166-L203"],
   ["Queries and empty states", "Widgets query workspace data and show clear zero / no-disruption states.", "components/insights/widgets.tsx#L25-L42"],
   ["Cross-filtering", "Heatmap cells filter other widgets by instructor AND day.", "components/insights/widgets.tsx#L50-L77"],

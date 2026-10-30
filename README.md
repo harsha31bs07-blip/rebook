@@ -88,7 +88,7 @@ Rebook's solver does the re-planning: a fast first pass, then, only when that pa
 | Try in the live demo | What you see | Code |
 | --- | --- | --- |
 | Dashboard > Edit report > Rebook widgets | Recovery impact, Refund receipts, Week heatmap and Recovery metric, with forms | [widgets.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/widgets.tsx#L166-L203) |
-| Inspect the dashboard's cards, grids and charts | Rebook's colours and typography through `studioTheme.withParams` | [theme.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/theme.ts#L3-L19) |
+| Inspect the dashboard's cards, grids and charts | Rebook's colours and typography through `studioTheme.withParams` | [theme.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/theme.ts#L3-L20) |
 | Change the report layout or page, then reload that workspace | Report state saved under a workspace-specific browser-storage key | [studio-report.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/studio-report.tsx#L39-L54) |
 | Click a Week heatmap cell, then Clear selection | Other widgets filter by instructor AND day; the matrix remains available | [widgets.tsx](https://github.com/harsha31bs07-blip/rebook/blob/main/components/insights/widgets.tsx#L50-L77) |
 | Ask Recovery analyst: "Which class type earns the most revenue?" or "Add a bar chart of refunds by reason" | Direct, timestamped tools answer common questions in one fast call; preset charts are placed through Studio's state API; custom report edits ("Filter to Maya's classes") delegate to the built-in Page/Widget agents | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L125-L139) |

@@ -97,12 +97,12 @@ describe("durable owner outbox", () => {
   it("counts customers once, keeps partial replies waiting, and excludes unsent messages and receipts from reminders", async () => {
     const { id, plan, rows } = fixture();
     const initial = rows();
-    expect(summarizeOutbox(initial)).toEqual({ sent: 0, replied: 0, waiting: 0, closed: 0, notSent: initial.length });
+    expect(summarizeOutbox(initial)).toEqual({ sent: 0, replied: 0, waiting: 0, needsReply: initial.filter((row) => row.changes.some((change) => change.kind === "choice" || change.kind === "waitlist")).length, closed: 0, notSent: initial.length });
     const choice = initial.find((row) => row.changes.every((change) => change.kind === "choice"))!;
     const receipt = initial.find((row) => row.changes.every((change) => change.kind === "receipt"))!;
     await markCustomerContact(id, plan.id, choice.customerId, true, repository);
     await markCustomerContact(id, plan.id, receipt.customerId, true, repository);
-    expect(summarizeOutbox(rows())).toEqual({ sent: 2, replied: 0, waiting: 1, closed: 0, notSent: initial.length - 2 });
+    expect(summarizeOutbox(rows())).toMatchObject({ sent: 2, replied: 0, waiting: 1, closed: 0, notSent: initial.length - 2 });
     expect(waitingCustomers(rows()).map((row) => row.customerId)).toEqual([choice.customerId]);
     const partial = { ...choice, changes: [...choice.changes.map((change) => ({ ...change, sentAt: "now", reply: { status: "kept" as const, at: "now" } })), { ...choice.changes[0], sentAt: "now" }] };
     expect(outboxState(partial)).toMatchObject({ replied: false, waiting: true });

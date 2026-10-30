@@ -148,8 +148,10 @@ export default function Schedule({ state, mode, zoom, day, plan, updatedPlan, hi
       const skills = resource && ("skills" in resource ? resource.skills : resource.supports);
       const loads = resourceUtilisation(state, mode, String(record.id), plan);
       const selected = zoom === "day" ? [loads[day]] : loads;
-      const text = selected.map((item) => `${item.label} ${Number(item.booked.toFixed(2))}/${item.capacity}`).join(" | ");
-      return `<div class="resource-name">${StringHelper.encodeHtml(record.name)}</div><div class="resource-skills">${skills?.map((skill) => `<span class="skill-chip class-${skill}">${StringHelper.encodeHtml(skill)}</span>`).join("") ?? ""}</div><div class="resource-load" title="Booked / daily capacity (${loads[0].unit})">${StringHelper.encodeHtml(text)}</div>`;
+      const text = selected.map((item) => `${item.label} ${Number(item.booked.toFixed(2))} of ${item.capacity}`).join(", ");
+      // A small bar per day reads at a glance; the exact numbers stay in the label and tooltip.
+      const bars = zoom === "day" ? `${Number(selected[0].booked.toFixed(2))}/${selected[0].capacity} today` : selected.map((item) => `<span title="${StringHelper.encodeHtml(`${item.label} ${Number(item.booked.toFixed(2))}/${item.capacity}`)}"><i style="height:${Math.round(Math.min(1, item.capacity ? item.booked / item.capacity : 0) * 100)}%"></i><b>${StringHelper.encodeHtml(item.label.slice(0, 1))}</b></span>`).join("");
+      return `<div class="resource-name">${StringHelper.encodeHtml(record.name)}</div><div class="resource-skills">${skills?.map((skill) => `<span class="skill-chip class-${skill}">${StringHelper.encodeHtml(skill)}</span>`).join("") ?? ""}</div><div class="resource-load${zoom === "day" ? "" : " load-bars"}" role="img" aria-label="${StringHelper.encodeHtml(`Daily load (${loads[0].unit}): ${text}`)}">${bars}</div>`;
     },
   }], [state, mode, plan, zoom, day]);
   const editable = Boolean(plan && onAdjust && !busy);

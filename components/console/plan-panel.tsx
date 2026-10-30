@@ -101,18 +101,17 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
   const refunds = previous ? totals.refunded - previous.refunded : 0;
   const revenue = previous ? toCents(totals.revenueKept) - toCents(previous.revenueKept) : 0;
   const placementLabel = (placement: Placement) => `${new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(placement.start))} · ${state.instructors.find((item) => item.id === placement.instructorId)?.name ?? "Instructor"}`;
+  const explanation = <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>;
+  const timeSaved = <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>;
+  const messages = <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>;
   return <>
     <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
     <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
     <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
     {plan.correctionOf && <p className="notice" role="status">This undoes the recovery you approved for this disruption. Review the restored schedule, then approve.</p>}
     {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
-    {onWithdraw && <button className="full-width" disabled={busy} onClick={onWithdraw}>The disruption is over — restore the schedule</button>}
-    {!proposed && <p className="muted plan-context">{recovery.noReply ? `${recovery.noReplyCustomers} customer${recovery.noReplyCustomers === 1 ? " hasn't" : "s haven't"} replied` : "All customers replied"}. Confirmed bookings can still change through private links.</p>}
-    {!proposed && outboxSummary && <p className="muted plan-context" role="status" aria-live="polite">{outboxSummary.sent} sent · {outboxSummary.replied} replied · {outboxSummary.waiting} waiting</p>}
-    {plan.status === "executed" && onPreview && <NextSteps workspaceId={plan.workspaceId} summary={outboxSummary} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} customerPath={customerPath} onMessages={onMessages} onPreview={onPreview} />}
     <p className="muted plan-context">{label.subject}<br />{label.window}</p>
-    <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>
+    {proposed && timeSaved}
     <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
       {proposed ? <>
         <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
@@ -142,16 +141,19 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
         {onUndo && <button disabled={busy} onClick={onUndo} aria-label="Undo last adjustment">Undo</button>}
       </div>}
     </div>}
-    <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
+    {proposed && explanation}
     {plan.warnings.length > 0 && <div className="warning"><strong>Please review</strong>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
     {proposed && <div className={`plan-actions ${approvalRequested ? "assistant-approval" : ""}`}>{approvalRequested && <p className="assistant-approval-banner" role="status">An assistant prepared this plan. Review and approve.</p>}<button id="judge-approve" className="primary" aria-describedby={approvalRequested ? "assistant-approval-help" : undefined} disabled={busy} onClick={() => setApprovalReview(reviewKey)}>{plan.correctionOf ? approving ? "Restoring schedule…" : "Approve correction" : approving ? "Processing refunds…" : "Approve and refund"}</button><button disabled={busy} onClick={onDiscard}>Discard</button><p className="muted" id="assistant-approval-help">{plan.correctionOf ? "Approval withdraws the disruption and restores this schedule without new refunds." : "Approval applies this schedule and starts sandbox refunds."}</p></div>}
     {proposed && approvalReview === reviewKey && <ApprovalDialog correction={!!plan.correctionOf} unconfirmed={covers.filter((cover) => !confirmedIds.includes(cover.sessionId))} busy={busy} onClose={() => setApprovalReview("")} onApprove={() => { setApprovalReview(""); onApprove(confirmedIds); }} />}
-    {!proposed && <CoverRecord plan={plan} state={state} links={coverLinks} />}
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
+    {plan.status === "executed" && onPreview && <NextSteps workspaceId={plan.workspaceId} summary={outboxSummary} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} customerPath={customerPath} onMessages={onMessages} onPreview={onPreview} />}
     <RefundResults key={plan.id} results={results} state={state} ledger={ledger} workspaceId={!plan.correctionOf && ["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
-    <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>
-    <BookingGrid plan={plan} state={state} ledger={ledger} />
+    {proposed ? <>{messages}<BookingGrid plan={plan} state={state} ledger={ledger} /></> : <>
+      {plan.status !== "executed" && messages}
+      <details className="record-details"><summary>Bookings and substitutes</summary>{explanation}{timeSaved}<CoverRecord plan={plan} state={state} links={coverLinks} /><BookingGrid plan={plan} state={state} ledger={ledger} /></details>
+    </>}
+    {onWithdraw && <p className="quiet-action">Disruption over? <button className="link-button" disabled={busy} onClick={onWithdraw}>Restore the original schedule</button></p>}
   </>;
 }

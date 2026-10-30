@@ -31,7 +31,7 @@ it("offers a secondary withdrawal action on an eligible approved plan and shows 
   const approved = { ...plan, correctionOf: undefined, status: "executed" as const };
   const props = { details, plan: approved, state, busy: false, results: [], onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() };
   const html = renderToStaticMarkup(<PlanPanel {...props} onWithdraw={vi.fn()} />);
-  expect(html).toContain('class="full-width">The disruption is over — restore the schedule</button>');
+  expect(html).toContain('Disruption over? <button class="link-button">Restore the original schedule</button>');
   const corrected = renderToStaticMarkup(<PlanPanel {...props} plan={{ ...approved, correctedBy: "correction-id" }} />);
   expect(corrected).toContain('role="status">Corrected by plan correction-id');
   expect(corrected).not.toContain("The disruption is over — restore the schedule");

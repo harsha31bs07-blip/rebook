@@ -623,3 +623,27 @@ textarea { resize: vertical; min-height: 120px; }
 .import-step > .primary { justify-self: start; padding: 12px 22px; }
 .import-status { font-size: 13px; color: var(--muted); }
 @media (max-width: 600px) { .import-step { padding: 16px; } .import-table select { min-width: 0; } .import-table th, .import-table td { padding-right: 4px; } }
+.studio-tools { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+.studio-tools > h3 { font-size: 11px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+.studio-tool { border-bottom: 1px solid var(--border); }
+.studio-tool > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 2px; font-size: 13px; font-weight: 600; list-style: none; }
+.studio-tool > summary::-webkit-details-marker { display: none; }
+.studio-tool > summary::after { content: "+"; color: var(--muted); font-weight: 400; }
+.studio-tool[open] > summary::after { content: "–"; }
+.studio-tool > summary .pill { margin-left: auto; }
+.studio-tool > section { margin: 0 0 14px; border-top: 0; padding-top: 0; }
+.studio-tool > section > h3:first-child, .studio-tool > section > .replies-heading h3 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.record-details { margin: 12px 0; border: 1px solid var(--border); border-radius: 12px; padding: 0 14px; background: #fff; }
+.record-details > summary { padding: 12px 0; font-size: 13px; font-weight: 600; }
+.record-details[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.quiet-action { margin: 18px 0 4px; font-size: 12px; color: var(--muted); }
+.link-button { display: inline; width: auto; min-height: 0; padding: 0; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link-button:disabled { color: var(--muted); cursor: default; }
+.next-actions button.primary { color: #fff; background: var(--primary); border-color: var(--primary); }
+.judge-hint > div .link-button { margin-left: auto; padding: 0; font-size: 12px; }
+.judge-hint-compact { padding: 10px 14px; margin-bottom: 16px; }
+.judge-hint-compact p { margin: 6px 0 0; }
+.load-bars { display: flex; gap: 2px; align-items: flex-end; margin-top: 8px; }
+.load-bars span { display: grid; grid-template-rows: 16px auto; justify-items: center; gap: 2px; width: 8px; }
+.load-bars i { align-self: end; width: 6px; min-height: 2px; border-radius: 2px; background: #94a3b8; }
+.load-bars b { font-size: 8px; font-weight: 500; color: #64748b; }

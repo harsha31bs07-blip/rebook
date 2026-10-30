@@ -26,14 +26,14 @@ export function outboxState(row: OutboxCustomer, now = Date.now()) {
   const replied = choices.length > 0 && choices.every((change) => change.reply);
   const sent = row.changes.every((change) => change.sentAt);
   const waiting = sent && choices.some((change) => open(change, now));
-  return { sent, replied, waiting, closed: sent && !waiting && choices.some((change) => !change.reply),
+  return { sent, replied, waiting, needsReply: choices.length > 0, closed: sent && !waiting && choices.some((change) => !change.reply),
     sentAt: sent ? row.changes.map((change) => change.sentAt!).sort().at(-1) : undefined };
 }
 
 export function summarizeOutbox(rows: OutboxCustomer[]) {
   const states = rows.map((row) => outboxState(row));
   return { sent: states.filter((state) => state.sent).length, replied: states.filter((state) => state.replied).length,
-    waiting: states.filter((state) => state.waiting).length, closed: states.filter((state) => state.closed).length, notSent: states.filter((state) => !state.sent).length };
+    waiting: states.filter((state) => state.waiting).length, needsReply: states.filter((state) => state.needsReply).length, closed: states.filter((state) => state.closed).length, notSent: states.filter((state) => !state.sent).length };
 }
 
 export function waitingCustomers(rows: OutboxCustomer[]) { return rows.filter((row) => outboxState(row).waiting); }

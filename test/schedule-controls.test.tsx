@@ -208,7 +208,7 @@ it("lists changed sessions with Move links in preview and says Recovery applied 
   expect(preview).toContain("Move...</button>");
   const executed = renderToStaticMarkup(createElement(PlanPanel, { ...props, plan: { ...publicPlan, status: "executed" } }));
   expect(executed).toContain('<h2 tabindex="-1">Recovery applied</h2>');
-  expect(executed).toContain("haven&#x27;t replied");
+  expect(executed).toContain("No reply yet");
   expect(executed).not.toContain("move-session-link");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true }))).not.toContain("Processing refunds");
   expect(renderToStaticMarkup(createElement(PlanPanel, { ...props, busy: true, approving: true }))).toContain("Processing refunds");

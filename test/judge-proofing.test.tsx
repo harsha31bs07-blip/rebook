@@ -209,10 +209,13 @@ it("remembers quick-tour dismissal after reload and routes steps to the requeste
   for (const control of controls.slice(1, 3)) (control.props.onClick as () => void)();
   expect(controls[3].props.disabled).toBe(true);
   const preview = render(() => JudgeHint({ id: "workspace1", ready: true, preview: true, hasPlan: true, onStep }));
+  // Once a recovery is under way the tour shrinks to its next step; "All steps" unfolds the list.
   const previewControls = elements(preview).filter((element) => element.type === "button");
-  expect(previewControls[1].props.disabled).toBe(true);
-  for (const control of previewControls.slice(3)) (control.props.onClick as () => void)();
-  expect(onStep.mock.calls.map(([step]) => step)).toEqual(["example", "plan", "move", "approve", "messages"]);
+  expect(previewControls.map((control) => control.props["aria-label"] ?? control.props["aria-expanded"])).toEqual([false, "Dismiss quick tour", "Tour step 4: Approve and refund"]);
+  (previewControls[2].props.onClick as () => void)();
+  const applied = elements(render(() => JudgeHint({ id: "workspace1", ready: true, preview: false, hasPlan: true, onStep }))).filter((element) => element.type === "button");
+  (applied[2].props.onClick as () => void)();
+  expect(onStep.mock.calls.map(([step]) => step)).toEqual(["example", "plan", "approve", "messages"]);
   (controls[0].props.onClick as () => void)();
   expect(render(View)).toBeNull();
   expect(storage.get(JUDGE_HINT_KEY)).toBe("1");
@@ -253,18 +256,18 @@ it("shows applied recovery, reply counts, settled refunds and the manual sharing
   const plan = { ...details.plan, status: "executed" as const };
   const results = plan.bookingActions.filter((action) => action.action === "refund").map((action) => ({ bookingId: action.bookingId, status: "COMPLETED" }));
   const outcomes = recoveryOutcomes(workspace.state, [{ ...plan, results }], []);
-  const panel = (current = outcomes) => renderToStaticMarkup(PlanPanel({ details, state: workspace.state, plan, results, outcomes: current, outboxSummary: { sent: 12, replied: 7, waiting: 5, closed: 0, notSent: 19 }, busy: false, onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() }));
+  const panel = (current = outcomes) => renderToStaticMarkup(PlanPanel({ details, state: workspace.state, plan, results, outcomes: current, outboxSummary: { sent: 12, replied: 7, waiting: 5, needsReply: 25, closed: 0, notSent: 19 }, busy: false, onApprove: vi.fn(), onDiscard: vi.fn(), onMessages: vi.fn() }));
   const applied = panel();
   expect(applied).toContain("Recovery applied");
   expect(applied).not.toContain("Recovery complete");
-  expect(applied).toContain("25 customers haven&#x27;t replied");
-  expect(applied).toContain("12 sent · 7 replied · 5 waiting");
+  // Reply status lives in one place, What happens next; the record keeps the No reply yet count.
+  expect(applied).not.toContain("haven&#x27;t replied"); expect(applied).not.toContain("12 sent · 7 replied · 5 waiting");
   expect(applied).toContain("Owner time saved (estimate)");
   expect(applied).toContain("replaces about 31 calls or messages once you share the links");
   for (const text of ["Kept or moved", "Refunded", "Pending", "No reply yet", "9 kept / 16 moved", "$577.00", "$135.00"]) expect(applied).toContain(text);
   const replied = outcomes.map((item) => ({ ...item, no_reply: 0, final: true }));
   expect(panel(replied)).toContain("Recovery complete");
-  expect(panel(replied)).toContain("All customers replied");
+  expect(panel(replied)).toContain("<strong>0</strong><small>customer confirmation outstanding");
   expect(panel(replied.map((item, index) => index ? item : { ...item, pending: 1, final: false }))).not.toContain("Recovery complete");
   const data = buildInsights(workspace.state, [{ ...plan, results }], []);
   const dashboard = renderToStaticMarkup(RecoverySummary({ data }));

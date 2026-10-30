@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController, PaymentsController, PaypalExperienceUserAction, TransactionSearchController } from "@paypal/paypal-server-sdk";
+import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController, PaymentsController, PaypalExperienceUserAction, PaypalWalletContextShippingPreference, TransactionSearchController } from "@paypal/paypal-server-sdk";
 import type { ApiResponse, CapturedPayment, OAuthToken, Order, Refund, SearchResponse } from "@paypal/paypal-server-sdk";
 import { MoneySchema } from "../domain/schemas";
 
@@ -213,14 +213,21 @@ export async function captureOrder(orderId: string, requestId: string): Promise<
   })));
 }
 
-/** No payment source: the v6 wallet or card session supplies the buyer's choice. */
-export async function createBookingOrder(amount: string, refs: PaymentRefs & { requestId: string }, description: string): Promise<PayPalOrder> {
+export type BuyerHandoff = { returnUrl: string; cancelUrl: string; brandName: string };
+/**
+ * No payment source: the v6 wallet or card session supplies the buyer's choice. With a handoff (an AI agent prepared
+ * the order), the buyer approves on PayPal's own page through the payer-action link and returns to returnUrl.
+ */
+export async function createBookingOrder(amount: string, refs: PaymentRefs & { requestId: string }, description: string, handoff?: BuyerHandoff): Promise<PayPalOrder> {
   return orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
     paypalRequestId: refs.requestId, prefer: "return=representation",
     body: { intent: CheckoutPaymentIntent.Capture,
-      purchaseUnits: purchaseUnits(amount, refs).map((unit) => ({ ...unit, description: description.slice(0, 127) })) },
+      purchaseUnits: purchaseUnits(amount, refs).map((unit) => ({ ...unit, description: description.slice(0, 127) })),
+      ...(handoff ? { paymentSource: { paypal: { experienceContext: { returnUrl: handoff.returnUrl, cancelUrl: handoff.cancelUrl, brandName: handoff.brandName.slice(0, 127),
+        userAction: PaypalExperienceUserAction.PayNow, shippingPreference: PaypalWalletContextShippingPreference.NoShipping } } } } : {}) },
   })));
 }
+export const approvalLink = (order: PayPalOrder): string | undefined => order.links?.find((link) => link.rel === "payer-action" || link.rel === "approve")?.href;
 
 export async function getOrder(orderId: string): Promise<PayPalOrder> {
   return orderResult(await sdkCall(() => new OrdersController(sdk()).getOrder({ id: orderId })));

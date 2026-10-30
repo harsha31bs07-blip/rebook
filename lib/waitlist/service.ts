@@ -150,3 +150,28 @@ export function waitlistOutbox(workspaceId: string, repository: Repository): Out
         path: `/s/${repository.waitlistToken(offer)}`, expiresAt: Date.parse(offer.expiresAt), sentAt: offer.sentAt }] };
   });
 }
+/** A customer (or their AI agent) joins a full class's waitlist; the same email joining twice keeps its place. */
+export async function joinWaitlist(workspaceId: string, sessionId: string, person: { name: string; email: string }, repository = getRepository()) {
+  return withWorkspaceLock(repository, workspaceId, () => {
+    const { state } = repository.requireReadyWorkspace(workspaceId);
+    const session = state.sessions.find((item) => item.id === sessionId);
+    if (!session || !sessionAvailable(state, session, pausedSessionIds(workspaceId, repository)) || Date.parse(session.start) <= Date.now()) throw new StoreError(409, "This class is not taking bookings.");
+    if (seatsLeft(state, session, repository.listCheckout(workspaceId), undefined, repository.listWaitlistOffers(workspaceId)) > 0) throw new StoreError(409, "This class still has free spots; book it instead.");
+    const email = person.email.toLowerCase();
+    let customer = state.customers.find((item) => item.email.toLowerCase() === email);
+    if (customer && state.bookings.some((booking) => booking.sessionId === sessionId && booking.customerId === customer!.id && ["confirmed", "moved"].includes(booking.status))) throw new StoreError(409, "You are already booked in this class.");
+    if (!customer) {
+      customer = { id: randomUUID(), name: person.name, email: person.email, prefs: { acceptsSubstitute: true, availabilityKnown: false,
+        windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })) } };
+      state.customers.push(customer);
+    }
+    state.waitlist ??= [];
+    if (!state.waitlist.some((entry) => entry.sessionId === sessionId && entry.customerId === customer!.id)) {
+      state.waitlist.push({ id: randomUUID(), sessionId, customerId: customer.id, joinedAt: new Date().toISOString() });
+      repository.saveState(workspaceId, state);
+    }
+    const offers = repository.listWaitlistOffers(workspaceId);
+    const waiting = state.waitlist.filter((entry) => entry.sessionId === sessionId && !offers.some((offer) => offer.entryId === entry.id && offer.status !== "withdrawn" && offer.status !== "offered"));
+    return { position: waiting.findIndex((entry) => entry.customerId === customer!.id) + 1, title: session.title, start: session.start };
+  });
+}

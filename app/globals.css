@@ -647,3 +647,9 @@ textarea { resize: vertical; min-height: 120px; }
 .load-bars span { display: grid; grid-template-rows: 16px auto; justify-items: center; gap: 2px; width: 8px; }
 .load-bars i { align-self: end; width: 6px; min-height: 2px; border-radius: 2px; background: #94a3b8; }
 .load-bars b { font-size: 8px; font-weight: 500; color: #64748b; }
+.agent-connect { margin: 32px auto 0; max-width: 960px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: #fff; font-size: 13px; }
+.agent-connect h3 { font-size: 14px; margin: 0 0 6px; }
+.agent-connect code { overflow-wrap: anywhere; font-size: 12px; }
+.agent-connect button { width: auto; margin-left: 6px; padding: 4px 10px; font-size: 12px; }
+.studio-tool > .agent-connect { margin: 0 0 14px; padding: 0; border: 0; }
+.studio-tool > .agent-connect h3 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

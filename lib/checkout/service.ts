@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Session, State } from "../domain/types";
 import { fromCents, overlaps, toCents } from "../domain/time";
 import { activeConstraints } from "../solver/constraints";
-import { captureOrder, createBookingOrder, getOrder, PayPalError, type PayPalOrder } from "../paypal/client";
+import { approvalLink, captureOrder, createBookingOrder, getOrder, PayPalError, type BuyerHandoff, type PayPalOrder } from "../paypal/client";
 import { getRepository, StoreError, withWorkspaceLock, type CheckoutReservation, type WaitlistOffer, type Repository } from "../store";
 import { envLimit, limits } from "../api/limits";
 import { spendableCredit } from "../credits/balance";
@@ -106,7 +106,7 @@ export function bookingCatalog(workspaceId: string, repository = getRepository()
   })) };
 }
 
-export async function createOrder(workspaceId: string, input: CheckoutInput, requestId: string, repository = getRepository()) {
+export async function createOrder(workspaceId: string, input: CheckoutInput, requestId: string, repository = getRepository(), handoff?: BuyerHandoff): Promise<{ orderId: string; approvalUrl?: string }> {
   input = CheckoutInputSchema.parse(input);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let row = repository.listCheckout(workspaceId).find((item) => item.requestId === requestId || item.requestAliases?.includes(requestId));
@@ -169,11 +169,11 @@ export async function createOrder(workspaceId: string, input: CheckoutInput, req
       const localTime = new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(reservation.session.start));
       // PayPal order metadata is visible to buyers: never send the owner capability.
       const publicReference = reservation.paypalCustomId?.split(":")[0] ?? workspaceId;
-      const order = await createBookingOrder(reservation.amount, { workspaceId: publicReference, bookingId: reservation.id, requestId: reservation.id }, `${reservation.session.title} · ${localTime}`);
+      const order = await createBookingOrder(reservation.amount, { workspaceId: publicReference, bookingId: reservation.id, requestId: reservation.id }, `${reservation.session.title} · ${localTime}`, handoff);
       if (!order.id) throw new Error("PayPal did not return an order ID");
       repository.renewLock(workspaceId, owner);
       repository.saveCheckout({ ...reservation, orderId: order.id });
-      return { orderId: order.id };
+      return { orderId: order.id, approvalUrl: approvalLink(order) };
     } catch (error) {
       // A lost creation response can be replayed with the same request ID until the hold expires.
       if (error instanceof PayPalError && error.status < 500 && ![408, 429].includes(error.status)) repository.saveCheckout({ ...reservation, status: "failed" });

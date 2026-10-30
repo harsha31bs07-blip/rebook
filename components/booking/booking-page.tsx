@@ -1,6 +1,7 @@
 "use client";
 
 import Script from "next/script";
+import AgentConnect from "./agent-connect";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { bookingCatalog, CheckoutInput, Receipt, studioCredit } from "@/lib/checkout/service";
@@ -295,5 +296,6 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
         {selectionPaused && <p role="status">Schedule change in progress — booking paused</p>}
         {(customerLocked || (currentSelection && !selectionPaused)) && (creditPending ? <p role="status">Checking studio credit...</p> : credit ? <CreditPayment key={`${id}:${selectedClass.id}:credit`} id={id} token={credit.token} remaining={credit.remaining} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} onSuccess={setReceipt} onLockChange={setCustomerLocked} /> : <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />)}
       </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}
+    {catalog && <AgentConnect bookingId={id} />}
   </main>;
 }

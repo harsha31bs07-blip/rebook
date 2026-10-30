@@ -20,6 +20,7 @@ import type { OwnerAdjustment } from "../../lib/solver/adjust";
 import WaitlistPanel from "./waitlist-panel";
 import SyncPanel from "./sync-panel";
 import StudioTools from "./studio-tools";
+import AgentConnect from "../booking/agent-connect";
 import MessagesDrawer from "./messages-drawer";
 import { summarizeOutbox } from "../../lib/choices/outbox";
 import ConsoleHeader from "./console-header";
@@ -238,6 +239,7 @@ export default function OwnerConsole({ id }: { id: string }) {
             ...(planCovers.length ? [{ id: "covers", title: "Cover pay", badge: `${planCovers.length}`, children: <CoverPay workspaceId={id} covers={planCovers} onUpdated={() => { void refresh().catch(() => {}); }} /> }] : []),
             ...(replies.length ? [{ id: "replies", title: "Customer replies", badge: `${replies.length}`, children: <section className="customer-replies" aria-labelledby="replies-title"><div className="replies-heading"><h3 id="replies-title">Replies</h3><span className="muted">Updates live</span></div><ul aria-live="polite">{replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><time dateTime={reply.at}>{clock(reply.at)}</time></li>)}</ul></section> }] : []),
             ...(workspace.waitlist?.length ? [{ id: "waitlist", title: "Waitlist", badge: openOffers ? `${openOffers} open offer${openOffers === 1 ? "" : "s"}` : undefined, children: <WaitlistPanel classes={workspace.waitlist} timezone={state.studio.timezone} onMessages={() => setWaitlistMessagesOpen(true)} /> }] : []),
+            { id: "agents", title: "AI agents", children: <AgentConnect bookingId={workspace.bookingId} owner /> },
             { id: "sync", title: workspace.mindbody ? "Booking system sync · Mindbody" : "Booking system sync", badge: workspace.sync?.pending ? `${workspace.sync.pending} to send` : undefined, children: <SyncPanel workspaceId={id} sync={workspace.sync} mindbody={workspace.mindbody} timezone={state.studio.timezone} onRefresh={refresh} /> },
             ...(history.length ? [{ id: "history", title: "History", badge: `${history.length}`, children: <section className="history"><h3>History <span>{history.length}</span></h3>{history.map((item) => <div key={item.id}><button disabled={Boolean(busy)} onClick={() => void run("history", async () => { const next = await api.details(id, item.id); setDetails(next); setBasis({ ...state, sessions: next.sessions }); })}><strong>{item.totals.sessionsAffected} sessions · {item.totals.refunded} refunds</strong><span>{item.correctedBy ? "corrected" : item.correctionOf ? "correction · " + item.status.replaceAll("_", " ") : item.status.replaceAll("_", " ")} · {clock(item.createdAt)}</span></button><CoverRecord plan={item} state={state} links={workspace.covers} /></div>)}</section> }] : []),
           ]} />

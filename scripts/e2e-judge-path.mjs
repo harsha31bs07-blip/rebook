@@ -87,7 +87,7 @@ try {
     throw new Error("six refunds did not complete within 3 minutes");
   });
   await step("customer outbox lists every affected customer", async () => {
-    await owner.getByRole("button", { name: /Customer messages/i }).first().click();
+    await owner.getByRole("button", { name: /^(Message customers|Customer messages)/i }).first().click();
     await owner.getByRole("dialog").waitFor({ timeout: 15000 });
     const rows = await owner.getByRole("dialog").getByRole("button", { name: /WhatsApp/i }).count();
     if (rows < 20) throw new Error(`outbox shows ${rows} WhatsApp actions`);

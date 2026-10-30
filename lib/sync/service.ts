@@ -11,8 +11,10 @@ import { EventsSchema, type InboundEvent } from "./schemas";
 
 function updateAcknowledgedPacks(workspaceId: string, state: State, repository: Repository): void {
   const acks = repository.syncAcks(workspaceId), returned = packReturns(repository.listLedger(workspaceId));
-  for (const baseline of state.syncPackBalances ?? []) baseline.acknowledgedBookingIds = returned.filter((row) => acks.has(packChangeId(row))
-    && state.bookings.some((booking) => booking.id === row.bookingId && booking.customerId === baseline.customerId && booking.entitlement?.kind === "pack")).map((row) => row.bookingId);
+  for (const baseline of state.syncPackBalances ?? []) baseline.acknowledgedBookingIds = [...returned.filter((row) => acks.has(packChangeId(row))
+    && state.bookings.some((booking) => booking.id === row.bookingId && booking.customerId === baseline.customerId && booking.entitlement?.kind === "pack")).map((row) => row.bookingId),
+  // A visit used in Rebook is part of the booking system's balance once its new booking is acknowledged.
+  ...state.bookings.filter((booking) => booking.customerId === baseline.customerId && booking.packVisitUsed && acks.has(`created:${booking.id}`)).map((booking) => booking.id)];
 }
 export async function acknowledge(workspaceId: string, ids?: string[], repository = getRepository()) {
   return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
@@ -27,14 +29,15 @@ export async function acknowledge(workspaceId: string, ids?: string[], repositor
 }
 function resolveCustomer(state: State, reference: { name: string; email?: string }, create: boolean) {
   const email = reference.email?.toLowerCase();
-  const matches = email ? state.customers.filter((row) => row.email.toLowerCase() === email) : [];
-  const names = matches.length ? matches : state.customers.filter((row) => row.name === reference.name);
+  // An email identifies a person; a shared name alone must never attach a booking to someone else.
+  const names = email ? state.customers.filter((row) => row.email.toLowerCase() === email) : state.customers.filter((row) => row.name === reference.name);
   if (names.length > 1) throw new StoreError(409, "Customer reference is ambiguous; use an email");
   if (names[0]) return names[0];
   if (!create) throw new StoreError(404, "Customer not found");
   const id = randomUUID();
   const customer = CustomerSchema.parse({ id, name: reference.name, email: reference.email ?? `${id}@sync.invalid`,
-    prefs: { windows: [], acceptsSubstitute: true, availabilityKnown: false } });
+    // Unknown availability means "fits any time", as for imported and checkout customers.
+    prefs: { windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })), acceptsSubstitute: true, availabilityKnown: false } });
   state.customers.push(customer); return customer;
 }
 function applyEvent(workspaceId: string, event: InboundEvent, repository: Repository): void {

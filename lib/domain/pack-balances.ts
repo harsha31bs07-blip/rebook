@@ -16,13 +16,17 @@ export function packReturns(ledger: LedgerEvent[]): LedgerEvent[] {
 /** Imported balances are after booking; the lowest snapshot includes every imported reservation. */
 export function packBalance(state: State, ledger: LedgerEvent[], customerId: string, packName: string): number | null {
   const baseline = state.syncPackBalances?.find((row) => row.customerId === customerId);
-  if (baseline) return baseline.visitsLeft + packReturns(ledger).filter((event) => !baseline.acknowledgedBookingIds.includes(event.bookingId)
+  const used = state.bookings.filter((booking) => booking.customerId === customerId && booking.packVisitUsed && booking.entitlement?.kind === "pack");
+  // A synced baseline already includes every change the booking system has acknowledged.
+  if (baseline) return baseline.visitsLeft - used.filter((booking) => !baseline.acknowledgedBookingIds.includes(booking.id)).length
+    + packReturns(ledger).filter((event) => !baseline.acknowledgedBookingIds.includes(event.bookingId)
     && state.bookings.some((booking) => booking.id === event.bookingId && booking.customerId === customerId && booking.entitlement?.kind === "pack")).length;
   const bookings = state.bookings.filter((booking) => booking.customerId === customerId && booking.entitlement?.kind === "pack" && booking.entitlement.name === packName);
   const balances = bookings.flatMap((booking) => booking.entitlement?.visitsLeft === undefined ? [] : [booking.entitlement.visitsLeft]);
   if (!balances.length) return null;
   const ids = new Set(bookings.map((booking) => booking.id));
-  return Math.min(...balances) + packReturns(ledger).filter((event) => ids.has(event.bookingId)).length;
+  return Math.min(...balances) - used.filter((booking) => booking.entitlement?.name === packName).length
+    + packReturns(ledger).filter((event) => ids.has(event.bookingId)).length;
 }
 
 /** A completed return keeps its historical before/after; an unreturned visit previews the next change. */

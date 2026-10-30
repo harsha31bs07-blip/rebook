@@ -9,7 +9,7 @@ export function OfferDetails({ data }: { data: WaitlistOfferView }) {
   const format = (value: string) => new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value));
   return <><p className="eyebrow">{data.studio.name}</p><h1>{data.session?.title ?? "Your waitlist spot"}</h1>
     {data.session && <><p><time dateTime={data.session.start}>{format(data.session.start)}</time></p><p>{data.session.instructor} · {data.session.room}</p></>}
-    {data.status === "offered" ? <p role="status">We&apos;ve held a spot for you until <time dateTime={data.expiresAt}>{format(data.expiresAt)}</time>.</p>
+    {data.status === "offered" ? <><p role="status">We&apos;ve held a spot for you until <time dateTime={data.expiresAt}>{format(data.expiresAt)}</time>.</p>{data.note && <p className="muted">{data.note}</p>}</>
       : <p role="status">{CLOSED[data.status]}</p>}</>;
 }
 export default function WaitlistOfferPage({ token, clientId }: { token: string; clientId: string }) {

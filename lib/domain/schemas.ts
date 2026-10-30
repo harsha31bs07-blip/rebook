@@ -53,6 +53,8 @@ export const BookingSchema = z.object({
   status: z.enum(["confirmed", "moved", "refund_pending", "refunded", "cancelled"]),
   amount: MoneySchema,
   payment: z.object({ orderId: z.string(), captureId: z.string(), simulated: z.boolean().optional(), unknown: z.boolean().optional() }).optional(),
+  // A pack booking made in Rebook (not imported) uses one visit from the balance.
+  packVisitUsed: z.literal(true).optional(),
   entitlement: z.object({ kind: z.enum(["pack", "membership"]), name: z.string().trim().min(1).max(60),
     visitsLeft: z.number().int().nonnegative().optional(), expires: z.iso.date().optional(),
   }).refine((value) => value.kind === "pack" || value.visitsLeft === undefined, "Only packs have a visit balance").optional(),

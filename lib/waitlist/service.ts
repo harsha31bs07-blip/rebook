@@ -5,6 +5,10 @@ import { bookingCatalog, pausedSessionIds, seatsLeft, sessionAvailable, Waitlist
 import { checkoutHoldsSeat, offerHoldsSeat } from "./capacity";
 import { deliverableAddress } from "../choices/email-content";
 import type { OutboxCustomer } from "../choices/outbox";
+import { packBalance } from "../domain/pack-balances";
+import { localParts } from "../domain/time";
+import type { Session, State } from "../domain/types";
+import type { LedgerEvent } from "../store";
 
 export { WaitlistTokenSchema };
 export const OfferActionSchema = z.strictObject({ action: z.enum(["claim", "decline"]) });
@@ -14,6 +18,20 @@ function requireOffer(token: string, repository: Repository) {
   if (!offer) throw new StoreError(404, "This private link is no longer available. The demo may have been reset. Please ask the studio for a new link.");
   repository.requireReadyWorkspace(offer.workspaceId);
   return offer;
+}
+type Entry = NonNullable<State["waitlist"]>[number];
+/** A pack or membership pays for a claimed spot only while it is valid for that class; otherwise the spot is paid at checkout. */
+export function claimEntitlement(state: State, ledger: LedgerEvent[], entry: Entry, session: Session): { entitlement?: Entry["entitlement"]; note?: string } {
+  const value = entry.entitlement;
+  if (!value) return {};
+  const expires = value.expires ?? state.syncPackBalances?.find((row) => row.customerId === entry.customerId)?.expires ?? state.bookings.find((booking) =>
+    booking.customerId === entry.customerId && booking.entitlement?.name === value.name && booking.entitlement.expires)?.entitlement?.expires;
+  if (expires && expires < localParts(session.start, state.studio.timezone).dateKey) return { note: `Your ${value.name} expires before this class, so this spot is paid at checkout.` };
+  const balance = value.kind === "pack" ? packBalance(state, ledger, entry.customerId, value.name) : null;
+  if (balance !== null && balance <= 0) return { note: `Your ${value.name} has no visits left, so this spot is paid at checkout.` };
+  const { visitsLeft: _left, ...rest } = value;
+  void _left;
+  return { entitlement: rest, ...(balance === null ? {} : { note: `Uses 1 visit from your ${value.name} (${balance - 1} left after this class).` }) };
 }
 /** Synchronous SQLite transaction also serializes lazy advancement across processes. */
 export function fillFreedSeats(workspaceId: string, repository = getRepository()): void {
@@ -57,9 +75,10 @@ export function waitlistOfferView(token: string, repository = getRepository()) {
     const session = bookingCatalog(offer.workspaceId, repository).sessions.find((item) => item.id === offer.sessionId);
     const entry = state.waitlist?.find((item) => item.id === offer.entryId);
     const customer = state.customers.find((item) => item.id === offer.customerId)!;
+    const live = state.sessions.find((item) => item.id === offer.sessionId);
     return { status: offer.status, expiresAt: offer.expiresAt, studio: { name: state.studio.name, timezone: state.studio.timezone },
       session, customer: { name: customer.name, email: customer.email }, bookingId,
-      entitlement: entry?.entitlement, canClaim: offer.status === "offered" && !!session && !session.bookingPaused,
+      ...(entry && live ? claimEntitlement(state, repository.listLedger(offer.workspaceId), entry, live) : {}), canClaim: offer.status === "offered" && !!session && !session.bookingPaused,
       checkoutPending: repository.listCheckout(offer.workspaceId).some((row) => row.waitlistOfferId === offer.id && checkoutHoldsSeat(row)) };
   });
 }
@@ -90,9 +109,11 @@ export async function respondToWaitlistOffer(token: string, action: "claim" | "d
       }
       const entry = state.waitlist?.find((item) => item.id === offer.entryId);
       if (!entry) throw new StoreError(410, "This waitlist entry is no longer available.");
-      if (entry.entitlement) {
+      const { entitlement } = claimEntitlement(state, repository.listLedger(offer.workspaceId), entry, session);
+      if (entitlement) {
         const id = randomUUID();
-        state.bookings.push({ id, customerId: offer.customerId, sessionId: offer.sessionId, amount: "0.00", entitlement: entry.entitlement, status: "confirmed", bookedAt: at });
+        state.bookings.push({ id, customerId: offer.customerId, sessionId: offer.sessionId, amount: "0.00", entitlement, status: "confirmed", bookedAt: at,
+          ...(entitlement.kind === "pack" ? { packVisitUsed: true as const } : {}) });
         repository.saveState(offer.workspaceId, state);
         repository.saveWaitlistOffer({ ...offer, status: "claimed", bookingId: id, respondedAt: at });
       }

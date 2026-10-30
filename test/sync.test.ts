@@ -153,6 +153,15 @@ it("creates customers only for bookings and joining, including optional entitlem
   expect(await response.json()).toMatchObject({ results: [{ status: "applied" }] });
   expect(state().bookings.at(-1)?.entitlement).toEqual({ kind: "membership", name: "Membership" });
 });
+it("never attaches a booking to a same-name member with another email, and new customers fit any time", async () => {
+  setup(3);
+  await event({ eventId: "first", type: "booking.created", session: ref(), customer: { name: "Sam Lee", email: "sam@example.com" } });
+  await event({ eventId: "second", type: "booking.created", session: ref(), customer: { name: "Sam Lee", email: "sam.other@example.com" } });
+  const people = state().customers.filter((row) => row.name === "Sam Lee");
+  expect(people.map((row) => row.email).sort()).toEqual(["sam.other@example.com", "sam@example.com"]);
+  expect(new Set(state().bookings.map((row) => row.customerId)).size).toBe(2);
+  expect(people[0].prefs.windows).toHaveLength(7);
+});
 it("rejects full, missing, started and cancelled classes, re-evaluating rejected replays", async () => {
   setup(1); await event({ eventId: "first", type: "booking.created", session: ref(), customer: customer() });
   const full: InboundEvent = { eventId: "full", type: "booking.created", session: ref(), customer: customer(1) };

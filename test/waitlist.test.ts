@@ -17,6 +17,7 @@ import { GET as workspaceGet } from "../app/api/workspaces/[id]/route";
 import { GET, POST } from "../app/api/waitlist/[token]/route";
 import { POST as retryRefund } from "../app/api/workspaces/[id]/refunds/retry/route";
 import { StateSchema } from "../lib/domain/schemas";
+import { packBalance } from "../lib/domain/pack-balances";
 
 let directory: string, repository: Repository, workspaceId: string, sessionId: string;
 type Order = { id: string; status: string; purchase_units: { reference_id: string; custom_id: string; amount: { currency_code: string; value: string }; payments?: { captures: { id: string; status: string; amount: { currency_code: string; value: string } }[] } }[] };
@@ -79,7 +80,7 @@ it("holds seats from public checkout and lets the cash holder pay exactly once",
   expect(offers()).toHaveLength(1); expect(bookingCatalog(workspaceId, repository).sessions[0].seatsLeft).toBe(0);
   expect(seatsLeft(state, state.sessions[0], [], undefined, offers())).toBe(0);
   await expect(createOrder(workspaceId, { sessionId, customer: { name: "Other", email: "other@example.com" } }, randomUUID(), repository)).rejects.toMatchObject({ status: 409 });
-  expect(await respondToWaitlistOffer(token(), "claim", repository)).toMatchObject({ status: "offered", entitlement: undefined });
+  const cash = await respondToWaitlistOffer(token(), "claim", repository); expect(cash).toMatchObject({ status: "offered" }); expect(cash.entitlement).toBeUndefined();
   const customer = state.customers[0], input = { sessionId, customer: { name: customer.name, email: customer.email }, waitlistToken: token() };
   const order = await createOrder(workspaceId, input, randomUUID(), repository);
   expect(bookingCatalog(workspaceId, repository).sessions[0].seatsLeft).toBe(0);
@@ -96,6 +97,22 @@ it.each(["pack", "membership"] as const)("claims a %s instantly without money", 
   expect(await respondToWaitlistOffer(privateToken, "claim", repository)).toMatchObject({ status: "claimed" });
   expect(repository.requireWorkspace(workspaceId).state.bookings).toEqual([expect.objectContaining({ amount: "0.00", status: "confirmed", entitlement: { kind, name: "10 classes" }, bookedAt: new Date().toISOString() })]);
   expect(repository.listLedger(workspaceId)).toEqual([]);
+});
+it.each([
+  ["a pack with visits left", 3, undefined, true, "Uses 1 visit from your 10 classes (2 left after this class)."],
+  ["an empty pack", 0, undefined, false, "Your 10 classes has no visits left, so this spot is paid at checkout."],
+  ["an expired pack", 3, "2020-01-01", false, "Your 10 classes expires before this class, so this spot is paid at checkout."],
+] as const)("claims with %s only while it is valid", async (_label, visitsLeft, expires, free, note) => {
+  const state = setup(true), customerId = state.waitlist![0].customerId;
+  // An earlier, cancelled pack booking carries the imported balance and expiry.
+  state.bookings.push({ id: "prior", sessionId, customerId, status: "cancelled", amount: "0.00", entitlement: { kind: "pack", name: "10 classes", visitsLeft, ...(expires ? { expires } : {}) } });
+  repository.saveState(workspaceId, state); fillFreedSeats(workspaceId, repository);
+  expect(waitlistOfferView(token(), repository)).toMatchObject({ note });
+  const result = await respondToWaitlistOffer(token(), "claim", repository);
+  expect(result.status).toBe(free ? "claimed" : "offered"); expect(!!result.entitlement).toBe(free);
+  const after = repository.requireWorkspace(workspaceId).state;
+  expect(after.bookings.filter((booking) => booking.id !== "prior")).toEqual(free ? [expect.objectContaining({ packVisitUsed: true, entitlement: { kind: "pack", name: "10 classes" } })] : []);
+  if (free) expect(packBalance(after, repository.listLedger(workspaceId), customerId, "10 classes")).toBe(2);
 });
 it("advances on decline and lazily on owner reads after expiry", async () => {
   setup(); fillFreedSeats(workspaceId, repository);

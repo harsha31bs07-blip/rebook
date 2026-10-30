@@ -19,6 +19,7 @@ export type WorkspaceResponse = Workspace & {
   paymentsNeedingAttention?: PaymentAttention[];
   covers?: OwnerCover[];
   waitlist?: ReturnType<typeof import("../waitlist/service").ownerWaitlist>;
+  sync?: ReturnType<typeof import("../sync/service").ownerSync>;
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };

@@ -42,7 +42,8 @@ Payments and refunds marked real are actual **PayPal sandbox transactions**; no 
 | --- | --- | --- | --- |
 | Paste a forwarded message: "Fwd from Maya: so sorry, fever since last night, can't teach today" | Reads forwarded texts, Hinglish ("Maya bimaar hai, kal class nahi le paayegi") and shorthand that the rules parser cannot | Negations, maybes, corrections, past events and questions never reach the model; its reading must match the names, days and times you wrote; you confirm "AI read this as…" before anything is planned | [interpret.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/ai/interpret.ts#L249-L294), [live report](docs/interpretation-messy-eval.md) |
 | On a customer's private link, type what works | Turns "anything after 6 this week, otherwise refund me" into one concrete class or refund | Proposes only; the class must be one of that customer's real options, every amount and the reply about money come from the server, and the customer confirms | [assistant.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/choices/assistant.ts#L19-L63), [live report](docs/customer-assistant-eval.md) |
-| Class packs and memberships | Tracks imported pack balances and returns visits or releases membership seats, with no PayPal refund | Export balance changes as CSV to apply in the booking system | [entitlements.ts](lib/domain/entitlements.ts) |
+| Class packs and memberships | Tracks imported pack balances and returns visits or releases membership seats, with no PayPal refund | Balance changes go out through the sync API or a CSV export | [entitlements.ts](lib/domain/entitlements.ts) |
+| Two-way booking system sync | Signed per-workspace API: pull and acknowledge Rebook changes; push bookings, waitlist, capacity and pack balances | Vendor connectors map their APIs onto these events; inbound events never move money | [feed.ts](lib/sync/feed.ts), [service.ts](lib/sync/service.ts), [API docs](docs/sync-api.md) |
 | [/import](https://rebook-by9u.onrender.com/import) > **Use a sample week** | Matches the export's columns and class names ("Slow Burn" is yoga) that exact-name rules cannot | Only column headers and class names are sent, never customer details; every match is shown with how it was made and the owner can change it; no AI runs when the studio is created | [service.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/import/service.ts) |
 | Dashboard > Ask Recovery analyst | Answers cost and refund questions from the workspace ledger and edits the AG Studio report | Tool-backed, timestamped answers | [ai.ts](https://github.com/harsha31bs07-blip/rebook/blob/main/lib/insights/ai.ts#L86-L123) |
 
@@ -162,19 +163,20 @@ A browser end-to-end check walks the whole judge path on a deployment (interpret
 
 Rebook is built to sit beside a studio's booking system (Mindbody, Glofox, Momence and similar), not replace it: the booking system stays the record of members and payments, and Rebook handles the bad morning. A first real pilot would need:
 
-- **Data in:** [/import](https://rebook-by9u.onrender.com/import) already reads a week from a CSV export; a pilot would read it through the booking system's API instead and write the approved changes back.
+- **Data in:** [/import](https://rebook-by9u.onrender.com/import) reads the initial week from CSV; the [sync API](docs/sync-api.md) then accepts booking-system events and exports acknowledged Rebook changes. A pilot needs a connector per booking system to map its API onto these events.
 - **Owner sign-in** in place of the workspace link, and durable storage (Postgres) in place of per-visitor demo workspaces.
 - **Live PayPal:** the studio connects its own PayPal business account (partner onboarding); refunds and cover payouts then run against live captures with the same idempotency and reconciliation.
 - **Reach:** SMS alongside email, sent from the studio's own number.
-- **Credits:** a pilot would write balance changes back through the booking system's API instead of a CSV.
+- **Credits:** the sync API exports pack visit returns and accepts pack baselines; a pilot connector applies those changes through the booking system's API. CSV remains available.
 
-The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting) is the same as in the demo. A pilot would still need what a one-week demo leaves out: waitlist syncing with the booking system. Compensating corrections after approval are available within the studio week; they do not reverse settled money.
+The core flow (interpretation, the solver, review and approval, customer links, cover acceptance, payouts, reporting, and the sync API for schedule changes, bookings, waitlists and pack balances) is the same as in the demo. Compensating corrections after approval are available within the studio week; they do not reverse settled money.
 
 ## Honest limits
 
 - Waitlist offers hold a seat for up to 12 hours, closing one hour before class. The solver ignores the waitlist; approval checks held seats and rejects a recovery that would exceed capacity. Customers can claim with a pack or membership, or pay through PayPal sandbox checkout.
 
-- Rebook tracks imported pack balances and returns visits without cash refunds; export the balance changes to apply in the booking system. Membership bookings release seats without cash refunds.
+- Rebook tracks imported pack balances and returns visits without cash refunds; use the sync API to apply balance changes in the booking system, or export the CSV. Membership bookings release seats without cash refunds.
+- Sync has no connector for a specific vendor; inbound events never move money, and the workspace remains limited to one studio week.
 
 - Free Render hosting sleeps and can restart. Workspaces then expire; start a new demo. PayPal retains sandbox transactions. The keep-alive workflow is manual-only; its commented schedule says to enable on Nov 16.
 - Real email goes only to customers who booked through checkout with their own address (Brevo free plan, daily caps); demo customers use the share buttons. Cover payouts go to one sandbox payee account.

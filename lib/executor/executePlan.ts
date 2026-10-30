@@ -44,9 +44,9 @@ export async function executePlan(workspaceId: string, planId: string, repositor
     if (plan.status === "proposed") {
       if (plan.correctionOf) {
         const original = correctionOriginal(workspaceId, plan.correctionOf, repository, plan.id);
-        const expected = planCorrection(basis, original, plan.now);
-        if (!isDeepStrictEqual(plan.sessionChanges, expected.sessionChanges) ||
-          !isDeepStrictEqual(plan.bookingActions, expected.bookingActions) || !isDeepStrictEqual(plan.disruption, original.disruption)) {
+        const expected = plan.sessionChanges.some((change) => change.ownerAdjusted) ? undefined : planCorrection(basis, original, plan.now);
+        if ((expected && (!isDeepStrictEqual(plan.sessionChanges, expected.sessionChanges) ||
+          !isDeepStrictEqual(plan.bookingActions, expected.bookingActions))) || !isDeepStrictEqual(plan.disruption, original.disruption)) {
           throw new StoreError(409, "The schedule or bookings changed. Discard this correction and preview it again.");
         }
       }

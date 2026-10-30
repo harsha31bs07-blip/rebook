@@ -27,11 +27,14 @@ export function draftCustomerMessages(plan: Plan, state: State, ledger: LedgerEv
       if (action.action === "refund" || !change?.after) throw new Error("A correction cannot refund a booking");
       const instructor = state.instructors.find((item) => item.id === change.after!.instructorId)?.name ?? "Your regular instructor";
       subject = `Good news about your ${session.title} class`;
-      const update = action.action === "move"
+      const update = change.ownerAdjusted
+        ? `Good news: the disruption is over. Your ${session.title} class is scheduled for ${formatTime(change.after.start)} (${state.studio.timezone}), with ${instructor}.`
+        : action.action === "move"
         ? `Good news: your ${session.title} class is back at its original time, ${formatTime(change.after.start)} (${state.studio.timezone}), with ${instructor}.`
         : `Good news: ${instructor} is teaching your ${session.title} class again at its usual time.`;
       const room = state.rooms.find((item) => item.id === change.after!.roomId);
-      const roomUpdate = change.after.roomId !== change.before.roomId ? ` Your class is back in ${room?.name ?? "its original room"}.` : "";
+      const roomUpdate = change.after.roomId !== change.before.roomId ? change.ownerAdjusted
+        ? ` Your class will take place in ${room?.name ?? "the updated room"}.` : ` Your class is back in ${room?.name ?? "its original room"}.` : "";
       body = `${greeting}\n\n${update}${roomUpdate}\n\n${signature}`;
     } else if (action.action === "refund") {
       subject = booking.entitlement ? `An update to your ${session.title} booking` : `A refund for your ${session.title} booking`;

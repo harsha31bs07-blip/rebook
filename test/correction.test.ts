@@ -8,6 +8,8 @@ import { replan } from "../lib/solver/replan";
 import { planCorrection, samePlacement } from "../lib/solver/correction";
 import { activeConstraints, deactivateConstraint } from "../lib/solver/constraints";
 import { validate } from "../lib/solver/validate";
+import { adjustPlan, checkAdjustment } from "../lib/solver/adjust";
+import { explainPlan } from "../lib/ai/explain";
 import { executePlan } from "../lib/executor/executePlan";
 import { withdrawPlan } from "../lib/recovery/correction";
 import { coverView, ownerCovers, payCover, respondToCover } from "../lib/recovery/cover-pay";
@@ -15,6 +17,7 @@ import { customerChoice, submitChoice } from "../lib/choices/service";
 import { limits } from "../lib/api/limits";
 import { POST as withdraw } from "../app/api/workspaces/[id]/plans/[planId]/withdraw/route";
 import { POST as approve } from "../app/api/workspaces/[id]/plans/[planId]/approve/route";
+import { POST as adjust } from "../app/api/workspaces/[id]/plans/[planId]/adjust/route";
 import { setSdkTransport } from "./paypalTransport";
 
 let directory: string, repository: Repository;
@@ -245,6 +248,78 @@ it("revalidates a stale preview before removing any constraint", async () => {
   state.bookings.find((booking) => correction.bookingActions.some((action) => action.bookingId === booking.id))!.status = "cancelled";
   repository.saveState(id, state);
   await expect(executePlan(id, correction.id, repository)).rejects.toMatchObject({ status: 409 });
+  expect(activeConstraints(repository.requireWorkspace(id).state)).toEqual([original.disruption]);
+  expect(repository.getPlan(id, original.id)?.correctedBy).toBeUndefined();
+});
+
+it("adjusts and approves a hero correction without refunds, preserving stay and settled-payment warnings", async () => {
+  const { id, original } = await approved();
+  const state = repository.requireWorkspace(id).state;
+  const blocked = original.sessionChanges.find((change) => change.remedy === "move_time")!;
+  const session = state.sessions.find((item) => item.id === blocked.sessionId)!;
+  state.instructors.push({ ...state.instructors[0], id: "new-instructor" });
+  state.sessions.push({ ...session, ...blocked.before, id: "new-class", instructorId: "new-instructor" });
+  repository.saveState(id, state);
+  const correction = await withdrawPlan(id, original.id, repository);
+  const input = { sessionId: "session-001", start: "2026-11-09T12:15:00Z" };
+  expect(checkAdjustment(state, correction, input).valid).toBe(true);
+  expect(checkAdjustment(state, correction, { sessionId: blocked.sessionId, start: blocked.before.start }).valid).toBe(false);
+  const ledger = repository.listLedger(id);
+  const response = await adjust(new Request("http://localhost/adjust", { method: "POST", body: JSON.stringify({ ...input, version: 1 }) }),
+    { params: Promise.resolve({ id, planId: correction.id }) });
+  expect(response.status).toBe(200);
+  const adjusted = await response.json();
+  expect(adjusted.sessionChanges.find((change: { sessionId: string }) => change.sessionId === input.sessionId)).toMatchObject({
+    remedy: "move_time", ownerAdjusted: true, after: { start: "2026-11-09T12:15:00.000Z" },
+    reason: "Owner adjusted the restored placement; customers were checked again.",
+  });
+  expect(validate(state, adjusted)).toEqual({ ok: true, errors: [] });
+  expect(adjusted.totals).toMatchObject({ kept: 0, moved: correction.totals.moved + 9, refunded: 0, refundAmount: "0.00", revenueKept: correction.totals.revenueKept });
+  expect(adjusted.warnings).toEqual(correction.warnings);
+  expect(adjusted.warnings.join(" ")).toContain("the original room is now taken");
+  expect(adjusted.warnings.join(" ")).toContain("6 refunds already issued stay refunded");
+  expect(adjusted.bookingActions.every((action: { action: string }) => action.action !== "refund")).toBe(true);
+  expect(await explainPlan(adjusted, state)).toMatchObject({ headline: "Your adjusted correction is ready" });
+  expect(repository.requireWorkspace(id).state).toEqual(state);
+  const result = await approve(new Request("http://localhost/approve", { method: "POST", body: JSON.stringify({ version: 2 }) }),
+    { params: Promise.resolve({ id, planId: correction.id }) });
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ plan: { status: "executed" }, results: [] });
+  expect(repository.requireWorkspace(id).state.sessions.find((item) => item.id === input.sessionId)?.start).toBe("2026-11-09T12:15:00.000Z");
+  expect(repository.listLedger(id)).toEqual(ledger);
+  const updates = repository.listCustomerLinks(id).filter((link) => link.planId === correction.id && state.bookings.some((booking) => booking.id === link.bookingId && booking.sessionId === input.sessionId));
+  expect(updates).toHaveLength(9);
+  expect(updates.every((link) => link.message.body.includes("7:15 AM") && !link.message.body.includes("original time") && !link.message.body.includes("Reply for a refund"))).toBe(true);
+  expect(activeConstraints(repository.requireWorkspace(id).state)).toEqual([]);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("undoes a correction adjustment and approves the restored previous placement", async () => {
+  const { id, original } = await approved();
+  const correction = await withdrawPlan(id, original.id, repository);
+  const context = { params: Promise.resolve({ id, planId: correction.id }) };
+  expect((await adjust(new Request("http://localhost/adjust", { method: "POST", body: JSON.stringify({ sessionId: "session-001", start: "2026-11-09T12:15:00Z", version: 1 }) }), context)).status).toBe(200);
+  const response = await adjust(new Request("http://localhost/adjust", { method: "POST", body: JSON.stringify({ undo: true, version: 2 }) }), context);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ version: 3, sessionChanges: correction.sessionChanges, bookingActions: correction.bookingActions, totals: correction.totals, warnings: correction.warnings });
+  expect(repository.getPlan(id, correction.id)?.lastAdjustment).toBeUndefined();
+  await executePlan(id, correction.id, repository, 3);
+  expect(samePlacement(repository.requireWorkspace(id).state.sessions.find((item) => item.id === "session-001")!, correction.sessionChanges[0].after!)).toBe(true);
+});
+
+it.each(["placement", "booking", "constraint"])("rejects an adjusted correction when its %s becomes stale", async (kind) => {
+  const { id, original } = await approved();
+  const correction = await withdrawPlan(id, original.id, repository);
+  const state = repository.requireWorkspace(id).state;
+  const adjusted = adjustPlan(state, correction, { sessionId: "session-001", start: "2026-11-09T12:15:00Z" });
+  repository.savePlan({ ...correction, ...adjusted });
+  if (kind === "placement") state.sessions.find((item) => item.id === "session-001")!.roomId = "room-02";
+  else if (kind === "booking") state.bookings.find((booking) => adjusted.bookingActions.some((action) => action.bookingId === booking.id))!.status = "cancelled";
+  else state.rooms.find((room) => room.id === "room-01")!.supports = [];
+  repository.saveState(id, state);
+  const ledger = repository.listLedger(id);
+  await expect(executePlan(id, correction.id, repository)).rejects.toMatchObject({ status: 409 });
+  expect(repository.listLedger(id)).toEqual(ledger);
   expect(activeConstraints(repository.requireWorkspace(id).state)).toEqual([original.disruption]);
   expect(repository.getPlan(id, original.id)?.correctedBy).toBeUndefined();
 });

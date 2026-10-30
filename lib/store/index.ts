@@ -72,6 +72,8 @@ export function customerLinkReadableUntil(link: CustomerLink): number {
 }
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
+export type SyncEventResult = { eventId: string; status: "applied" | "rejected"; message?: string };
+export type SyncEvent = { eventId: string; type: string; result: SyncEventResult; receivedAt: string };
 export type CheckoutReservation = {
   id: string; workspaceId: string; requestId: string; sessionId: string;
   requestAliases?: string[]; waitlistOfferId?: string;
@@ -123,6 +125,14 @@ export class Repository {
         request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
       );
       CREATE TABLE IF NOT EXISTS choice_secrets (id INTEGER PRIMARY KEY CHECK(id = 1), secret TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sync_acks (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, change_id TEXT NOT NULL, acked_at TEXT NOT NULL,
+        PRIMARY KEY(workspace_id, change_id)
+      );
+      CREATE TABLE IF NOT EXISTS sync_events (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, event_id TEXT NOT NULL, type TEXT NOT NULL,
+        result TEXT NOT NULL, received_at TEXT NOT NULL, PRIMARY KEY(workspace_id, event_id)
+      );
       CREATE TABLE IF NOT EXISTS deliveries (
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, customer_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
@@ -182,6 +192,25 @@ export class Repository {
     this.db.prepare("INSERT OR IGNORE INTO choice_secrets VALUES (1, ?)").run(randomBytes(32).toString("hex"));
   }
   close(): void { this.db.close(); }
+  syncKey(workspaceId: string): string {
+    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
+    return createHmac("sha256", secret).update(`sync:${workspaceId}`).digest("base64url");
+  }
+  syncAcks(workspaceId: string): Set<string> {
+    return new Set((this.db.prepare("SELECT change_id FROM sync_acks WHERE workspace_id = ?").all(workspaceId) as { change_id: string }[]).map((row) => row.change_id));
+  }
+  acknowledgeSync(workspaceId: string, ids: string[]): number {
+    let count = 0;
+    for (const id of ids) count += Number(this.db.prepare("INSERT OR IGNORE INTO sync_acks VALUES (?, ?, ?)").run(workspaceId, id, new Date().toISOString()).changes);
+    return count;
+  }
+  listSyncEvents(workspaceId: string): SyncEvent[] {
+    return (this.db.prepare("SELECT event_id, type, result, received_at FROM sync_events WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as
+      { event_id: string; type: string; result: string; received_at: string }[]).map((row) => ({ eventId: row.event_id, type: row.type, result: JSON.parse(row.result), receivedAt: row.received_at }));
+  }
+  saveSyncEvent(workspaceId: string, type: string, result: SyncEventResult): void {
+    this.db.prepare("INSERT OR REPLACE INTO sync_events VALUES (?, ?, ?, ?, ?)").run(workspaceId, result.eventId, type, JSON.stringify(result), new Date().toISOString());
+  }
   listDeliveries(workspaceId: string): Delivery[] {
     // A process that died after reserving a send cannot prove whether Brevo accepted it.
     // Update only a still-queued row, so another process's completed attempt cannot be overwritten.
@@ -487,6 +516,8 @@ export class Repository {
     }
   }
   clearPlans(workspaceId: string): void {
+    this.db.prepare("DELETE FROM sync_acks WHERE workspace_id = ?").run(workspaceId);
+    this.db.prepare("DELETE FROM sync_events WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM waitlist_offers WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }

@@ -4,9 +4,10 @@ import { localParts } from "./time";
 import { packReturnBalance, packReturns } from "./pack-balances";
 
 /** Quote every cell, and neutralize spreadsheet formulas before CSV escaping. */
-export function packBalanceCsv(state: State, ledger: LedgerEvent[]): string {
+export function packBalanceCsv(state: State, ledger: LedgerEvent[], include: (event: LedgerEvent) => boolean = () => true): string {
   const rows: (string | number)[][] = [["Customer", "Email", "Pack", "Class", "Class start (studio local)", "Returned at", "Balance before", "Balance after", "Expires"]];
   for (const event of packReturns(ledger)) {
+    if (!include(event)) continue;
     const booking = state.bookings.find((item) => item.id === event.bookingId);
     if (booking?.entitlement?.kind !== "pack") continue;
     const customer = state.customers.find((item) => item.id === booking.customerId);

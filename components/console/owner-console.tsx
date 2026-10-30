@@ -18,6 +18,7 @@ import { draftCustomerMessages } from "../../lib/ai/messages";
 import { formatMoney, localParts } from "../../lib/domain/time";
 import type { OwnerAdjustment } from "../../lib/solver/adjust";
 import WaitlistPanel from "./waitlist-panel";
+import SyncPanel from "./sync-panel";
 import MessagesDrawer from "./messages-drawer";
 import { summarizeOutbox } from "../../lib/choices/outbox";
 import ConsoleHeader from "./console-header";
@@ -81,7 +82,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const livePlan = workspace?.plans.find((item) => item.id === details?.plan.id);
   const plan = details && (livePlan && (livePlan.version ?? 1) >= (details.plan.version ?? 1) ? livePlan : details.plan);
   const preview = details && plan?.status === "proposed";
-  const adjustable = preview && !plan?.correctionOf;
+  const adjustable = preview;
   const canWithdraw = plan && ["executed", "partially_failed"].includes(plan.status) && !plan.correctionOf && !plan.correctedBy &&
     !workspace?.plans.some((item) => item.correctionOf === plan.id);
   const timelineState = preview && basis ? basis : state;
@@ -140,12 +141,13 @@ export default function OwnerConsole({ id }: { id: string }) {
         const dateKey = localParts(placement.start, currentState.studio.timezone).dateKey;
         if (zoom === "day") setDay(Math.round((Date.parse(dateKey) - Date.parse(weekBounds(currentState).startKey)) / 86400000));
       }
-      setToast("undo" in input ? "Last adjustment undone. Review the restored placement and totals." : "Class moved. Review the updated placement and totals.");
+      setToast("undo" in input ? "Last adjustment undone. Review the restored placement and totals." : adjusted.correctionOf ? "Class moved. Review the restored placement." : "Class moved. Review the updated placement and totals.");
       setDetails((previous) => previous ? { ...previous, plan: adjusted,
         messages: draftCustomerMessages(adjusted, currentState, workspace?.customerChoices?.packReturns ?? workspace?.ledger),
-        explanation: { headline: "Your adjusted recovery plan is ready", source: "template", bullets: [
+        explanation: { headline: adjusted.correctionOf ? "Your adjusted correction is ready" : "Your adjusted recovery plan is ready", source: "template", bullets: [
           `${totals.kept} bookings stay at their original time; ${totals.moved} move to a new time.`,
-          `${totals.refunded} refunds total ${formatMoney(totals.refundAmount, currentState.studio.currency)}; ${formatMoney(totals.revenueKept, currentState.studio.currency)} in revenue stays with your studio.`,
+          adjusted.correctionOf ? "Approval withdraws the disruption. Settled payments stay recorded; no new refunds are issued."
+            : `${totals.refunded} refunds total ${formatMoney(totals.refundAmount, currentState.studio.currency)}; ${formatMoney(totals.revenueKept, currentState.studio.currency)} in revenue stays with your studio.`,
         ] },
       } : previous);
       // The adjustment is already saved. A polling failure must not reject an accepted drop.
@@ -210,7 +212,7 @@ export default function OwnerConsole({ id }: { id: string }) {
   const schedulePanel = <section className={`timeline-panel ${view === "list" ? "agenda-view" : "timeline-view"}`} aria-label="Studio schedule">
         <div className="timeline-heading"><div><p className="eyebrow">Your studio, in sync</p>{phone ? <h2>The week ahead</h2> : <h1>The week ahead</h1>}</div><span className={`schedule-state ${preview ? "preview-state" : ""}`}>{preview ? "Preview · awaiting approval" : ready ? "Schedule up to date" : "Getting ready"}</span></div>
         <div className="schedule-toolbar"><div className="segmented" role="group" aria-label="Schedule view"><button aria-pressed={view === "timeline"} onClick={() => setView("timeline")}>Timeline</button><button aria-pressed={view === "list"} onClick={() => setView("list")}>List</button></div><div className="row-controls"><span className="muted">Rows:</span><div className="segmented" aria-label="Schedule rows"><button aria-pressed={mode === "instructors"} onClick={() => setMode("instructors")}>Instructors</button><button aria-pressed={mode === "rooms"} onClick={() => setMode("rooms")}>Rooms</button></div></div><div className="zoom-controls">{zoom === "day" && <><button aria-label="Previous day" disabled={day === 0} onClick={() => setDay(day - 1)}>‹</button><span>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]}</span><button aria-label="Next day" disabled={day === 6} onClick={() => setDay(day + 1)}>›</button></>}<div className="segmented" aria-label="Schedule zoom"><button aria-pressed={zoom === "day"} onClick={() => setZoom("day")}>Day</button><button aria-pressed={zoom === "week"} onClick={() => setZoom("week")}>Week</button></div></div></div>
-        {preview && view === "timeline" && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>{plan?.correctionOf ? "Review the placements that can return to the original schedule" : "Drag a recovery block, use Move, or focus it and press Enter / Space"}</span></div>}
+        {preview && view === "timeline" && <div className="preview-key"><span className="ghost-key">Original</span><span className="new-key">Recovery</span><span className="cancel-key">Cancelled</span><span>{plan?.correctionOf ? "Drag a restored block to fine-tune it, use Move, or focus it and press Enter / Space" : "Drag a recovery block, use Move, or focus it and press Enter / Space"}</span></div>}
         <div className="schedule-canvas">
           {timelineState && ready ? view === "list" ? <ScheduleAgenda state={timelineState} plan={preview ? plan : undefined} updatedPlan={updatedPlan} zoom={zoom} day={day} highlightedSessionId={movedSession?.id ?? bookingNotice?.sessionId} onMove={adjustable && !busy ? setMoveSession : undefined} /> : <ScheduleBoundary key={`${id}-${mode}-${zoom}-${day}`} fallback={<ScheduleFallback zoom={zoom} day={day} updatedPlan={updatedPlan} state={timelineState} plan={preview ? plan : undefined} highlightedSessionId={movedSession?.id} onMove={adjustable && !busy ? setMoveSession : undefined} />}><Schedule state={timelineState} mode={mode} zoom={zoom} day={day} plan={preview ? plan : undefined} updatedPlan={updatedPlan} highlightedSessionId={movedSession?.id ?? bookingNotice?.sessionId} busy={Boolean(busy)} onAdjust={adjustable ? adjust : undefined} onMove={adjustable ? setMoveSession : undefined} /></ScheduleBoundary> : <ScheduleSkeleton />}
           {(!workspace || !ready) && <div className="preparing-overlay"><div className="preparing-card"><span className="eyebrow">Setting the week in motion</span><h2 role="status">{workspace?.status === "failed" ? "We couldn’t prepare this demo" : startupMessage}</h2><p className="muted">{workspace?.status === "failed" ? "Some sandbox payments could not be prepared. Open a fresh demo to try again." : "Creating bookings and preparing sandbox payments. This can take a minute."}</p>{workspace?.status === "failed" ? <Link className="primary button-link" href="/">Back to Rebook</Link> : <><progress max={100} value={percent} aria-label="Workspace preparation" /><span className="muted" role="status">{percent}% · {workspace?.progress.done ?? 0} of {workspace?.progress.total ?? "…"} bookings ready</span></>}{loadError && <p className="error" role="alert">{loadError}</p>}</div></div>}
@@ -228,6 +230,7 @@ export default function OwnerConsole({ id }: { id: string }) {
             : <DisruptionPanel state={state} text={text} setText={setText} interpretation={interpretation} busy={Boolean(busy)} onInterpret={(value) => run("interpret", () => interpretText(value))} onReport={reportDisruption} onEdit={() => setInterpretation(undefined)} onPlan={createPlan} />}
           <CoverPay workspaceId={id} covers={workspace.covers?.filter((cover) => cover.planId === plan?.id || cover.planId === plan?.correctionOf)} onUpdated={() => { void refresh().catch(() => {}); }} />
           <WaitlistPanel classes={workspace.waitlist} timezone={state.studio.timezone} onMessages={() => setWaitlistMessagesOpen(true)} />
+          <SyncPanel workspaceId={id} sync={workspace.sync} timezone={state.studio.timezone} onRefresh={refresh} />
           <PaymentsAttention workspaceId={id} payments={workspace.paymentsNeedingAttention} onUpdated={() => { void refresh().catch(() => setError("Refund checked. Refresh the workspace to see its latest status.")); }} />
           {history.length > 0 && <section className="history"><h3>History <span>{history.length}</span></h3>{history.map((item) => <div key={item.id}><button disabled={Boolean(busy)} onClick={() => void run("history", async () => { const next = await api.details(id, item.id); setDetails(next); setBasis({ ...state, sessions: next.sessions }); })}><strong>{item.totals.sessionsAffected} sessions · {item.totals.refunded} refunds</strong><span>{item.correctedBy ? "corrected" : item.correctionOf ? "correction · " + item.status.replaceAll("_", " ") : item.status.replaceAll("_", " ")} · {new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(item.createdAt))}</span></button><CoverRecord plan={item} state={state} links={workspace.covers} /></div>)}</section>}
           {(workspace.customerChoices?.links.length ?? 0) > 0 && <section className="customer-replies" aria-labelledby="replies-title"><div className="replies-heading"><h3 id="replies-title">Replies</h3><span className="muted">Updates live</span></div><ul aria-live="polite">{workspace.customerChoices?.replies.length ? workspace.customerChoices.replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><time dateTime={reply.at}>{new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(reply.at))}</time></li>) : <li className="muted">Waiting for customers. Open a private link from Customer messages to try a reply.</li>}</ul></section>}

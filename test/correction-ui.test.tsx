@@ -37,6 +37,20 @@ it("offers a secondary withdrawal action on an eligible approved plan and shows 
   expect(corrected).not.toContain("The disruption is over — restore the schedule");
 });
 
+it("keeps correction review, Move and Undo controls alongside the correction notice and approval", () => {
+  const adjusted = { ...plan, lastAdjustmentTotals: plan.totals,
+    sessionChanges: plan.sessionChanges.map((change) => ({ ...change, ownerAdjusted: true })) };
+  const html = renderToStaticMarkup(<PlanPanel details={{ ...details, explanation: { ...details.explanation, headline: "Your adjusted correction is ready" } }} plan={adjusted} state={state}
+    busy={false} results={[]} onMove={vi.fn()} onUndo={vi.fn()} onApprove={vi.fn()} onDiscard={vi.fn()} onMessages={vi.fn()} />);
+  expect(html).toContain("Your adjusted correction is ready");
+  expect(html).toContain('role="status">This undoes the recovery');
+  expect(html).toContain("Review each changed session before approving");
+  expect(html.match(/data-move-session=/g)).toHaveLength(plan.sessionChanges.length);
+  expect(html).toContain('aria-label="Undo last adjustment">Undo</button>');
+  expect(html).toContain('role="status">Your change: no change in refunds');
+  expect(html).toContain(">Approve correction</button>");
+});
+
 it("keeps settled cover pay visible and removes the payout action after withdrawal", () => {
   const cover: OwnerCover = { planId: "earlier-plan", sessionId: "yoga", instructorId: "instructor-02", instructor: "Alex Rivera", original: "Maya Chen", class: "Yoga Flow", when: "Monday",
     rule: { perClass: "35.00" }, attendees: 6, estimate: false,

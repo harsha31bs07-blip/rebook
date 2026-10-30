@@ -99,7 +99,8 @@ export function validate(state: State, plan: Plan): { ok: boolean; errors: strin
       const sameTime = Date.parse(before.start) === Date.parse(change.after.start) && Date.parse(before.end) === Date.parse(change.after.end);
       if (Date.parse(before.end) - Date.parse(before.start) !== Date.parse(change.after.end) - Date.parse(change.after.start)) errors.push(`Duration changed: ${change.sessionId}`);
       if (Date.parse(change.after.start) < Date.parse(plan.now)) errors.push(`Replacement starts in the past: ${change.sessionId}`);
-      if (change.remedy === "substitute" && (!sameTime || before.roomId !== change.after.roomId || before.instructorId === change.after.instructorId)) errors.push(`Invalid substitute remedy: ${change.sessionId}`);
+      if (change.remedy === "substitute" && (!sameTime || before.roomId !== change.after.roomId ||
+        (before.instructorId === change.after.instructorId && !(plan.correctionOf && change.ownerAdjusted)))) errors.push(`Invalid substitute remedy: ${change.sessionId}`);
       // Owner room overrides may also select a substitute, regardless of the original disruption kind.
       if (change.remedy === "move_room" && (!sameTime || before.roomId === change.after.roomId ||
         (!change.ownerAdjusted && (before.instructorId !== change.after.instructorId || (!plan.correctionOf && plan.disruption.kind !== "room_unavailable"))))) errors.push(`Invalid room remedy: ${change.sessionId}`);

@@ -2,6 +2,7 @@ import type { Booking, Plan, State } from "./types";
 import type { LedgerEvent } from "../store";
 
 export type PackBalanceChange = { before: number; after: number };
+export const packChangeId = (event: Pick<LedgerEvent, "id">): string => `pack:${event.id}`;
 
 /** Ledger order is durable insertion order. A replay of the same return is counted once. */
 export function packReturns(ledger: LedgerEvent[]): LedgerEvent[] {
@@ -14,6 +15,9 @@ export function packReturns(ledger: LedgerEvent[]): LedgerEvent[] {
 
 /** Imported balances are after booking; the lowest snapshot includes every imported reservation. */
 export function packBalance(state: State, ledger: LedgerEvent[], customerId: string, packName: string): number | null {
+  const baseline = state.syncPackBalances?.find((row) => row.customerId === customerId);
+  if (baseline) return baseline.visitsLeft + packReturns(ledger).filter((event) => !baseline.acknowledgedBookingIds.includes(event.bookingId)
+    && state.bookings.some((booking) => booking.id === event.bookingId && booking.customerId === customerId && booking.entitlement?.kind === "pack")).length;
   const bookings = state.bookings.filter((booking) => booking.customerId === customerId && booking.entitlement?.kind === "pack" && booking.entitlement.name === packName);
   const balances = bookings.flatMap((booking) => booking.entitlement?.visitsLeft === undefined ? [] : [booking.entitlement.visitsLeft]);
   if (!balances.length) return null;

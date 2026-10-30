@@ -659,3 +659,9 @@ textarea { resize: vertical; min-height: 120px; }
 .recovery-headline.handled h3::before { content: "✓ "; color: #15803d; }
 .recovery-net { margin: 0 0 8px; font-size: 13px; }
 .recovery-headline ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.booking-filters { display: grid; gap: 8px; margin: -6px 0 18px; }
+.booking-filters .segmented { display: flex; flex-wrap: wrap; gap: 6px; }
+.booking-filters .segmented button { width: auto; padding: 6px 12px; font-size: 12px; border-radius: 999px; }
+.booking-filters .segmented button[aria-pressed="true"] { color: #fff; background: var(--primary); border-color: var(--primary); }
+.booking-day h3 { position: sticky; top: 0; z-index: 1; margin: 18px 0 8px; padding: 6px 0; font-size: 13px; letter-spacing: .02em; background: var(--background, #f8fafc); }
+.booking-checkout .agent-connect { margin: 20px 0 0; max-width: none; }

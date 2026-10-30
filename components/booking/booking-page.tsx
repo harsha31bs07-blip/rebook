@@ -9,6 +9,7 @@ import { calendarFile, eligibleCheckoutMethods, payLaterButtonTag, type CardSess
 import AgentReadyChip from "../webmcp/agent-ready-chip";
 import { useWebMcp } from "../../lib/webmcp/use-webmcp";
 import { bookingTools } from "../../lib/webmcp/tools";
+import { localParts } from "../../lib/domain/time";
 
 type Catalog = ReturnType<typeof bookingCatalog>;
 type Class = Catalog["sessions"][number];
@@ -260,6 +261,17 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     if (prefill) setCustomer((previous) => ({ name: prefill.name ?? previous.name, email: prefill.email ?? previous.email }));
   }
   useWebMcp(catalog && !receipt ? bookingTools({ sessions: catalog.sessions.filter((session) => !session.bookingPaused), timezone, locked: customerLocked, select: selectClass }) : []);
+  // Filters come after every other hook so existing hook order stays stable.
+  const [dayFilter, setDayFilter] = useState(""), [typeFilter, setTypeFilter] = useState("");
+  const dayKey = (instant: string) => localParts(instant, timezone).dateKey;
+  const clock = (instant: string) => new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit" }).format(new Date(instant));
+  const days = [...new Map((catalog?.sessions ?? []).map((session) => [dayKey(session.start), {
+    key: dayKey(session.start),
+    short: new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", day: "numeric" }).format(new Date(session.start)),
+    long: new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "long", month: "long", day: "numeric" }).format(new Date(session.start)),
+  }])).values()];
+  const types = [...new Set((catalog?.sessions ?? []).map((session) => session.classType))];
+  const shown = (catalog?.sessions ?? []).filter((session) => (!dayFilter || dayKey(session.start) === dayFilter) && (!typeFilter || session.classType === typeFilter));
   function downloadCalendar() {
     if (!receipt || !catalog) return;
     const url = URL.createObjectURL(new Blob([calendarFile(receipt, catalog.studio.name)], { type: "text/calendar;charset=utf-8" }));
@@ -280,7 +292,13 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
       : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
         {!catalog && !error && <p role="status">Loading classes…</p>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}
-        {catalog?.sessions.map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={session.bookingPaused || !session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => selectClass(session)}><span><strong>{classTitle(session.title)}</strong><span>{time(session.start)}</span><span>{session.instructor} · {session.room}</span>{session.bookingPaused && <span>Schedule change in progress — booking paused</span>}</span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}
+        {catalog && catalog.sessions.length > 0 && <div className="booking-filters">
+          <div className="segmented" role="group" aria-label="Day"><button aria-pressed={!dayFilter} onClick={() => setDayFilter("")}>All days</button>{days.map((day) => <button key={day.key} aria-pressed={dayFilter === day.key} onClick={() => setDayFilter(day.key)}>{day.short}</button>)}</div>
+          <div className="segmented" role="group" aria-label="Class type"><button aria-pressed={!typeFilter} onClick={() => setTypeFilter("")}>All classes</button>{types.map((type) => <button key={type} aria-pressed={typeFilter === type} onClick={() => setTypeFilter(type)}>{type === "hiit" ? "HIIT" : type[0].toUpperCase() + type.slice(1)}</button>)}</div>
+        </div>}
+        {catalog && catalog.sessions.length > 0 && !shown.length && <p>No classes match these filters.</p>}
+        {days.filter((day) => shown.some((session) => dayKey(session.start) === day.key)).map((day) => <div key={day.key} className="booking-day"><h3>{day.long}</h3>
+        {shown.filter((session) => dayKey(session.start) === day.key).map((session) => <button className={`bookable-class ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={session.bookingPaused || !session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => selectClass(session)}><span><strong>{classTitle(session.title)}</strong><span>{clock(session.start)}</span><span>{session.instructor} · {session.room}</span>{session.bookingPaused && <span>Schedule change in progress — booking paused</span>}</span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}</div>)}
       </section><aside className="booking-checkout" aria-label="Class checkout">{selectedClass ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selectedClass.title)}</h2><p>{time(selectedClass.start)}</p><p className="muted">{selectedClass.room} · ${selectedClass.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>
         <details className="booking-availability"><summary>If this class has to move, when can you usually come?</summary><fieldset disabled={customerLocked}><legend>Usual availability (optional)</legend><p className="muted">Times are local to the studio. Leave a group blank for any.</p>
           {(["mornings", "afternoons", "evenings"] as const).map((time) => <label key={time}><input type="checkbox" name="times" value={time} checked={availability?.times?.includes(time) ?? false} onChange={(event) => { const checked = event.target.checked; setAvailability((previous) => {
@@ -295,7 +313,6 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
         </fieldset></details>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
         {selectionPaused && <p role="status">Schedule change in progress — booking paused</p>}
         {(customerLocked || (currentSelection && !selectionPaused)) && (creditPending ? <p role="status">Checking studio credit...</p> : credit ? <CreditPayment key={`${id}:${selectedClass.id}:credit`} id={id} token={credit.token} remaining={credit.remaining} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} onSuccess={setReceipt} onLockChange={setCustomerLocked} /> : <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />)}
-      </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}</aside></div>}
-    {catalog && <AgentConnect bookingId={id} />}
+      </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}{catalog && <AgentConnect bookingId={id} />}</aside></div>}
   </main>;
 }

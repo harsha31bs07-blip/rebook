@@ -34,7 +34,7 @@ export const initialReport: AgReportState<StudioRegistry> = {
       revenue: { type: "bar-chart-grouped", dataMapping: { categoryKey: [{ id: "sessions.class_type" }], valueKey: [sum("bookings.amount")] }, sort: [{ field: sum("bookings.amount"), direction: "desc" }], format: barFormat("Revenue by class type") },
       heatmap: { type: "week-heatmap", dataMapping: { rows: heatmapFields }, format: { ...title("Week heatmap · instructor utilisation"), crossFilter: "filter", style: { showValues: true } } },
       sessions: { type: "grid", dataMapping: { cols: "title local_day local_start instructor room capacity price status".split(" ").map((field) => ({ id: `sessions.${field}` })) }, sort: [{ field: { id: "sessions.start" }, direction: "asc" }], format: title("This week’s sessions") },
-    }, widgetLayout: { booked: at(0, 0, 6, 7), kept: at(6, 0, 6, 7), refunded: at(12, 0, 6, 7), saved: at(18, 0, 6, 7), revenue: at(0, 7, 9, 11), heatmap: at(9, 7, 15, 11), sessions: at(0, 18, 24, 12) } },
+    }, widgetLayout: { booked: at(0, 0, 6, 7), kept: at(6, 0, 6, 7), refunded: at(12, 0, 6, 7), saved: at(18, 0, 6, 7), revenue: at(0, 7, 9, 15), heatmap: at(9, 7, 15, 15), sessions: at(0, 22, 24, 8) } },
     { id: "disruptions", widgets: {
       impact: { type: "recovery-impact", dataMapping: { rows: recoveryFields }, format: title("Recovery impact") },
       receipts: { type: "refund-receipts", dataMapping: { rows: receiptFields }, format: title("Refund receipts") },

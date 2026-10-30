@@ -69,6 +69,9 @@ export default function CustomerChoicePage({ token }: { token: string }) {
     weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(instant));
   const receipt = data?.receipt;
   const entitlement = data?.entitlement;
+  // Only the instructor or room changed: the customer keeps a class, not a new time.
+  const sameTime = !!data?.after && Date.parse(data.after.start) === Date.parse(data.before.start);
+  const keepLabel = !sameTime ? "Keep my new time" : data!.after!.instructor !== data!.before.instructor ? `Keep my class with ${data!.after!.instructor.split(" ")[0]}` : "Keep my class";
   const returned = entitlement ? entitlementReceipt(entitlement, data?.packBalance, data?.after?.start ?? data?.before.start, data?.studio.timezone) : undefined;
   const cancelLabel = entitlement?.kind === "pack" ? `Return the visit to my ${entitlement.name}${data?.packBalance !== undefined && !receipt ? ` (${data.packBalance + 1} left after)` : ""}` : "Cancel this booking";
   const restored = receipt?.status === "CREDIT_RESTORED";
@@ -98,7 +101,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
           : data.credit ? <><h2 ref={resultHeading} tabIndex={-1}>Your ${data.credit.amount} studio credit</h2><p>{data.credit.status === "unavailable" ? "This credit is unavailable because its original payment was refunded or reversed." : "Use it for any class; no refund needed."}</p><p className="muted">${data.credit.remaining} left</p>{data.credit.status === "available" && <><a className="primary" href={data.credit.path} referrerPolicy="no-referrer">Book a class with your credit</a>
             <p className="muted">{["sent", "delivered", "deferred"].includes(data.credit.emailed ?? "") ? "We've emailed you this link, so your credit stays easy to reach after this page closes."
               : `This page closes on ${new Intl.DateTimeFormat("en-US", { timeZone: data.studio.timezone, month: "short", day: "numeric" }).format(new Date(data.credit.readableUntil))}; your credit doesn't. Bookmark the link above to keep it.`}</p></>}</>
-          : data.reply && <><h2 ref={resultHeading} tabIndex={-1}>You’re all set.</h2><p>{data.reply.action === "keep" ? "Your new time is confirmed. See you in class." : "Your place in your chosen class is confirmed."}</p></>}
+          : data.reply && <><h2 ref={resultHeading} tabIndex={-1}>You’re all set.</h2><p>{data.reply.action === "keep" ? sameTime ? "Your class is confirmed. See you there." : "Your new time is confirmed. See you in class." : "Your place in your chosen class is confirmed."}</p></>}
       </div>
       {data.canChoose && <section className="choice-assistant" aria-labelledby="assistant-label" aria-busy={asking}>
         <label id="assistant-label" htmlFor="assistant-message">Tell us what works for you</label>
@@ -113,7 +116,7 @@ export default function CustomerChoicePage({ token }: { token: string }) {
         </article>}
       </section>}
       {data.canChoose && <section className="choice-actions" aria-label="Choose what works for you" aria-busy={busy || asking}>
-        <button className="primary" disabled={busy || asking} onClick={() => void choose({ action: "keep" })}>Keep my new time <span aria-hidden="true">↗</span></button>
+        <button className="primary" disabled={busy || asking} onClick={() => void choose({ action: "keep" })}>{keepLabel}</button>
         <button disabled={busy || asking} aria-expanded={picking} onClick={() => setPicking(!picking)}>Pick another class <span className="muted">This week · no extra cost</span></button>
         {entitlement ? <button disabled={busy || asking} onClick={() => void choose({ action: "refund" })}>{cancelLabel}</button> : data.paidWith === "credit" ? <button disabled={busy || asking || !Number(data.creditRefundable)} onClick={() => void choose({ action: "refund" })}>Return to my studio credit <span>${data.creditRefundable}</span></button>
           : <><button disabled={busy || asking || data.refundable === "0.00"} onClick={() => void choose({ action: "refund" })}>Refund me <span>${data.refundable}</span></button>

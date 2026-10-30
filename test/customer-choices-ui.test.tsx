@@ -61,6 +61,11 @@ beforeEach(() => {
 });
 afterEach(() => { for (const cleanup of hooks.cleanups.values()) cleanup?.(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("says keep my class with the substitute when only the instructor changed", async () => {
+  data = { ...data, before: { ...data.before, start: data.after!.start } }; render(); await settle();
+  const html = renderToStaticMarkup(tree);
+  expect(html).toContain("Keep my class with Alex"); expect(html).not.toContain("Keep my new time"); expect(html).not.toContain("↗");
+});
 it("shows old/new class details, drafted message and four choices; offers the lower-price refund", async () => {
   render(); await settle();
   let html = renderToStaticMarkup(tree);

@@ -31,7 +31,8 @@ export default function RecoveryHeadline({ recovery, disruption, timezone, appro
     refunded > 0 && `${count(refunded, "refund")} · ${money(refundedAmount)} back to the original payment`,
     recovery.credited > 0 && `${count(recovery.credited, "customer")} kept ${money(recovery.keptAsCredit)} as studio credit`,
     recovery.visitsReturned > 0 && `${count(recovery.visitsReturned, "pack visit")} returned`,
-    (claimed.length > 0 || open > 0) && `${count(claimed.length, "seat")} refilled from the waitlist${open ? ` · ${count(open, "offer")} open` : ""}`,
+    claimed.length > 0 ? `${count(claimed.length, "seat")} refilled from the waitlist${open ? ` · ${count(open, "offer")} open` : ""}`
+      : open > 0 && `${count(open, "waitlist offer")} open for freed seats`,
     coverLine,
     recovery.pending > 0 && `${count(recovery.pending, "refund")} waiting on PayPal`,
     recovery.noReplyCustomers > 0 && `${count(recovery.noReplyCustomers, "customer")} haven't answered yet; their links stay open until class`,

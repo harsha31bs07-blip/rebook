@@ -72,7 +72,7 @@ function WeekHeatmap(params: AgWidgetParams<HeatmapWidget>) {
         </button>;
       })}</div>)}
     </div>
-    <div className={styles.heatmapLegend}><span>Light → dark: booked / capacity · Hatched: disrupted</span><button onClick={() => params.widgetApi.resetCrossFilter()}>Clear selection</button></div>
+    <div className={styles.heatmapLegend}><span>{instructors.length} instructors{instructors.length > 4 ? " · scroll for more" : ""} · Light → dark: booked / capacity · Hatched: disrupted</span><button onClick={() => params.widgetApi.resetCrossFilter()}>Clear selection</button></div>
   </div>;
 }
 

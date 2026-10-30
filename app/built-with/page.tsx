@@ -8,14 +8,14 @@ type FeatureRow = [feature: string, use: string, source: string];
 const bryntum: FeatureRow[] = [
   ["EventDrag", "Move proposed recovery blocks between instructors or rooms; server validation finalizes each drop.", "components/console/schedule.tsx#L46-L57"],
   ["Date constraints and snapping", "Keep moves inside the studio week, snapped to 15-minute intervals.", "components/console/schedule.tsx#L30-L71"],
-  ["Async drop finalization", "Wait for the adjustment API; invalid moves snap back with a reason.", "components/console/schedule.tsx#L174-L194"],
+  ["Async drop finalization", "Wait for the adjustment API; invalid moves snap back with a reason.", "components/console/schedule.tsx#L176-L196"],
   ["Undo", "Undo last adjustment restores the previous placement through the same server checks.", "app/api/workspaces/[id]/plans/[planId]/adjust/route.ts#L15-L50"],
   ["Drag and event tooltips", "Explain conflicts and show time, room, occupancy and recovery status.", "components/console/schedule.tsx#L139-L143"],
   ["Resource time ranges / time ranges", "Hatch instructor and room unavailability; shade whole-studio closures.", "lib/client/scheduler-mapping.ts#L158-L176"],
-  ["Resource column", "Show daily instructor load and room utilisation, including proposed placements.", "components/console/schedule.tsx#L144-L154"],
+  ["Resource column", "Show daily instructor load and room utilisation, including proposed placements.", "components/console/schedule.tsx#L144-L156"],
   ["Dependencies", "Draw arrows from original classes to their new times.", "lib/client/scheduler-mapping.ts#L147-L157"],
   ["Event rendering", "Original ghosts, recovery highlights, cancelled classes and Adjusted by you badges.", "lib/client/scheduler-mapping.ts#L123-L178"],
-  ["Keyboard selection", "Enter / Space and Move buttons open the same accessible adjustment dialog.", "components/console/schedule.tsx#L195-L199"],
+  ["Keyboard selection", "Enter / Space and Move buttons open the same accessible adjustment dialog.", "components/console/schedule.tsx#L197-L201"],
   ["Timezone and views", "Studio-local week/day views with instructor and room rows.", "components/console/schedule.tsx#L30-L71"],
   ["Trial resilience", "An accessible schedule and recovery list remain available if Scheduler cannot render.", "components/console/schedule-boundary.tsx#L6-L11"],
 ];
@@ -27,7 +27,7 @@ const studio: FeatureRow[] = [
   ["Queries and empty states", "Widgets query workspace data and show clear zero / no-disruption states.", "components/insights/widgets.tsx#L25-L42"],
   ["Cross-filtering", "Heatmap cells filter other widgets by instructor AND day.", "components/insights/widgets.tsx#L50-L77"],
   ["Relational data and formatting", "Eight related tables, numeric currency measures and studio-local dates/times.", "lib/insights/studio-data.ts#L35-L62"],
-  ["Built-in visualisations", "Values, grids and grouped bar/column charts for revenue, refunds and actions.", "lib/insights/report.ts#L25-L52"],
+  ["Built-in visualisations", "Values, grids and grouped bar/column charts for revenue, refunds and actions.", "lib/insights/report.ts#L25-L53"],
   ["CSV export / PNG download", "CSV on grids and charts; PNG download on charts.", "components/insights/widgets.tsx#L180-L203"],
   ["Studio Agent Framework", "Custom Recovery analyst answers common questions with direct tools and preset charts, and delegates custom report edits to built-in Data, Page, Planning and Widget agents.", "lib/insights/ai.ts#L125-L139"],
   ["Custom tools and tool cards", "Disruption and refund-receipt lookups display friendly expandable results.", "lib/insights/ai.ts#L67-L85"],
@@ -52,9 +52,9 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
     : <OpenDemoButton label={label} destination={destination} />;
   const paypal: [string, string, "console" | "booking", string, string][] = [
     ["PayPal Agent Toolkit: read-only Verify with PayPal", "Compare recorded refunds with PayPal through the Agent Toolkit; cover fees are checked through the Payouts API. Verification never changes the ledger.", "console", "See it: Verify with PayPal", "lib/paypal/verify.ts#L62-L97"],
-    ["Orders v2 + JS SDK v6", "Customer checkout creates an order on the server. PayPal buttons and hosted card fields collect sandbox approval in the browser.", "booking", "See it: book a class", "components/booking/booking-page.tsx#L124-L167"],
+    ["Orders v2 + JS SDK v6", "Customer checkout creates an order on the server. PayPal buttons and hosted card fields collect sandbox approval in the browser.", "booking", "See it: book a class", "components/booking/booking-page.tsx#L126-L169"],
     ["Server-side captures", "The booking capture route verifies the order, amount and class before recording a paid booking; seeded scenario bookings also use sandbox captures.", "booking", "See it: payment receipt", "lib/checkout/service.ts#L207-L253"],
-    ["Payments v2 refunds", "Approve and refund returns money to the original capture. The ledger and stable PayPal-Request-Id protect retries.", "console", "See it: plan and refund", "lib/paypal/client.ts#L257-L263"],
+    ["Payments v2 refunds", "Approve and refund returns money to the original capture. The ledger and stable PayPal-Request-Id protect retries.", "console", "See it: plan and refund", "lib/paypal/client.ts#L264-L270"],
     ["Payouts", "After a substitute accepts on their cover link, the owner pays the cover fee with a PayPal payout. The request id doubles as the batch id, so a lost response replays the same payout within PayPal's 30-day duplicate check; an older unconfirmed payout stops for a manual check.", "console", "See it: cover instructors", "lib/recovery/cover-pay.ts#L155-L203"],
     ["Agent checkout handoff", "A customer's own AI assistant books through the studio's MCP server: the Orders v2 order carries an experience context, so the tool returns PayPal's approval link. The person approves on PayPal and returns to the studio, where the same verified capture path records the booking. The assistant can never pay.", "booking", "See it: book a class", "lib/agents/mcp.ts#L70-L87"],
     ["Ask the next instructor", "If the substitute says no, the console names the next qualified instructor who is free then and suits everyone booked; one click gives them the class and their own cover link, and the payout follows whoever teaches.", "console", "See it: cover instructors", "lib/recovery/cover-pay.ts#L75-L115"],
@@ -71,7 +71,7 @@ export default async function BuiltWithPage({ searchParams }: { searchParams: Pr
       <section id="paypal"><h2>PayPal</h2><p>Real sandbox payments and refunds; no real money moves. Simulated payments elsewhere in the fictional week are labelled.</p>
         <div className="built-table"><table><thead><tr><th scope="col">API / integration</th><th scope="col">Used in Rebook</th><th scope="col">See it</th></tr></thead><tbody>{paypal.map(([name, use, destination, label, source]) => <tr key={name}><th scope="row">{name}</th><td>{use}<br /><CodeLink source={source} /></td><td>{flow(destination, label)}</td></tr>)}</tbody></table></div>
         <p>The PayPal context plugin&apos;s TypeScript skills for client initialization, calling endpoints and error handling guided the migration to the APIMatic-generated SDK. PaymentsController also reads captures and refunds during reconciliation.</p>
-        <p>Server SDK 2.5.0 has no webhook signature verification endpoint. That call and its OAuth exchange use fetch with a separate bounded retry wrapper; Orders, Payments and Transaction Search use the SDK&apos;s retry configuration. <CodeLink source="lib/paypal/client.ts#L286-L296" /></p>
+        <p>Server SDK 2.5.0 has no webhook signature verification endpoint. That call and its OAuth exchange use fetch with a separate bounded retry wrapper; Orders, Payments and Transaction Search use the SDK&apos;s retry configuration. <CodeLink source="lib/paypal/client.ts#L293-L303" /></p>
       </section>
       <section id="bryntum"><h2>Bryntum Scheduler</h2><p>Rebook&apos;s solver does the re-planning. Bryntum Scheduler is the interactive review surface: the owner checks and adjusts the proposed recovery before approval.</p>{flow("console", "See it: recovery timeline")}<FeatureTable rows={bryntum} /></section>
       <section id="ag-studio"><h2>AG Studio</h2><p>A working report and analyst over the same bookings, captures, refunds and applied recoveries as the console.</p>{flow("dashboard", "See it: Dashboard and Recovery analyst")}<FeatureTable rows={studio} /></section>

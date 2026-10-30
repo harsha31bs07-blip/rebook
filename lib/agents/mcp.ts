@@ -4,6 +4,7 @@ import { bookingCatalog, createOrder } from "../checkout/service";
 import { ChoiceInputSchema, ChoiceTokenSchema, customerChoice, submitChoice } from "../choices/service";
 import { approvalLink, getOrder, PayPalError } from "../paypal/client";
 import { getRepository, StoreError, type Repository } from "../store";
+import { limits } from "../api/limits";
 import { joinWaitlist } from "../waitlist/service";
 import { localClass } from "../webmcp/tools";
 
@@ -14,7 +15,7 @@ import { localClass } from "../webmcp/tools";
  */
 export const MCP_VERSIONS = ["2025-06-18", "2025-03-26"];
 const INSTRUCTIONS = "Rebook studio tools. You can list classes, book one for the person you help, join a waitlist, or answer their private rebooking link. You never pay: book_class returns a PayPal link the person opens to approve the payment. A refund needs the person's explicit confirmation of the amount first.";
-type Context = { workspaceId: string; bookingId: string; origin: string; repository: Repository };
+type Context = { workspaceId: string; bookingId: string; origin: string; ip?: string; repository: Repository };
 type Result = { text: string; data: unknown };
 const str = (maxLength: number, description: string) => ({ type: "string", maxLength, description });
 const Person = { name: z.string().trim().min(1).max(100), email: z.string().trim().pipe(z.email().max(254)) };
@@ -71,11 +72,18 @@ async function call(name: string, args: Record<string, unknown>, context: Contex
     const input = z.strictObject({ classId: z.string().min(1).max(100), ...Person }).parse(args);
     const found = findClass(context, input.classId);
     if (found.status === "paused") throw new StoreError(409, "This class is paused while the studio confirms a change. Try another class.");
+    const { state } = context.repository.requireReadyWorkspace(context.workspaceId), email = input.email.toLowerCase();
+    const person = state.customers.find((customer) => customer.email.toLowerCase() === email);
+    if (person && state.bookings.some((booking) => booking.sessionId === input.classId && booking.customerId === person.id && ["confirmed", "moved"].includes(booking.status))) {
+      return { data: { status: "already_booked", class: found }, text: `${input.name} is already booked in ${found.title} (${found.weekday} ${found.startTime}). Nothing more to pay.` };
+    }
     if (found.seatsLeft <= 0) throw new StoreError(409, "This class is full. Use join_waitlist to join its waitlist.");
+    // Agent bookings hold seats like the booking page, so they share its checkout limits.
+    limits.take([{ key: `checkout-client:${context.ip ?? "agent"}`, max: 60, ms: 60_000 }, { key: `checkout-workspace:${context.workspaceId}`, max: 120, ms: 60_000 }, { key: "checkout-global", max: 600, ms: 60_000 }]);
     // One hold per person and class per 10-minute window: a retried call returns the same PayPal link.
     const window = Math.floor(Date.now() / 600_000);
     const requestId = `agent-${createHash("sha256").update(`${input.classId}|${input.email.toLowerCase()}|${window}`).digest("hex").slice(0, 32)}`;
-    const studio = context.repository.requireReadyWorkspace(context.workspaceId).state.studio;
+    const studio = state.studio;
     const order = await createOrder(context.workspaceId, { sessionId: input.classId, customer: { name: input.name, email: input.email } }, requestId, context.repository,
       { returnUrl: `${context.origin}/b/${context.bookingId}/paid`, cancelUrl: `${context.origin}/b/${context.bookingId}`, brandName: studio.name });
     const approvalUrl = order.approvalUrl ?? approvalLink(await getOrder(order.orderId));

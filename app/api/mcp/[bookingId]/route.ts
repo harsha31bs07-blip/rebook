@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ bookin
       if (error instanceof StoreError) throw error;
       return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error." } }, { status: 400 });
     }
-    const response = await handleMcp(message, { workspaceId: workspace.id, bookingId, origin: publicOrigin(request) });
+    const response = await handleMcp(message, { workspaceId: workspace.id, bookingId, origin: publicOrigin(request), ip: clientIp(request) });
     return response ? Response.json(response, { headers: { "Cache-Control": "no-store" } }) : new Response(null, { status: 202 });
   });
 }

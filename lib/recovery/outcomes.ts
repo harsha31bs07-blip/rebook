@@ -45,7 +45,8 @@ export function recoveryOutcomes(state: State, plans: RecoveryPlan[], ledger: Le
       (refundIntent && !fullySettled);
     const saved = !refundIntent && !reversed && (entitlement || creditPaid || refundedAmount < originalAmount);
     const moved = saved && !credited && (link?.reply?.action === "move" || action.action === "move");
-    const noReply = !refundIntent && !reversed && !link?.reply;
+    // Silence keeps the new placement: once the private link has closed, an unanswered customer is settled.
+    const noReply = !refundIntent && !reversed && !link?.reply && !(link && link.expiresAt <= Date.now());
     const failed = refunds.some((event) => ["FAILED", "CANCELLED", "NEEDS_REVIEW"].includes(event.status));
     return {
       booking_id: action.bookingId, customer_id: action.customerId, plan_id: plan.id, planned_remedy: action.action,

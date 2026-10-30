@@ -88,6 +88,12 @@ it("books by holding a seat and returning a PayPal approval link the person must
   expect((await tool("book_class", { classId: yoga.classId, name: "A", email: "not-an-email" })).isError).toBe(true);
 });
 
+it("does not book or charge someone who already holds a seat in the class", async () => {
+  const yoga = await yogaClass(), state = repository.requireWorkspace(workspaceId).state;
+  const booked = state.bookings.find((booking) => booking.sessionId === yoga.classId && booking.status === "confirmed")!, person = state.customers.find((customer) => customer.id === booked.customerId)!;
+  const result = await tool("book_class", { classId: yoga.classId, name: person.name, email: person.email.toUpperCase() });
+  expect(result.data).toMatchObject({ status: "already_booked" }); expect(result.text).toMatch(/already booked/); expect(orders.size).toBe(0);
+});
 it("sends a full class to the waitlist, keeping one place per email", async () => {
   const state = repository.requireWorkspace(workspaceId).state, yoga = await yogaClass();
   state.sessions.find((item) => item.id === yoga.classId)!.capacity = state.bookings.filter((item) => item.sessionId === yoga.classId).length;

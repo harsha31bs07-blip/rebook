@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { Instrument_Sans, Instrument_Serif } from "next/font/google";
+import { Figtree, Fraunces } from "next/font/google";
 import { connection } from "next/server";
 import "./globals.css";
 
-// Studio Linen type: Instrument Sans for the interface, Instrument Serif for a handful of display moments.
-const uiFont = Instrument_Sans({ subsets: ["latin"], variable: "--font-ui", display: "swap" });
-const displayFont = Instrument_Serif({ subsets: ["latin"], weight: "400", variable: "--font-serif", display: "swap" });
+// Studio Linen type: Figtree for the interface (open, even spacing at small sizes), Fraunces for a handful of headlines.
+const uiFont = Figtree({ subsets: ["latin"], variable: "--font-ui", display: "swap" });
+const displayFont = Fraunces({ subsets: ["latin"], variable: "--font-serif", display: "swap" });
 
 export const metadata: Metadata = {
   // Link previews need absolute URLs; behind Render the request host is internal.

@@ -775,3 +775,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 /* The step's main action is always full size, even inside a list of follow-ups. */
 .next-actions button.primary { min-height: 40px; padding: 8px 16px; font-size: 14px; border-radius: 10px; }
 @media (max-width: 760px) { #booking-sync li button, .agent-connect button { min-height: 44px; } }
+
+/* Headings and tool sections take focus from code so keyboard users land there; they are not controls. */
+[tabindex="-1"]:focus { outline: none; }

@@ -35,6 +35,6 @@ curl -s https://rebook-by9u.onrender.com/api/mcp/<bookingId> -H 'content-type: a
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_classes","arguments":{"classType":"yoga"}}}'
 ```
 
-Add it to Claude Code with `claude mcp add --transport http rebook-studio https://rebook-by9u.onrender.com/api/mcp/<bookingId>`, or open it in the MCP Inspector (`npx @modelcontextprotocol/inspector`, transport "Streamable HTTP").
+Add it to Claude Code with `claude mcp add --transport http rebook-studio https://rebook-by9u.onrender.com/api/mcp/<bookingId>`, or open it in the MCP Inspector (`npx @modelcontextprotocol/inspector`, transport "Streamable HTTP"). Checked with the Inspector CLI 2.13.0 on Nov 2, 2026: `tools/list` and `tools/call` against the live server.
 
 Code: [lib/agents/mcp.ts](../lib/agents/mcp.ts), [route](../app/api/mcp/%5BbookingId%5D/route.ts), [PayPal return page](../components/booking/paypal-return.tsx). Tests: [test/agents-mcp.test.tsx](../test/agents-mcp.test.tsx).

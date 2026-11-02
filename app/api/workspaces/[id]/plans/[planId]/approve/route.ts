@@ -11,10 +11,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const id = WorkspaceIdSchema.parse(params.id);
     getRepository().requireWorkspace(id);
     const planId = PlanIdSchema.parse(params.planId);
-    const { version, confirmedCoverSessionIds } = await jsonBody(request, z.strictObject({ version: z.number().int().positive().optional().default(1),
-      confirmedCoverSessionIds: z.array(z.string().min(1).max(100)).max(100).optional().default([]) }));
+    const { version } = await jsonBody(request, z.strictObject({ version: z.number().int().positive().optional().default(1) }));
     limits.take([{ key: "approvals", max: envLimit("MAX_APPROVALS_PER_MIN", 20), ms: 60_000 }]);
-    const result = await executePlan(id, planId, getRepository(), version, confirmedCoverSessionIds);
+    const result = await executePlan(id, planId, getRepository(), version);
     const { basis: _basis, ...plan } = result.plan;
     void _basis;
     return { plan, results: result.results };

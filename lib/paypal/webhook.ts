@@ -52,7 +52,7 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
       const orderId = resource.supplementary_data?.related_ids?.order_id;
       const pending = orderId ? repository.findCheckoutOrder(orderId) : undefined;
       if (event.event_type === "PAYMENT.CAPTURE.COMPLETED" && resource.status === "COMPLETED" && pending?.status === "capturing"
-        && resource.custom_id === (pending.paypalCustomId ?? `${pending.workspaceId}:${pending.id}`) && resource.amount?.value === pending.amount) {
+        && resource.custom_id === `${pending.workspaceId}:${pending.id}` && resource.amount?.value === pending.amount) {
         confirmOrder(pending, { id: orderId!, status: "COMPLETED", purchase_units: [{ reference_id: pending.id, custom_id: resource.custom_id,
           amount: resource.amount, payments: { captures: [{ id: resource.id, status: "COMPLETED", amount: resource.amount }] } }] }, repository, true, true);
         return { duplicate: false, matched: true };
@@ -69,7 +69,7 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
       const checkout = booking?.payment ? repository.checkoutByOrder(workspace.id, booking.payment.orderId) : undefined;
       if (checkout) {
         if (resource.id !== checkout.captureId || resource.status !== "COMPLETED" || resource.amount?.value !== checkout.amount
-          || (resource.custom_id !== undefined && resource.custom_id !== (checkout.paypalCustomId ?? `${workspace.id}:${checkout.id}`))) return { duplicate: false, matched: false, reason: "capture_mismatch" };
+          || (resource.custom_id !== undefined && resource.custom_id !== `${workspace.id}:${checkout.id}`)) return { duplicate: false, matched: false, reason: "capture_mismatch" };
         repository.saveCheckout({ ...checkout, webhookConfirmed: true });
       }
     }
@@ -80,7 +80,7 @@ export function processWebhook(rawBody: string, repository: Repository = getRepo
         ? resource.amount?.value === exact.amount : matchingRefund(evidence, exact));
       if (exact && (exact.captureId !== capture.captureId || !matchesExact)) return { duplicate: false, matched: false, reason: "refund_mismatch" };
       const byRequest = latest.find((item) => item.kind === "refund" && item.captureId === capture.captureId &&
-        ["REQUESTED", "PENDING", "NEEDS_REVIEW"].includes(item.status) && matchingRefund(evidence, item));
+        ["REQUESTED", "PENDING"].includes(item.status) && matchingRefund(evidence, item));
       const previousRefund = exact && exact.requestId !== `webhook:${resource.id}` ? exact : byRequest ?? exact;
       const amount = resource.amount?.value ?? previousRefund?.amount;
       if (!amount || toCents(amount) > toCents(capture.amount)) return { duplicate: false, matched: false, reason: "invalid_refund_amount" };

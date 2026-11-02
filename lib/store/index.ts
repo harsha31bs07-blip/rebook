@@ -6,25 +6,16 @@ import type { Plan, State } from "../domain/types";
 import { PlanSchema, StateSchema } from "../domain/schemas";
 import { addLocalDays, fromCents, localParts, toCents, zonedTimeToUtc } from "../domain/time";
 import { nextWeekStart } from "../seed/seed";
-import { activateConstraint, preserveConstraints } from "../solver/constraints";
-import type { CoverConfirmation } from "../recovery/covers";
-import type { DeliveryStatus } from "../choices/outbox";
-import type { MindbodyLink } from "../connectors/mindbody/types";
-
-export type Delivery = { workspaceId: string; planId: string; customerId: string; kind: "message" | "reminder" | `credit:${string}`;
-  status: DeliveryStatus; attemptId: string; messageId?: string; createdAt: string; updatedAt: string; reason?: string };
+import { activateConstraint, activeConstraints, preserveConstraints } from "../solver/constraints";
 
 export type ExecutionResult = { bookingId: string; status: string; paypalId?: string; error?: string; debugId?: string };
 export type StoredPlan = Plan & {
   id: string; workspaceId: string; status: "proposed" | "executing" | "executed" | "partially_failed";
   createdAt: string; results: ExecutionResult[]; basis?: State; version?: number; lastAdjustment?: Plan["sessionChanges"][number];
   lastAdjustmentTotals?: Plan["totals"];
-  coverConfirmations?: CoverConfirmation[];
-  correctedBy?: string;
-  refundProgress?: { done: number; total: number };
 };
 export type Workspace = {
-  id: string; bookingId: string; state: State; createdAt: string; updatedAt: string;
+  id: string; state: State; createdAt: string; updatedAt: string;
   status: "preparing" | "ready" | "failed"; progress: { done: number; total: number }; pooled?: true; preparationError?: string;
 };
 export type LedgerEvent = {
@@ -39,51 +30,15 @@ export type CustomerLink = {
   kind: "choice" | "receipt"; expiresAt: number; createdAt: string;
   message: { subject: string; body: string };
   before: State["sessions"][number]; after?: State["sessions"][number];
-  sentAt?: string;
-  // Set when the message changed after it may have been sent (e.g. a new substitute); the owner sends it again.
-  revisedAt?: string;
-  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string; id?: string; fromSession?: State["sessions"][number] };
-  replyHistory?: NonNullable<CustomerLink["reply"]>[];
+  reply?: { action: "keep" | "move" | "refund"; sessionId?: string; at: string; amount: string; requestId?: string };
 };
-export type Credit = {
-  id: string; tokenHash: string; workspaceId: string; linkId: string; bookingId: string; customerId: string;
-  amount: string; remaining: string; status: "available" | "redeemed" | "unavailable"; createdAt: string;
-  redemptions: { bookingId: string; amount: string; at: string }[];
-  // One cumulative return per booking, including any earlier lower-price move. Optional for older rows.
-  restorations?: { bookingId: string; amount: string; at: string }[];
-};
-export type WaitlistOffer = {
-  id: string; workspaceId: string; entryId: string; sessionId: string; customerId: string;
-  status: "offered" | "claimed" | "declined" | "expired" | "withdrawn";
-  expiresAt: string; createdAt: string; respondedAt?: string; bookingId?: string; sentAt?: string;
-};
-export type CoverLink = {
-  id: string; tokenHash: string; workspaceId: string; planId: string; sessionId: string; instructorId: string; createdAt: string;
-  status: "asked" | "accepted" | "declined"; respondedAt?: string; respondedBy?: "instructor" | "owner"; fee: string;
-  withdrawnBy?: string;
-};
-/** Cover pay is staffing cost, kept apart from the customer money ledger and its revenue totals. */
-export type CoverPayout = {
-  workspaceId: string; planId: string; sessionId: string; instructorId: string; amount: string; attempt: number; requestId: string;
-  status: "REQUESTED" | "PENDING" | "SUCCESS" | "FAILED" | "UNCLAIMED" | "RETURNED" | "ONHOLD" | "BLOCKED" | "REFUNDED" | "REVERSED" | "DENIED";
-  batchId?: string; itemId?: string; error?: string; createdAt: string; updatedAt: string;
-};
-/** Choice deadlines do not erase the customer's lasting outcome or refund receipt. */
-export function customerLinkReadableUntil(link: CustomerLink): number {
-  return Date.parse(link.createdAt) + 30 * 86_400_000;
-}
 type LedgerInput = Omit<LedgerEvent, "id" | "createdAt">;
 type JsonRow = { data: string };
-export type SyncEventResult = { eventId: string; status: "applied" | "rejected"; message?: string };
-export type SyncEvent = { eventId: string; type: string; result: SyncEventResult; receivedAt: string };
 export type CheckoutReservation = {
   id: string; workspaceId: string; requestId: string; sessionId: string;
-  requestAliases?: string[]; waitlistOfferId?: string;
+  requestAliases?: string[];
   customer: { name: string; email: string }; amount: string; currency: "USD";
-  availability?: { times?: ("mornings" | "afternoons" | "evenings")[]; days?: ("weekdays" | "weekends")[]; acceptsSubstitute?: boolean };
   session: State["sessions"][number]; expiresAt: number; orderId?: string; captureId?: string;
-  paypalCustomId?: string;
-  paidWith?: "credit"; creditId?: string;
   status: "pending" | "capturing" | "confirmed" | "failed"; webhookConfirmed?: boolean;
 };
 const storeErrorBrand = Symbol.for("rebook.StoreError");
@@ -107,10 +62,6 @@ export class Repository {
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS mindbody_links (
-        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL,
-        lock_owner TEXT, lock_until INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ledger (
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
@@ -122,234 +73,26 @@ export class Repository {
       CREATE INDEX IF NOT EXISTS ledger_capture ON ledger(capture_id);
       CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, raw_body TEXT NOT NULL, received_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_locks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS refund_checks (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, request_id TEXT NOT NULL,
-        attempts INTEGER NOT NULL, next_check_at INTEGER NOT NULL, PRIMARY KEY(workspace_id, request_id)
-      );
       CREATE TABLE IF NOT EXISTS checkout_reservations (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         request_id TEXT NOT NULL, order_id TEXT UNIQUE, data TEXT NOT NULL, UNIQUE(workspace_id, request_id)
       );
       CREATE TABLE IF NOT EXISTS choice_secrets (id INTEGER PRIMARY KEY CHECK(id = 1), secret TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS sync_acks (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, change_id TEXT NOT NULL, acked_at TEXT NOT NULL,
-        PRIMARY KEY(workspace_id, change_id)
-      );
-      CREATE TABLE IF NOT EXISTS sync_events (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, event_id TEXT NOT NULL, type TEXT NOT NULL,
-        result TEXT NOT NULL, received_at TEXT NOT NULL, PRIMARY KEY(workspace_id, event_id)
-      );
-      CREATE TABLE IF NOT EXISTS deliveries (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, customer_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
-        PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
-      );
-      CREATE TABLE IF NOT EXISTS email_checks (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, checked_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS waitlist_offers (
-        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, data TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS waitlist_workspace ON waitlist_offers(workspace_id);
-      CREATE TABLE IF NOT EXISTS waitlist_deliveries (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES waitlist_offers(id) ON DELETE CASCADE, customer_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
-        PRIMARY KEY(workspace_id, plan_id, customer_id, kind)
-      );
-      CREATE TABLE IF NOT EXISTS cover_links (
-        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS cover_payouts (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL,
-        PRIMARY KEY(plan_id, session_id)
-      );
       CREATE TABLE IF NOT EXISTS customer_links (
         id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, booking_id TEXT NOT NULL, data TEXT NOT NULL,
         UNIQUE(plan_id, booking_id)
       );
-      CREATE TABLE IF NOT EXISTS credits (
-        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        link_id TEXT NOT NULL UNIQUE REFERENCES customer_links(id) ON DELETE CASCADE, data TEXT NOT NULL
-      );
     `);
-    // A declined cover can be passed to another instructor: one link per instructor asked, not per class.
-    const covers = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cover_links'").get() as { sql: string } | undefined;
-    if (covers?.sql.includes("UNIQUE(plan_id, session_id)")) this.transaction(() => {
-      this.db.exec(`CREATE TABLE cover_links_next (
-        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, session_id TEXT NOT NULL, data TEXT NOT NULL
-      );
-      INSERT INTO cover_links_next SELECT id, token_hash, workspace_id, plan_id, session_id, data FROM cover_links ORDER BY rowid;
-      DROP TABLE cover_links; ALTER TABLE cover_links_next RENAME TO cover_links;`);
-    });
-    // Persist separate public capabilities for existing demos before indexing them.
-    this.transaction(() => {
-      const rows = this.db.prepare("SELECT id FROM workspaces WHERE json_extract(data, '$.bookingId') IS NULL").all() as { id: string }[];
-      for (const { id } of rows) this.db.prepare("UPDATE workspaces SET data = json_set(data, '$.bookingId', ?) WHERE id = ?")
-        .run(randomBytes(24).toString("base64url"), id);
-    });
-    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS workspace_booking_id ON workspaces(json_extract(data, '$.bookingId'))");
     this.db.prepare("INSERT OR IGNORE INTO choice_secrets VALUES (1, ?)").run(randomBytes(32).toString("hex"));
   }
   close(): void { this.db.close(); }
-  syncKey(workspaceId: string): string {
-    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
-    return createHmac("sha256", secret).update(`sync:${workspaceId}`).digest("base64url");
-  }
-  mindbodyLink(workspaceId: string): MindbodyLink | undefined {
-    const row = this.db.prepare("SELECT data FROM mindbody_links WHERE workspace_id = ?").get(workspaceId) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) as MindbodyLink : undefined;
-  }
-  saveMindbodyLink(workspaceId: string, link: MindbodyLink): void {
-    this.db.prepare(`INSERT INTO mindbody_links (workspace_id, data, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(workspace_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`).run(workspaceId, JSON.stringify(link), new Date().toISOString());
-  }
-  acquireMindbodyLock(workspaceId: string, owner: string): void {
-    const result = this.db.prepare("UPDATE mindbody_links SET lock_owner = ?, lock_until = ? WHERE workspace_id = ? AND lock_until < ?")
-      .run(owner, Date.now() + 120_000, workspaceId, Date.now());
-    if (!result.changes) throw new StoreError(409, "A Mindbody sync is already running.");
-  }
-  renewMindbodyLock(workspaceId: string, owner: string): void {
-    const result = this.db.prepare("UPDATE mindbody_links SET lock_until = ? WHERE workspace_id = ? AND lock_owner = ? AND lock_until >= ?")
-      .run(Date.now() + 120_000, workspaceId, owner, Date.now());
-    if (!result.changes) throw new StoreError(409, "Mindbody sync lease expired.");
-  }
-  releaseMindbodyLock(workspaceId: string, owner: string): void {
-    this.db.prepare("UPDATE mindbody_links SET lock_owner = NULL, lock_until = 0 WHERE workspace_id = ? AND lock_owner = ?").run(workspaceId, owner);
-  }
-  syncAcks(workspaceId: string): Set<string> {
-    return new Set((this.db.prepare("SELECT change_id FROM sync_acks WHERE workspace_id = ?").all(workspaceId) as { change_id: string }[]).map((row) => row.change_id));
-  }
-  acknowledgeSync(workspaceId: string, ids: string[]): number {
-    let count = 0;
-    for (const id of ids) count += Number(this.db.prepare("INSERT OR IGNORE INTO sync_acks VALUES (?, ?, ?)").run(workspaceId, id, new Date().toISOString()).changes);
-    return count;
-  }
-  listSyncEvents(workspaceId: string): SyncEvent[] {
-    return (this.db.prepare("SELECT event_id, type, result, received_at FROM sync_events WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as
-      { event_id: string; type: string; result: string; received_at: string }[]).map((row) => ({ eventId: row.event_id, type: row.type, result: JSON.parse(row.result), receivedAt: row.received_at }));
-  }
-  saveSyncEvent(workspaceId: string, type: string, result: SyncEventResult): void {
-    this.db.prepare("INSERT OR REPLACE INTO sync_events VALUES (?, ?, ?, ?, ?)").run(workspaceId, result.eventId, type, JSON.stringify(result), new Date().toISOString());
-  }
-  listDeliveries(workspaceId: string): Delivery[] {
-    // A process that died after reserving a send cannot prove whether Brevo accepted it.
-    // Update only a still-queued row, so another process's completed attempt cannot be overwritten.
-    for (const table of ["deliveries", "waitlist_deliveries"]) this.db.prepare(`UPDATE ${table} SET data = json_set(data, '$.status', 'unknown', '$.updatedAt', ?)
-      WHERE workspace_id = ? AND json_extract(data, '$.status') = 'queued' AND json_extract(data, '$.updatedAt') < ?`)
-      .run(new Date().toISOString(), workspaceId, new Date(Date.now() - 30_000).toISOString());
-    return (this.db.prepare("SELECT data FROM deliveries WHERE workspace_id = ? UNION ALL SELECT data FROM waitlist_deliveries WHERE workspace_id = ?").all(workspaceId, workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
-  }
-  saveDelivery(delivery: Delivery): void {
-    const table = this.listWaitlistOffers(delivery.workspaceId).some((offer) => offer.id === delivery.planId) ? "waitlist_deliveries" : "deliveries";
-    this.db.prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, plan_id, customer_id, kind) DO UPDATE SET data = excluded.data`)
-      .run(delivery.workspaceId, delivery.planId, delivery.customerId, delivery.kind, JSON.stringify(delivery));
-  }
-  queueDelivery(key: Pick<Delivery, "workspaceId" | "planId" | "customerId" | "kind">, resend = false, beforeQueue: () => void = () => {}, revisedAt?: string): Delivery {
-    return this.transaction(() => {
-      const previous = this.listDeliveries(key.workspaceId).find((row) => row.planId === key.planId && row.customerId === key.customerId && row.kind === key.kind);
-      // An email of an older version of the message never blocks sending the revised one.
-      if (previous && !(revisedAt && previous.createdAt < revisedAt) && previous.status !== "failed" && !(resend && ["unknown", "bounced"].includes(previous.status))) {
-        throw new StoreError(409, "This email already has a send attempt. Check its status before sending again.");
-      }
-      beforeQueue();
-      const now = new Date().toISOString();
-      const delivery: Delivery = { ...key, status: "queued", attemptId: randomUUID(), createdAt: now, updatedAt: now };
-      this.saveDelivery(delivery); return delivery;
-    });
-  }
-  claimEmailCheck(workspaceId: string): boolean {
-    return this.transaction(() => {
-      const row = this.db.prepare("SELECT checked_at FROM email_checks WHERE workspace_id = ?").get(workspaceId) as { checked_at: number } | undefined;
-      if (row && row.checked_at + 60_000 > Date.now()) return false;
-      this.db.prepare("INSERT INTO email_checks VALUES (?, ?) ON CONFLICT(workspace_id) DO UPDATE SET checked_at = excluded.checked_at").run(workspaceId, Date.now());
-      return true;
-    });
-  }
   // Only the digest is indexed/stored. The server key lets the owner re-open the delivery link
   // after a restart without storing bearer tokens in workspace JSON, plans, or the ledger.
   customerToken(link: CustomerLink): string {
     const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
     return createHmac("sha256", secret).update(link.id).digest("base64url");
-  }
-  // Cover links use a separate HMAC domain so a customer token can never open an instructor link.
-  coverToken(link: Pick<CoverLink, "id">): string {
-    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
-    return createHmac("sha256", secret).update(`cover:${link.id}`).digest("base64url");
-  }
-  waitlistToken(offer: Pick<WaitlistOffer, "id">): string {
-    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
-    return createHmac("sha256", secret).update(`waitlist:${offer.id}`).digest("base64url");
-  }
-  createWaitlistOffer(input: Omit<WaitlistOffer, "id" | "createdAt" | "status">): WaitlistOffer {
-    const offer: WaitlistOffer = { ...input, id: randomUUID(), createdAt: new Date().toISOString(), status: "offered" };
-    const hash = createHash("sha256").update(this.waitlistToken(offer)).digest("hex");
-    this.db.prepare("INSERT INTO waitlist_offers VALUES (?, ?, ?, ?)").run(offer.id, hash, offer.workspaceId, JSON.stringify(offer));
-    return offer;
-  }
-  listWaitlistOffers(workspaceId: string): WaitlistOffer[] {
-    return (this.db.prepare("SELECT data FROM waitlist_offers WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
-  }
-  waitlistOfferByToken(token: string): WaitlistOffer | undefined {
-    const row = this.db.prepare("SELECT data FROM waitlist_offers WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) : undefined;
-  }
-  saveWaitlistOffer(offer: WaitlistOffer): void {
-    this.db.prepare("UPDATE waitlist_offers SET data = ? WHERE id = ? AND workspace_id = ?").run(JSON.stringify(offer), offer.id, offer.workspaceId);
-  }
-  creditToken(credit: Pick<Credit, "id">): string {
-    const { secret } = this.db.prepare("SELECT secret FROM choice_secrets WHERE id = 1").get() as { secret: string };
-    return createHmac("sha256", secret).update(`credit:${credit.id}`).digest("base64url");
-  }
-  createCredit(input: Pick<Credit, "workspaceId" | "linkId" | "bookingId" | "customerId" | "amount">): Credit {
-    const previous = this.listCredits(input.workspaceId).find((credit) => credit.linkId === input.linkId);
-    if (previous) return previous;
-    const credit: Credit = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", remaining: input.amount,
-      status: "available", createdAt: new Date().toISOString(), redemptions: [], restorations: [] };
-    credit.tokenHash = createHash("sha256").update(this.creditToken(credit)).digest("hex");
-    this.db.prepare("INSERT INTO credits VALUES (?, ?, ?, ?, ?)").run(credit.id, credit.tokenHash, credit.workspaceId, credit.linkId, JSON.stringify(credit));
-    return credit;
-  }
-  listCredits(workspaceId: string): Credit[] {
-    return (this.db.prepare("SELECT data FROM credits WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
-  }
-  creditByToken(token: string): Credit | undefined {
-    const row = this.db.prepare("SELECT data FROM credits WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) : undefined;
-  }
-  saveCredit(credit: Credit): void {
-    this.db.prepare("UPDATE credits SET data = ? WHERE id = ?").run(JSON.stringify(credit), credit.id);
-  }
-  createCoverLink(input: Omit<CoverLink, "id" | "tokenHash" | "createdAt">): CoverLink {
-    const previous = this.listCoverLinks(input.workspaceId).find((link) => link.planId === input.planId && link.sessionId === input.sessionId && link.instructorId === input.instructorId);
-    if (previous) return previous;
-    const link: CoverLink = { ...input, id: randomBytes(24).toString("base64url"), tokenHash: "", createdAt: new Date().toISOString() };
-    link.tokenHash = createHash("sha256").update(this.coverToken(link)).digest("hex");
-    this.db.prepare("INSERT INTO cover_links VALUES (?, ?, ?, ?, ?, ?)").run(link.id, link.tokenHash, link.workspaceId, link.planId, link.sessionId, JSON.stringify(link));
-    return link;
-  }
-  listCoverLinks(workspaceId: string): CoverLink[] {
-    return (this.db.prepare("SELECT data FROM cover_links WHERE workspace_id = ? ORDER BY rowid").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
-  }
-  coverLinkByToken(token: string): CoverLink | undefined {
-    const row = this.db.prepare("SELECT data FROM cover_links WHERE token_hash = ?").get(createHash("sha256").update(token).digest("hex")) as JsonRow | undefined;
-    return row ? JSON.parse(row.data) : undefined;
-  }
-  saveCoverLink(link: CoverLink): void {
-    this.db.prepare("UPDATE cover_links SET data = ? WHERE id = ?").run(JSON.stringify(link), link.id);
-  }
-  listCoverPayouts(workspaceId: string): CoverPayout[] {
-    return (this.db.prepare("SELECT data FROM cover_payouts WHERE workspace_id = ?").all(workspaceId) as JsonRow[]).map((row) => JSON.parse(row.data));
-  }
-  saveCoverPayout(payout: CoverPayout): void {
-    this.db.prepare("INSERT INTO cover_payouts VALUES (?, ?, ?, ?) ON CONFLICT(plan_id, session_id) DO UPDATE SET data = excluded.data")
-      .run(payout.workspaceId, payout.planId, payout.sessionId, JSON.stringify(payout));
   }
   createCustomerLink(input: Omit<CustomerLink, "id" | "tokenHash" | "createdAt">): CustomerLink {
     const previous = this.listCustomerLinks(input.workspaceId).find((link) => link.planId === input.planId && link.bookingId === input.bookingId);
@@ -388,15 +131,13 @@ export class Repository {
       .run(row.id, row.workspaceId, row.requestId, row.orderId ?? null, JSON.stringify(row));
   }
   transaction<T>(operation: () => T): T {
-    // Nested calls join the outer write transaction; the outermost one commits or rolls back.
-    if (this.db.isTransaction) return operation();
     this.db.exec("BEGIN IMMEDIATE");
     try { const value = operation(); this.db.exec("COMMIT"); return value; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   createWorkspace(state: State, id = randomBytes(8).toString("base64url").slice(0, 10), options: { preparing?: boolean; pooled?: true } = {}): Workspace {
     const now = new Date().toISOString();
-    const workspace: Workspace = { id, bookingId: randomBytes(24).toString("base64url"), state: preserveConstraints(state, StateSchema.parse(state)), createdAt: now, updatedAt: now,
+    const workspace: Workspace = { id, state: preserveConstraints(state, StateSchema.parse(state)), createdAt: now, updatedAt: now,
       status: options.preparing ? "preparing" : "ready", progress: { done: options.preparing ? 0 : state.bookings.length, total: state.bookings.length },
       ...(options.pooled ? { pooled: true } : {}),
     };
@@ -409,12 +150,9 @@ export class Repository {
     const workspace = JSON.parse(row.data) as Workspace;
     if (workspace.pooled && !includePooled) return undefined;
     // Backfill workspaces executed before constraints were persisted in scheduling state.
-    if (!("activeConstraints" in workspace.state)) {
+    if (!activeConstraints(workspace.state).length) {
       const applied = this.db.prepare("SELECT data FROM plans WHERE workspace_id = ? AND json_extract(data, '$.status') != 'proposed'").all(id) as JsonRow[];
-      for (const row of applied) {
-        const plan = JSON.parse(row.data) as StoredPlan;
-        if (!plan.correctionOf && !plan.correctedBy) workspace.state = activateConstraint(workspace.state, plan.disruption);
-      }
+      for (const row of applied) workspace.state = activateConstraint(workspace.state, (JSON.parse(row.data) as StoredPlan).disruption);
     }
     // Older persisted workspaces predate the explicit seed-week field.
     if (!workspace.state.studio.weekStart) {
@@ -431,15 +169,6 @@ export class Repository {
   }
   requireWorkspace(id: string, includePooled = false): Workspace {
     const workspace = this.getWorkspace(id, includePooled);
-    if (!workspace) throw new StoreError(404, "This demo has ended (demos reset when the server restarts). Start a fresh one.", "expired");
-    return workspace;
-  }
-  getWorkspaceByBookingId(bookingId: string): Workspace | undefined {
-    const row = this.db.prepare("SELECT id FROM workspaces WHERE json_extract(data, '$.bookingId') = ?").get(bookingId) as { id: string } | undefined;
-    return row ? this.getWorkspace(row.id) : undefined;
-  }
-  requireBookingWorkspace(bookingId: string): Workspace {
-    const workspace = this.getWorkspaceByBookingId(bookingId);
     if (!workspace) throw new StoreError(404, "This demo has ended (demos reset when the server restarts). Start a fresh one.", "expired");
     return workspace;
   }
@@ -519,9 +248,9 @@ export class Repository {
       return event ? { bookingId: action.bookingId, status: event.status, paypalId: event.paypalId || undefined,
         debugId: event.debugId, error: event.error ?? (["FAILED", "REQUESTED"].includes(event.status)
           ? plan.results.find((item) => item.bookingId === action.bookingId)?.error : undefined) }
-        : { bookingId: action.bookingId, status: "REQUESTED", ...(plan.status === "executing" ? {} : { error: "Refund has not been submitted yet" }) };
+        : { bookingId: action.bookingId, status: "REQUESTED", error: "Refund has not been submitted yet" };
     });
-    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING", "CREDIT_RESTORED", "VISIT_RETURNED"].includes(item.status))
+    const status = plan.status === "executing" ? "executing" : results.some((item) => !["COMPLETED", "SIMULATED", "PENDING"].includes(item.status))
       ? "partially_failed" : "executed";
     return { ...plan, results, status };
   }
@@ -536,17 +265,7 @@ export class Repository {
     if (plan.status !== "proposed") throw new StoreError(409, "Only a proposed plan can be discarded.");
     this.db.prepare("DELETE FROM plans WHERE id = ? AND workspace_id = ?").run(id, workspaceId);
   }
-  /** Superseded previews would otherwise keep their classes paused for customer booking. */
-  discardOtherProposals(workspaceId: string, keepId?: string): void {
-    for (const plan of this.listPlans(workspaceId)) {
-      if (plan.status === "proposed" && plan.id !== keepId) this.db.prepare("DELETE FROM plans WHERE id = ? AND workspace_id = ?").run(plan.id, workspaceId);
-    }
-  }
   clearPlans(workspaceId: string): void {
-    this.db.prepare("DELETE FROM mindbody_links WHERE workspace_id = ?").run(workspaceId);
-    this.db.prepare("DELETE FROM sync_acks WHERE workspace_id = ?").run(workspaceId);
-    this.db.prepare("DELETE FROM sync_events WHERE workspace_id = ?").run(workspaceId);
-    this.db.prepare("DELETE FROM waitlist_offers WHERE workspace_id = ?").run(workspaceId);
     this.db.prepare("DELETE FROM plans WHERE workspace_id = ?").run(workspaceId);
   }
   appendLedger(input: LedgerInput): LedgerEvent {
@@ -582,9 +301,9 @@ export class Repository {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
     // Keep the original replay deadline across transitions and process restarts.
-    const event = { ...input, id, createdAt, ...(["capture", "refund"].includes(input.kind) ? {
+    const event = { ...input, id, createdAt, ...(input.kind === "capture" ? {
       firstAttemptAt: previous?.firstAttemptAt ?? this.listLedger(input.workspaceId)
-        .find((event) => event.kind === input.kind && event.requestId === input.requestId)?.createdAt ?? input.firstAttemptAt ?? createdAt,
+        .find((event) => event.kind === "capture" && event.requestId === input.requestId)?.createdAt ?? input.firstAttemptAt ?? createdAt,
     } : {}) };
     this.db.prepare("INSERT OR IGNORE INTO ledger(id, workspace_id, paypal_id, capture_id, data) VALUES (?, ?, ?, ?, ?)")
       .run(id, input.workspaceId, input.paypalId, input.captureId, JSON.stringify(event));
@@ -598,39 +317,8 @@ export class Repository {
   }
   latestMoneyEvents(workspaceId: string): LedgerEvent[] {
     const latest = new Map<string, LedgerEvent>();
-    const firstAttempts = new Map<string, string>();
-    for (const event of this.listLedger(workspaceId)) {
-      const key = `${event.kind}:${event.requestId}`;
-      // Legacy refund rows predate firstAttemptAt. Never use a later retry's timestamp.
-      if (!firstAttempts.has(key)) firstAttempts.set(key, event.firstAttemptAt ?? event.createdAt);
-      latest.set(key, event.kind === "refund" ? { ...event, firstAttemptAt: firstAttempts.get(key) } : event);
-    }
+    for (const event of this.listLedger(workspaceId)) latest.set(`${event.kind}:${event.requestId}`, event);
     return [...latest.values()].filter((event) => event.status !== "MERGED");
-  }
-  dueRefunds(now: number, minimumAgeMs: number, cap: number, workspaceId?: string): LedgerEvent[] {
-    return (this.db.prepare(`SELECT l.data FROM ledger l
-      LEFT JOIN refund_checks c ON c.workspace_id = l.workspace_id AND c.request_id = json_extract(l.data, '$.requestId')
-      WHERE json_extract(l.data, '$.kind') = 'refund'
-      AND json_extract(l.data, '$.status') IN ('REQUESTED', 'PENDING', 'NEEDS_REVIEW')
-      AND (? IS NULL OR l.workspace_id = ?)
-      AND COALESCE(json_extract(l.data, '$.firstAttemptAt'), (SELECT json_extract(f.data, '$.createdAt') FROM ledger f
-        WHERE f.workspace_id = l.workspace_id AND json_extract(f.data, '$.kind') = 'refund'
-        AND json_extract(f.data, '$.requestId') = json_extract(l.data, '$.requestId') ORDER BY f.seq LIMIT 1)) <= ?
-      AND COALESCE(c.next_check_at, 0) <= ?
-      AND l.seq = (SELECT MAX(n.seq) FROM ledger n WHERE n.workspace_id = l.workspace_id
-        AND json_extract(n.data, '$.kind') = 'refund' AND json_extract(n.data, '$.requestId') = json_extract(l.data, '$.requestId'))
-      ORDER BY COALESCE(c.next_check_at, 0), l.seq LIMIT ?`)
-      .all(workspaceId ?? null, workspaceId ?? null, new Date(now - minimumAgeMs).toISOString(), now, cap) as JsonRow[])
-      .map((row) => JSON.parse(row.data));
-  }
-  deferRefundCheck(event: LedgerEvent, now = Date.now()): void {
-    const previous = this.db.prepare("SELECT attempts FROM refund_checks WHERE workspace_id = ? AND request_id = ?")
-      .get(event.workspaceId, event.requestId) as { attempts: number } | undefined;
-    const attempts = (previous?.attempts ?? 0) + 1;
-    const delay = Math.min(60 * 60_000, 60_000 * 2 ** Math.min(attempts - 1, 6));
-    this.db.prepare(`INSERT INTO refund_checks VALUES (?, ?, ?, ?) ON CONFLICT(workspace_id, request_id)
-      DO UPDATE SET attempts = excluded.attempts, next_check_at = excluded.next_check_at`)
-      .run(event.workspaceId, event.requestId, attempts, now + delay);
   }
   ledgerSummary(workspaceId: string): { captured: string; refunded: string; pending: string; simulatedCaptured: string; simulatedRefunded: string } {
     const totals = { captured: 0, refunded: 0, pending: 0, simulatedCaptured: 0, simulatedRefunded: 0 };
@@ -640,7 +328,7 @@ export class Repository {
       if (event.kind === "capture" && event.status === "SIMULATED") totals.simulatedCaptured += amount;
       if (event.kind === "refund" && event.status === "COMPLETED") totals.refunded += amount;
       if (event.kind === "refund" && event.status === "SIMULATED") totals.simulatedRefunded += amount;
-      if (event.kind === "refund" && ["PENDING", "REQUESTED", "NEEDS_REVIEW"].includes(event.status)) totals.pending += amount;
+      if (event.kind === "refund" && ["PENDING", "REQUESTED"].includes(event.status)) totals.pending += amount;
     }
     return Object.fromEntries(Object.entries(totals).map(([key, amount]) => [key, fromCents(amount)])) as ReturnType<Repository["ledgerSummary"]>;
   }
@@ -681,14 +369,10 @@ export class Repository {
         .all(new Date(Date.now() - hours * 3_600_000).toISOString(), Date.now()) as { id: string }[];
       for (const { id } of candidates) {
         // A private recovery link must remain usable for its advertised lifetime.
-        if (this.listCustomerLinks(id).some((link) => customerLinkReadableUntil(link) > Date.now())) continue;
-        if (this.listWaitlistOffers(id).some((offer) => offer.status === "offered" && Date.parse(offer.expiresAt) > Date.now())) continue;
-        if (this.listCredits(id).some((credit) => credit.status === "available" && toCents(credit.remaining) > 0)) continue;
+        if (this.listCustomerLinks(id).some((link) => link.expiresAt > Date.now())) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
-        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status))) continue;
-        // An unconfirmed or still-open payout keeps the batch reference the owner needs to check it in PayPal.
-        if (this.listCoverPayouts(id).some((payout) => ["REQUESTED", "PENDING", "UNCLAIMED", "ONHOLD"].includes(payout.status))) continue;
+        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       }
       // Keep event IDs for deduplication; only the retained raw payload expires.

@@ -172,3 +172,15 @@ it("records an inbound paid booking as simulated, so a recovery's refund settles
   expect(await executeRefund(id, { bookingId: booking.id, amount: "22.00", reason: "Recovery" }, "plan:refund", repository, () => {})).toMatchObject({ status: "SIMULATED" });
   expect(state().bookings[0].status).toBe("refunded");
 });
+
+it("keeps an earlier move's event unchanged when its class is rescheduled later", async () => {
+  await hero();
+  const link = repository.listCustomerLinks(id).find((row) => row.kind === "choice" && !state().bookings.find((booking) => booking.id === row.bookingId)?.entitlement)!;
+  const token = repository.customerToken(link), [target] = (await customerChoice(token, repository)).alternatives;
+  await submitChoice(token, { action: "move", sessionId: target.id }, repository);
+  const event = () => allChanges(id, repository).find((row) => row.id.startsWith(`choice:${link.id}:`))!, before = structuredClone(event());
+  const later = state(), session = later.sessions.find((row) => row.id === target.id)!;
+  session.start = new Date(Date.parse(session.start) + 3_600_000).toISOString(); session.end = new Date(Date.parse(session.end) + 3_600_000).toISOString();
+  repository.saveState(id, later);
+  expect(event()).toEqual(before);
+});

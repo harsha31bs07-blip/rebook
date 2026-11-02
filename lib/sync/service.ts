@@ -36,7 +36,7 @@ function cancelInbound(workspaceId: string, booking: State["bookings"][number], 
   if (!creditPaid && (!booking.payment || booking.payment.simulated)) { booking.status = "cancelled"; return; }
   booking.status = "refund_pending";
   repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "refund", amount: booking.amount, paypalId: "", captureId: booking.payment?.captureId ?? "", requestId: `sync:${booking.id}`,
-    status: "FAILED", error: creditPaid ? "Cancelled in your booking system. Return this studio credit to the customer." : "Cancelled in your booking system. Rebook still holds this payment, so refund it here." });
+    neverSent: true, status: "FAILED", error: creditPaid ? "Cancelled in your booking system. Return this studio credit to the customer." : "Cancelled in your booking system. Rebook still holds this payment, so refund it here." });
 }
 
 function applyEvent(workspaceId: string, event: InboundEvent, repository: Repository): void {

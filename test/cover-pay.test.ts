@@ -534,3 +534,17 @@ it("won't reset away a payout PayPal hasn't confirmed", async () => {
   await expect(resetWorkspace(workspaceId, { repository })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("cover payout") });
   expect(payoutRows()).toHaveLength(1);
 });
+
+it("can still read a known batch after the resend window has closed", async () => {
+  await approved(true);
+  payouts = () => { throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  payouts = (init) => init.method === "GET" ? Response.json({ name: "INTERNAL_SERVICE_ERROR" }, { status: 500 }) : duplicate();
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()[0].batchId).toBe("BATCH-ORIGINAL");
+  repository.saveCoverPayout({ ...payoutRows()[0], createdAt: new Date(Date.now() - 29 * 86_400_000).toISOString() });
+  const sent = posts().length;
+  payouts = (init) => init.method === "GET" ? originalPayout() : created("BATCH-SECOND");
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()[0]).toMatchObject({ status: "PENDING", batchId: "BATCH-ORIGINAL" }); expect(posts()).toHaveLength(sent);
+});

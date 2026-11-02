@@ -65,7 +65,7 @@ export function allChanges(workspaceId: string, repository: Repository = getRepo
     const customer = state.customers.find((row) => row.id === booking?.customerId);
     if (!booking || !customer) continue;
     const base = { id: `choice:${link.id}:${reply.id ?? reply.at}`, occurredAt: reply.at, bookingId: booking.id, customer: person(customer) };
-    const target = sessions.get(reply.sessionId ?? "");
+    const target = reply.toSession ?? sessions.get(reply.sessionId ?? "");
     if (reply.action === "move" && target) changes.push({ ...base, type: "booking.moved", from: sessionView(reply.fromSession ?? link.after ?? link.before, state), to: sessionView(target, state) });
     if (reply.action === "credit") changes.push({ ...base, type: "booking.cancelled", session: sessionView(reply.fromSession ?? link.after ?? link.before, state), reason: "credited", amount: reply.amount });
   }

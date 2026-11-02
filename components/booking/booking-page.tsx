@@ -16,14 +16,30 @@ type Class = Catalog["sessions"][number];
 class CheckoutError extends Error { constructor(message: string, public code: string | undefined, public status: number) { super(message); } }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, cache: "no-store", referrerPolicy: "no-referrer" });
-  const body = await response.json();
+  const body = await response.json().catch((cause) => { if (response.ok) throw cause; return {}; });
   if (!response.ok) throw new CheckoutError(body.error ?? "Checkout could not be completed", body.code, response.status);
   return body;
 }
+type CaptureHandle = { orderId: string; sessionId: string };
+function stored(key: string) { try { return sessionStorage.getItem(key); } catch { return null; } }
+function remember(key: string, value?: string) { try { if (value === undefined) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value); } catch {} }
+function restartCapture(cause: unknown) {
+  return cause instanceof CheckoutError && cause.code !== "CHECK_PAYMENT_STATUS" && cause.status < 500 && cause.status !== 429
+    && (["INSTRUMENT_DECLINED", "RESTART_CHECKOUT"].includes(cause.code ?? "") || [404, 422].includes(cause.status));
+}
+async function capturePayment(id: string, handle: CaptureHandle) {
+  const storageKey = `rebook:checkout:${id}`;
+  remember(storageKey, JSON.stringify(handle));
+  try {
+    const receipt = await request<Receipt>(`/api/bookings/${id}/checkout/orders/${handle.orderId}/capture`, { method: "POST" });
+    remember(storageKey);
+    return receipt;
+  } catch (cause) { if (restartCapture(cause)) remember(storageKey); throw cause; }
+}
 function classTitle(title: string) { return title.replace(/\bhiit\b/gi, "HIIT"); }
-export function CreditPayment({ id, token, remaining, session, customer, availability, validate, onSuccess, onLockChange }: {
+export function CreditPayment({ id, token, remaining, session, customer, availability, validate, onSuccess, onLockChange, onInvalid }: {
   id: string; token: string; remaining: string; session: Class; customer: CheckoutInput["customer"]; availability?: CheckoutInput["availability"];
-  validate(): boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void;
+  validate(): boolean; onSuccess(receipt: Receipt): void; onLockChange(locked: boolean): void; onInvalid?(message: string): void;
 }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const inFlight = useRef(false), key = useRef(""), uncertain = useRef(false);
@@ -32,10 +48,14 @@ export function CreditPayment({ id, token, remaining, session, customer, availab
     if (inFlight.current || !sufficient || !validate()) return;
     inFlight.current = true; setBusy(true); setError(""); onLockChange(true); key.current ||= crypto.randomUUID();
     try {
-      onSuccess(await request<Receipt>(`/api/bookings/${id}/checkout/credit`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
-        body: JSON.stringify({ creditToken: token, sessionId: session.id, customer, availability }) }));
+      const receipt = await request<Receipt>(`/api/bookings/${id}/checkout/credit`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key.current },
+        body: JSON.stringify({ creditToken: token, sessionId: session.id, customer, availability }) });
+      remember(`rebook:credit:${id}`); onSuccess(receipt);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Please try again.");
+      if (cause instanceof CheckoutError && ([404, 422].includes(cause.status) || (cause.status === 409 && cause.message === "Your studio credit covers classes up to $0.00."))) {
+        remember(`rebook:credit:${id}`); onInvalid?.(cause.message);
+      }
       // Unknown responses keep the same key and details so retry cannot spend twice.
       if (cause instanceof CheckoutError && cause.status < 500 && !uncertain.current) { key.current = ""; onLockChange(false); }
       else uncertain.current = true;
@@ -93,27 +113,28 @@ export function Payments({ id, session, customer, availability, waitlistToken, v
     if (order.current) {
       try {
         const result = await request<{ receipt?: Receipt }>(`${base}/${order.current.orderId}`, { method: "DELETE" });
-        if (result.receipt) { current.current.onSuccess(result.receipt); return; }
+        if (result.receipt) { remember(`rebook:checkout:${id}`); current.current.onSuccess(result.receipt); return; }
       } catch (cause) {
         if (cause instanceof CheckoutError && cause.code === "CHECK_PAYMENT_STATUS") setRetryCapture(true);
         throw cause;
       }
     }
+    remember(`rebook:checkout:${id}`);
     order.current = undefined; key.current = ""; setHasOrder(false);
     current.current.onLockChange(false);
-  }, [base]);
+  }, [base, id]);
   const capture = useCallback(async (orderId: string) => {
     try {
-      const receipt = await request<Receipt>(`${base}/${orderId}/capture`, { method: "POST" });
+      const receipt = await capturePayment(id, { orderId, sessionId: session.id });
       setRetryCapture(false); current.current.onSuccess(receipt);
     } catch (cause) {
       const unapproved = cause instanceof CheckoutError && ["ORDER_NOT_APPROVED", "PAYER_ACTION_REQUIRED"].includes(cause.code ?? "");
-      const restart = cause instanceof CheckoutError && ["INSTRUMENT_DECLINED", "RESTART_CHECKOUT"].includes(cause.code ?? "");
+      const restart = !unapproved && restartCapture(cause);
       if (restart) { order.current = undefined; key.current = ""; setHasOrder(false); current.current.onLockChange(false); }
       setRetryCapture(!restart && !unapproved);
       throw cause;
     }
-  }, [base]);
+  }, [id, session.id]);
   const fail = useCallback((cause: unknown) => setError(cause instanceof Error ? cause.message : "Payment could not be completed. Please try again."), []);
   const actions = useRef({ create, cancel, capture, fail });
   useEffect(() => { actions.current = { create, cancel, capture, fail }; }, [create, cancel, capture, fail]);
@@ -222,7 +243,9 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     const url = new URL(window.location.href);
     // The credit link carries its token in the fragment (#credit=), which browsers never send to a server.
     const fragment = new URLSearchParams(url.hash.slice(1));
-    creditToken.current ||= fragment.get("credit") ?? url.searchParams.get("credit") ?? "";
+    const token = fragment.get("credit") ?? url.searchParams.get("credit");
+    creditToken.current ||= token ?? stored(`rebook:credit:${id}`) ?? "";
+    if (token) remember(`rebook:credit:${id}`, token);
     if (fragment.has("credit") || url.searchParams.has("credit")) {
       url.searchParams.delete("credit");
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${fragment.has("credit") ? "" : url.hash}`);
@@ -231,7 +254,13 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
     const controller = new AbortController(); setCreditPending(true);
     void request<ReturnType<typeof studioCredit>>(`/api/bookings/${id}/checkout/credit`, { method: "POST", signal: controller.signal,
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ creditToken: creditToken.current }) })
-      .then((details) => { if (!controller.signal.aborted) setCredit({ ...details, token: creditToken.current }); }).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); })
+      .then((details) => { if (!controller.signal.aborted) {
+        if (details.status !== "available" || Number(details.remaining) <= 0) { remember(`rebook:credit:${id}`); creditToken.current = ""; setCredit(undefined); }
+        else setCredit({ ...details, token: creditToken.current });
+      } }).catch((cause) => { if (!controller.signal.aborted) {
+        if (cause instanceof CheckoutError && [404, 422].includes(cause.status)) { remember(`rebook:credit:${id}`); creditToken.current = ""; setCredit(undefined); }
+        setError(cause.message);
+      } })
       .finally(() => { if (!controller.signal.aborted) setCreditPending(false); });
     return () => controller.abort();
   }, [id]);
@@ -264,13 +293,48 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
   // Filters come after every other hook so existing hook order stays stable.
   const [dayFilter, setDayFilter] = useState(""), [typeFilter, setTypeFilter] = useState("");
   const [waitlistFor, setWaitlistFor] = useState(""), [waitlisted, setWaitlisted] = useState<Record<string, string>>({}), [joining, setJoining] = useState(false);
+  const [waitlistErrors, setWaitlistErrors] = useState<Record<string, string>>({});
+  const [recovery, setRecovery] = useState<CaptureHandle>();
+  const [recoveryChecked, setRecoveryChecked] = useState(() => !stored(`rebook:checkout:${id}`)), [recovering, setRecovering] = useState(false);
+  const recoveryInFlight = useRef(false);
+  const recover = useCallback(async (handle: CaptureHandle) => {
+    if (recoveryInFlight.current) return;
+    recoveryInFlight.current = true; setRecovering(true); setError("");
+    try { setReceipt(await capturePayment(id, handle)); setRecovery(undefined); setCustomerLocked(false); }
+    catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Payment could not be checked. Please try again.");
+      if (restartCapture(cause)) { setRecovery(undefined); setCustomerLocked(false); }
+    } finally { recoveryInFlight.current = false; setRecovering(false); }
+  }, [id]);
+  useEffect(() => {
+    let disposed = false;
+    void Promise.resolve().then(() => {
+      if (disposed) return;
+      const saved = stored(`rebook:checkout:${id}`);
+      try {
+        const handle = saved ? JSON.parse(saved) : undefined;
+        if (typeof handle?.orderId === "string" && handle.orderId && typeof handle.sessionId === "string" && handle.sessionId) {
+          setRecovery(handle); setCustomerLocked(true); void recover(handle);
+        }
+      } catch {}
+      setRecoveryChecked(true);
+    });
+    return () => { disposed = true; };
+  }, [id, recover]);
+  function customerFields() {
+    return <><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label></>;
+  }
   async function joinWaitlist(session: Class) {
-    setJoining(true);
+    if (!form.current?.reportValidity()) return;
+    setJoining(true); setWaitlistErrors((previous) => ({ ...previous, [session.id]: "" }));
     try {
       const response = await fetch(`/api/bookings/${encodeURIComponent(id)}/waitlist`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: session.id, name: customer.name, email: customer.email }) });
       const body = await response.json();
-      setWaitlisted((previous) => ({ ...previous, [session.id]: response.ok ? `You're number ${body.position} on the waitlist. If a spot opens, the studio sends you a private link to claim it.` : body.error ?? "Couldn't join the waitlist. Please try again." }));
-      if (response.ok) setWaitlistFor("");
+      if (!response.ok) { setWaitlistErrors((previous) => ({ ...previous, [session.id]: body.error ?? "Couldn't join the waitlist. Please try again." })); return; }
+      setWaitlisted((previous) => ({ ...previous, [session.id]: `You're number ${body.position} on the waitlist. If a spot opens, the studio sends you a private link to claim it.` }));
+      setWaitlistFor("");
+    } catch {
+      setWaitlistErrors((previous) => ({ ...previous, [session.id]: "Couldn't join the waitlist. Please try again." }));
     } finally { setJoining(false); }
   }
   function choose(session: Class) {
@@ -304,7 +368,9 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
       <p>${receipt.amount} {receipt.currency} paid {receipt.paidWith === "credit" ? "with studio credit" : "via PayPal"}</p>{receipt.paidWith !== "credit" && <p className="capture-reference">PayPal capture ID: <strong>{receipt.captureId}</strong></p>}
       {receipt.webhookConfigured && <p className={receipt.webhookConfirmed ? "success" : "muted"}>{receipt.webhookConfirmed ? "Confirmed by PayPal" : "Payment captured · waiting for PayPal webhook confirmation"}</p>}
       {!inactive && <div className="button-row"><button className="primary" onClick={downloadCalendar}>Add to calendar</button></div>}</section>
-      : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
+      : (!recoveryChecked && catalog) || recovery ? <section className="booking-checkout" aria-busy={recovering}>
+        {recovering || !recoveryChecked ? <p role="status">Checking payment status...</p> : <button disabled={recovering} onClick={() => recovery ? recover(recovery) : undefined}>Check payment status</button>}
+      </section> : <div className="booking-layout"><section aria-label="Classes this week" className="booking-classes"><h2>This week at the studio</h2>
         {!catalog && !error && <><p role="status" className="sr-only">Loading classes…</p><div className="booking-skeleton" aria-hidden="true"><div className="skeleton chip-row" />{[0, 1, 2, 3, 4].map((item) => <div key={item} className="skeleton class-card" />)}</div></>}
         {catalog?.sessions.length === 0 && <p>No upcoming classes are available this week.</p>}
         {catalog && catalog.sessions.length > 0 && <div className="booking-filters">
@@ -313,8 +379,8 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
         </div>}
         {catalog && catalog.sessions.length > 0 && !shown.length && <p>No classes match these filters.</p>}
         {days.filter((day) => shown.some((session) => dayKey(session.start) === day.key)).map((day) => <div key={day.key} className="booking-day"><h3>{day.long}</h3>
-        {shown.filter((session) => dayKey(session.start) === day.key).map((session) => !session.seatsLeft && !session.bookingPaused && !customerLocked ? <div key={session.id} className={`bookable-class full type-${session.classType}`}><span><strong>{classTitle(session.title)}</strong><span>{clock(session.start)}</span><span>{session.instructor} · {session.room}</span></span><span className="class-price"><strong>${session.price}</strong><span>Full</span></span><div className="waitlist-join">{waitlisted[session.id] ? <p role="status">{waitlisted[session.id]}</p> : waitlistFor === session.id ? <><p>Join as <strong>{customer.name}</strong> ({customer.email})</p><div className="waitlist-actions"><button className="primary btn-sm" disabled={joining} onClick={() => void joinWaitlist(session)}>{joining ? "Joining…" : "Join waitlist"}</button><button className="link-button" onClick={() => setWaitlistFor("")}>Cancel</button></div></> : <button className="btn-sm" onClick={() => setWaitlistFor(session.id)}>Join waitlist</button>}</div></div> : <button className={`bookable-class type-${session.classType} ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={session.bookingPaused || !session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => choose(session)}><span><strong>{classTitle(session.title)}</strong><span>{clock(session.start)}</span><span>{session.instructor} · {session.room}</span>{session.bookingPaused && <span>Schedule change in progress — booking paused</span>}</span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}</div>)}
-      </section><aside className="booking-checkout" aria-label="Class checkout">{selectedClass ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selectedClass.title)}</h2><p>{time(selectedClass.start)}</p><p className="muted">{selectedClass.room} · ${selectedClass.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3><label>Name<input required readOnly={customerLocked} minLength={1} maxLength={100} autoComplete="name" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} /></label><label>Email<input required readOnly={customerLocked} type="email" maxLength={254} autoComplete="email" value={customer.email} onChange={(event) => setCustomer({ ...customer, email: event.target.value })} /></label>
+        {shown.filter((session) => dayKey(session.start) === day.key).map((session) => !session.seatsLeft && !session.bookingPaused && !customerLocked ? <div key={session.id} className={`bookable-class full type-${session.classType}`}><span><strong>{classTitle(session.title)}</strong><span>{clock(session.start)}</span><span>{session.instructor} · {session.room}</span></span><span className="class-price"><strong>${session.price}</strong><span>Full</span></span><div className="waitlist-join">{waitlisted[session.id] ? <p role="status">{waitlisted[session.id]}</p> : waitlistFor === session.id ? <>{!selectedClass && <form ref={form} onSubmit={(event) => event.preventDefault()}>{customerFields()}</form>}<p>Join as <strong>{customer.name}</strong> ({customer.email})</p><div className="waitlist-actions"><button className="primary btn-sm" disabled={joining} onClick={() => void joinWaitlist(session)}>{joining ? "Joining…" : "Join waitlist"}</button><button className="link-button" onClick={() => setWaitlistFor("")}>Cancel</button></div></> : <button className="btn-sm" onClick={() => setWaitlistFor(session.id)}>Join waitlist</button>}{waitlistErrors[session.id] && <p className="error" role="alert">{waitlistErrors[session.id]}</p>}</div></div> : <button className={`bookable-class type-${session.classType} ${selected?.id === session.id ? "selected" : ""}`} key={session.id} disabled={session.bookingPaused || !session.seatsLeft || customerLocked} aria-pressed={selected?.id === session.id} onClick={() => choose(session)}><span><strong>{classTitle(session.title)}</strong><span>{clock(session.start)}</span><span>{session.instructor} · {session.room}</span>{session.bookingPaused && <span>Schedule change in progress — booking paused</span>}</span><span className="class-price"><strong>${session.price}</strong><span>{session.seatsLeft ? `${session.seatsLeft} ${session.seatsLeft === 1 ? "seat" : "seats"} left` : "Full"}</span></span></button>)}</div>)}
+      </section><aside className="booking-checkout" aria-label="Class checkout">{selectedClass ? <><p className="eyebrow">Your next class</p><h2>{classTitle(selectedClass.title)}</h2><p>{time(selectedClass.start)}</p><p className="muted">{selectedClass.room} · ${selectedClass.price} USD</p><form ref={form} onSubmit={(event) => event.preventDefault()}><h3>Booking as</h3>{customerFields()}
         <details className="booking-availability"><summary>If this class has to move, when can you usually come?</summary><fieldset disabled={customerLocked}><legend>Usual availability (optional)</legend><p className="muted">Times are local to the studio. Leave a group blank for any.</p>
           {(["mornings", "afternoons", "evenings"] as const).map((time) => <label key={time}><input type="checkbox" name="times" value={time} checked={availability?.times?.includes(time) ?? false} onChange={(event) => { const checked = event.target.checked; setAvailability((previous) => {
             const times = checked ? [...(previous?.times ?? []), time] : previous?.times?.filter((item) => item !== time) ?? [];
@@ -327,7 +393,7 @@ export default function BookingPage({ id, clientId, sandbox }: { id: string; cli
           <label><input type="checkbox" name="acceptsSubstitute" checked={availability?.acceptsSubstitute ?? true} onChange={(event) => setAvailability({ ...availability, acceptsSubstitute: event.target.checked })} />I&apos;m happy with a substitute instructor</label>
         </fieldset></details>{customerLocked && <p className="muted">These details are attached to your current checkout.</p>}</form>
         {selectionPaused && <p role="status">Schedule change in progress — booking paused</p>}
-        {(customerLocked || (currentSelection && !selectionPaused)) && (creditPending ? <p role="status">Checking studio credit...</p> : credit ? <CreditPayment key={`${id}:${selectedClass.id}:credit`} id={id} token={credit.token} remaining={credit.remaining} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} onSuccess={setReceipt} onLockChange={setCustomerLocked} /> : <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />)}
+        {(customerLocked || (currentSelection && !selectionPaused)) && (creditPending ? <p role="status">Checking studio credit...</p> : credit ? <CreditPayment key={`${id}:${selectedClass.id}:credit`} id={id} token={credit.token} remaining={credit.remaining} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} onInvalid={(message) => { creditToken.current = ""; setCredit(undefined); setError(message); }} onSuccess={(value) => { remember(`rebook:credit:${id}`); creditToken.current = ""; setCredit(undefined); setReceipt(value); }} onLockChange={setCustomerLocked} /> : <Payments key={`${id}:${selectedClass.id}`} id={id} session={currentSelection ?? selectedClass} customer={customer} availability={availability} validate={() => Boolean(form.current?.reportValidity())} clientId={clientId} sandbox={sandbox} onSuccess={setReceipt} onLockChange={setCustomerLocked} />)}
       </> : <><p className="eyebrow">A little space for you</p><h2>Choose your class</h2><p className="muted">Select a class to reserve your spot and pay securely with PayPal or a card.</p></>}{catalog && <AgentConnect bookingId={id} />}</aside></div>}
     {selectedClass && !receipt && <div className="mobile-book-bar"><span><strong>{classTitle(selectedClass.title)}</strong> · {clock(selectedClass.start)} · ${selectedClass.price}</span><button className="primary" onClick={() => document.querySelector(".booking-checkout form")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Book</button></div>}
   </main>;

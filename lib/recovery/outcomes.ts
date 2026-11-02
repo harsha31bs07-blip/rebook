@@ -72,6 +72,8 @@ export function summarizeRecovery(outcomes: RecoveryOutcome[]) {
   return { affected: outcomes.length, kept: sum("kept"), moved: sum("moved"), saved: sum("saved"), refunded: sum("refunded"),
     simulatedRefunded: sum("simulated_refunded"), visitsReturned: sum("visits_returned"), pending: sum("pending"), noReply: sum("no_reply"), revenueKept: sum("revenue_kept"), atStake: sum("original_amount"),
     completedRefundAmount: sum("completed_refund_amount"), simulatedRefundAmount: sum("simulated_refund_amount"), credited: sum("credited"), keptAsCredit: sum("kept_as_credit"),
+    paymentRefunds: outcomes.filter((item) => item.refunded && item.completed_refund_amount > 0).length,
+    creditsRestored: outcomes.filter((item) => item.outcome === "credit_restored").length,
     noReplyCustomers: new Set(outcomes.filter((item) => item.no_reply).map((item) => item.customer_id)).size,
     complete: outcomes.length > 0 && outcomes.every((item) => item.final) };
 }

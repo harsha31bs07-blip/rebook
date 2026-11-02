@@ -190,7 +190,7 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         booking.status = "refund_pending";
       }
       link = { ...link, replyHistory: [...(link.replyHistory ?? []), ...(link.reply ? [link.reply] : [])],
-        reply: { id: randomUUID(), action: input.action, fromSession, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
+        reply: { id: randomUUID(), action: input.action, fromSession, ...(input.action === "move" ? { sessionId: input.sessionId, toSession: state.sessions.find((item) => item.id === input.sessionId) } : {}), amount, requestId, at: new Date().toISOString() } };
       repository.saveState(link.workspaceId, state);
       repository.saveCustomerLink(link);
     });

@@ -235,7 +235,7 @@ export function confirmOrder(row: CheckoutReservation, order: PayPalOrder, repos
           repository.appendLedger({ workspaceId: row.workspaceId, bookingId: row.id, kind: "capture", amount: row.amount,
             paypalId: capture.id, captureId: capture.id, requestId: `checkout:${row.id}`, status: "COMPLETED", debugId: order.debugId });
           repository.appendLedger({ workspaceId: row.workspaceId, bookingId: row.id, kind: "refund", amount: row.amount,
-            paypalId: "", captureId: capture.id, requestId: `waitlist:${row.id}`, status: "FAILED",
+            paypalId: "", captureId: capture.id, requestId: `waitlist:${row.id}`, neverSent: true, status: "FAILED",
             error: "This waitlist payment completed after the seat was lost. Retry to refund it." });
           repository.saveCheckout({ ...row, captureId: capture.id, status: "confirmed", webhookConfirmed });
           return;

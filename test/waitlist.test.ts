@@ -20,6 +20,8 @@ import { StateSchema } from "../lib/domain/schemas";
 import { packBalance } from "../lib/domain/pack-balances";
 import { refundOwed } from "../lib/store";
 import { resetWorkspace } from "../lib/demo/createWorkspace";
+import { receiveEvents } from "../lib/sync/service";
+import { paymentsNeedingAttention } from "../lib/recovery/payment-attention";
 
 let directory: string, repository: Repository, workspaceId: string, sessionId: string;
 type Order = { id: string; status: string; purchase_units: { reference_id: string; custom_id: string; amount: { currency_code: string; value: string }; payments?: { captures: { id: string; status: string; amount: { currency_code: string; value: string } }[] } }[] };
@@ -270,4 +272,21 @@ it("returns a late waitlist payment when the buyer comes back, without waiting f
   repository.pruneOlderThan(-1); expect(repository.getWorkspace(workspaceId)).toBeTruthy();
   expect(await captureCheckout(workspaceId, order.orderId, repository)).toMatchObject({ spotTaken: true, current: { status: "refunded" } });
   expect(owed().status).toBe("COMPLETED");
+});
+
+it("lets the owner refund what's left after an earlier partial refund, once the booking system cancels the booking", async () => {
+  const state = setup(), [customer] = state.customers;
+  state.bookings.push({ id: "partly", customerId: customer.id, sessionId, amount: "18.00", status: "moved", bookedAt: new Date().toISOString(), payment: { orderId: "O", captureId: "CAP-PART", simulated: false } });
+  repository.saveState(workspaceId, state);
+  const money = { workspaceId, bookingId: "partly", captureId: "CAP-PART" };
+  repository.appendLedger({ ...money, kind: "capture", amount: "22.00", paypalId: "CAP-PART", requestId: "capture:partly", status: "COMPLETED" });
+  repository.appendLedger({ ...money, kind: "refund", amount: "4.00", paypalId: "PART-REFUND", requestId: "choice:partly", partial: true, status: "COMPLETED" });
+  await receiveEvents(workspaceId, { events: [{ eventId: "off", type: "booking.cancelled", session: { id: sessionId }, customer: { name: customer.name, email: customer.email } }] }, repository);
+  const owed = () => repository.latestMoneyEvents(workspaceId).find((event) => event.requestId === "sync:partly")!;
+  expect(owed()).toMatchObject({ status: "FAILED", amount: "18.00", neverSent: true });
+  expect(paymentsNeedingAttention(repository.requireWorkspace(workspaceId).state, repository.latestMoneyEvents(workspaceId))).toContainEqual(expect.objectContaining({ requestId: "sync:partly", release: "Refund now" }));
+  const response = await retryRefund(new Request(`http://localhost/api/workspaces/${workspaceId}/refunds/retry`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ requestId: "sync:partly" }) }), { params: Promise.resolve({ id: workspaceId }) });
+  expect(await response.json()).toMatchObject({ status: "COMPLETED" });
+  expect(owed()).toMatchObject({ status: "COMPLETED", amount: "18.00" });
+  expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === "partly")?.status).toBe("refunded");
 });

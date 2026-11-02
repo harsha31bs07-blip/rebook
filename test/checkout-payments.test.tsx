@@ -439,3 +439,117 @@ it("shows paused classes disabled, then allows selection when a refreshed catalo
   (classButton().props.onClick as () => void)(); renderPage();
   expect(elements(tree).some((element) => element.type === Payments)).toBe(true);
 });
+
+function resetMount() {
+  hooks.cleanups.forEach((cleanup) => cleanup?.());
+  hooks.cursor = 0; hooks.slots = []; hooks.pending = []; hooks.cleanups.clear();
+}
+function renderBooking() {
+  hooks.cursor = 0; tree = BookingPage({ id: "studio", clientId: "sandbox-client", sandbox: true });
+  hooks.pending.splice(0).forEach((effect) => effect());
+}
+async function settleBooking() { for (let index = 0; index < 30; index++) { await Promise.resolve(); renderBooking(); } }
+function storage() {
+  const entries = new Map<string, string>();
+  const store = { getItem: vi.fn((key: string) => entries.get(key) ?? null), setItem: vi.fn((key: string, value: string) => { entries.set(key, value); }), removeItem: vi.fn((key: string) => { entries.delete(key); }) };
+  vi.stubGlobal("sessionStorage", store);
+  return store;
+}
+const checkoutKey = "rebook:checkout:studio", creditKey = "rebook:credit:studio";
+const recoveryReceipt = { ...receipt, class: "Pilates", start: "2026-11-09T17:30:00Z", end: "2026-11-09T18:30:00Z", amount: "18.00", currency: "USD",
+  current: { class: "Updated Pilates", start: "2026-11-10T17:30:00Z", end: "2026-11-10T18:30:00Z", status: "moved", changed: true } };
+it.each(["confirmed", "uncertain", "restart", "404", "422", "429", "500", "network"])("recovers a stored capture after remount: %s", async (answer) => {
+  const store = storage();
+  store.setItem(checkoutKey, JSON.stringify({ orderId: "ORDER-1", sessionId: "class-1" }));
+  const catalog = { studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] };
+  fetchMock.mockImplementation(async (url: string) => {
+    if (!url.endsWith("/capture")) return Response.json(catalog);
+    if (answer === "network") throw new Error("Response lost");
+    return answer === "confirmed" ? Response.json(recoveryReceipt) : Response.json({ error: "Server payment message", code: answer === "restart" ? "RESTART_CHECKOUT" : answer === "uncertain" ? "CHECK_PAYMENT_STATUS" : undefined }, { status: Number(answer) || 409 });
+  });
+  resetMount(); renderBooking(); await settleBooking();
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/capture"))).toHaveLength(1);
+  expect(fetchMock.mock.calls.every(([url]) => url.endsWith("/checkout") || url === `${base}/ORDER-1/capture`)).toBe(true);
+  expect(elements(tree).some((element) => element.type === Payments)).toBe(false);
+  if (answer === "confirmed") {
+    expect(store.getItem(checkoutKey)).toBeNull();
+    expect(find(tree, (element) => element.props["aria-live"] === "polite").props.children).toContain("Updated Pilates");
+  } else if (["restart", "404", "422"].includes(answer)) {
+    expect(store.getItem(checkoutKey)).toBeNull(); expect(alert()).toBe("Server payment message");
+  } else {
+    expect(store.getItem(checkoutKey)).not.toBeNull();
+    const retry = find(tree, (element) => element.props.children === "Check payment status");
+    fetchMock.mockImplementation(async () => Response.json(recoveryReceipt));
+    await (retry.props.onClick as () => Promise<void>)(); await settleBooking();
+    expect(store.getItem(checkoutKey)).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/capture")).every(([url]) => url === `${base}/ORDER-1/capture`)).toBe(true);
+  }
+});
+it("restores a stripped credit link after remount and clears it after redemption", async () => {
+  const store = storage(), token = "r".repeat(43);
+  vi.stubGlobal("window", { location: { href: `http://localhost/b/studio#credit=${token}` }, history: { replaceState: vi.fn() } });
+  fetchMock.mockImplementation(async (url: string) => Response.json(url.endsWith("/credit") ? { amount: "22.00", remaining: "22.00", status: "available" } : { studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] }));
+  renderBooking(); await settleBooking(); expect(store.getItem(creditKey)).toBe(token);
+  resetMount(); window.location.href = "http://localhost/b/studio";
+  renderBooking(); await settleBooking();
+  (find(tree, (element) => element.type === "button" && String(element.props.className).startsWith("bookable-class")).props.onClick as () => void)(); renderBooking();
+  const payment = find(tree, (element) => element.type === CreditPayment);
+  expect(payment.props.token).toBe(token);
+  (payment.props.onSuccess as (value: unknown) => void)(recoveryReceipt);
+  expect(store.getItem(creditKey)).toBeNull();
+});
+it.each(["success", "429", "network", "json"])("uses editable waitlist identity and retains retries on %s", async (answer) => {
+  storage();
+  fetchMock.mockImplementation(async (url: string) => {
+    if (!url.endsWith("/waitlist")) return Response.json({ studio: { name: "Studio", timezone: "UTC" }, sessions: [{ ...props.session, seatsLeft: 0 }] });
+    if (answer === "network") throw new Error("offline");
+    if (answer === "json") return new Response("invalid JSON");
+    return answer === "429" ? Response.json({ error: "Please wait and retry" }, { status: 429 }) : Response.json({ position: 2 });
+  });
+  renderBooking(); await settleBooking();
+  (find(tree, (element) => element.props.children === "Join waitlist").props.onClick as () => void)(); renderBooking();
+  const inputs = elements(tree).filter((element) => element.type === "input");
+  expect(inputs).toHaveLength(2);
+  (inputs[0].props.onChange as (event: unknown) => void)({ target: { value: "Taylor Visitor" } }); renderBooking();
+  (find(tree, (element) => element.type === "input" && element.props.type === "email").props.onChange as (event: unknown) => void)({ target: { value: "taylor@example.com" } }); renderBooking();
+  (find(tree, (element) => element.type === "form").props.ref as { current: unknown }).current = { reportValidity: () => true };
+  await (find(tree, (element) => element.props.children === "Join waitlist").props.onClick as () => Promise<void>)(); await settleBooking();
+  expect(fetchMock).toHaveBeenCalledWith("/api/bookings/studio/waitlist", expect.objectContaining({ body: JSON.stringify({ sessionId: "class-1", name: "Taylor Visitor", email: "taylor@example.com" }) }));
+  if (answer !== "success") {
+    expect(elements(tree).some((element) => element.props.children === "Join waitlist")).toBe(true);
+    expect(alert()).toBe(answer === "429" ? "Please wait and retry" : "Couldn't join the waitlist. Please try again.");
+  }
+});
+
+it.each(["redeemed", "unavailable", "invalid"])("clears a stored %s studio credit", async (status) => {
+  const store = storage(); store.setItem(creditKey, "c".repeat(43));
+  vi.stubGlobal("window", { location: { href: "http://localhost/b/studio" } });
+  fetchMock.mockImplementation(async (url: string) => url.endsWith("/credit")
+    ? status === "invalid" ? Response.json({ error: "Credit is invalid" }, { status: 404 }) : Response.json({ amount: "22.00", remaining: "0.00", status })
+    : Response.json({ studio: { name: "Studio", timezone: "UTC" }, sessions: [props.session] }));
+  renderBooking(); await settleBooking(); expect(store.getItem(creditKey)).toBeNull();
+});
+it("persists the handle before capture and clears it after success", async () => {
+  const store = storage();
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === base) return Response.json({ orderId: "ORDER-1" });
+    expect(store.getItem(checkoutKey)).toBe(JSON.stringify({ orderId: "ORDER-1", sessionId: "class-1" }));
+    return Response.json(receipt);
+  });
+  await load(); clickPay(); await settle();
+  expect(props.onSuccess).toHaveBeenCalledWith(receipt); expect(store.getItem(checkoutKey)).toBeNull();
+});
+it("can still capture when session storage is unavailable", async () => {
+  vi.stubGlobal("sessionStorage", { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } });
+  await load(); clickPay(); await settle(); expect(props.onSuccess).toHaveBeenCalledWith(receipt);
+});
+it("validates waitlist identity before sending a request", async () => {
+  storage();
+  fetchMock.mockResolvedValue(Response.json({ studio: { name: "Studio", timezone: "UTC" }, sessions: [{ ...props.session, seatsLeft: 0 }] }));
+  renderBooking(); await settleBooking();
+  (find(tree, (element) => element.props.children === "Join waitlist").props.onClick as () => void)(); renderBooking();
+  (find(tree, (element) => element.type === "form").props.ref as { current: unknown }).current = { reportValidity: () => false };
+  (find(tree, (element) => element.props.children === "Join waitlist").props.onClick as () => void)(); await settleBooking();
+  expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/waitlist"))).toBe(false);
+  expect(find(tree, (element) => element.type === "input" && element.props.type === "email").props.required).toBe(true);
+});

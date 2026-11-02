@@ -241,3 +241,16 @@ it("renders the PayPal return page states", () => {
   expect(renderToStaticMarkup(<PayPalReturn bookingId="b" timezone="America/New_York" />)).toContain("missing its order");
   expect(renderToStaticMarkup(<PayPalReturn bookingId="b" orderId="ORDER-1" timezone="America/New_York" />)).toContain("Checking with PayPal");
 });
+
+it.each(["refunded", "moved away"])("creates a new order when someone rebooks a class after their booking was %s", async (how) => {
+  const yoga = await yogaClass(), person = { classId: yoga.classId, name: "Robin Vale", email: "robin@example.com" };
+  const first = await tool("book_class", person);
+  const row = repository.listCheckout(workspaceId).find((item) => item.sessionId === yoga.classId)!, state = repository.requireWorkspace(workspaceId).state;
+  repository.saveCheckout({ ...row, status: "confirmed" });
+  const other = state.sessions.find((item) => item.id !== yoga.classId)!;
+  state.bookings.push({ id: row.id, customerId: state.customers[0].id, sessionId: how === "refunded" ? yoga.classId : other.id, amount: "22.00", status: how === "refunded" ? "refunded" : "moved", bookedAt: new Date().toISOString() });
+  repository.saveState(workspaceId, state);
+  const again = await tool("book_class", person);
+  expect(again.data.approvalUrl).toBeTruthy(); expect(again.data.approvalUrl).not.toBe(first.data.approvalUrl);
+  expect(repository.listCheckout(workspaceId).filter((item) => item.sessionId === yoga.classId && item.status === "pending")).toHaveLength(1);
+});

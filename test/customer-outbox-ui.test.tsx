@@ -64,7 +64,15 @@ it("has list semantics, customer-specific actions, link kinds, sent times and po
   expect(html).toContain("2 sent · 0 replied · 1 waiting");
 });
 
-it.each(["WhatsApp", "SMS", "Email draft for", "Copy message for"])("%s shares the full message and link, saves Sent, then allows undo", async (channel) => {
+it("copying a message or link doesn't record it as sent; Mark sent does", async () => {
+  render(); fetchMock.mockClear();
+  expect(await click("Copy message for Asha & Jo")).toContain("Mark it sent once you&#x27;ve sent it");
+  await click("Copy link for Asha & Jo, New time for Asha & Jo's yoga & dance");
+  expect(copy).toHaveBeenCalledTimes(2); expect(fetchMock).not.toHaveBeenCalled();
+  expect(await click("Mark sent for Asha & Jo")).toContain("marked Sent by owner");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ planId: "plan", customerId: "Asha & Jo", sent: true });
+});
+it.each(["WhatsApp", "SMS", "Email draft for"])("%s shares the full message and link, saves Sent, then allows undo", async (channel) => {
   render(); const html = await click(`${channel} Asha & Jo`);
   expect(fetchMock).toHaveBeenCalledOnce();
   const [url, options] = fetchMock.mock.calls[0];
@@ -87,7 +95,7 @@ it("copy link marks Sent, and failed copy or status persistence leaves the row u
   expect(await click("WhatsApp Asha & Jo")).toContain("Sent status was not updated");
   expect(elements(tree).some((element) => element.props["aria-label"] === "Undo sent for Asha & Jo")).toBe(false);
   await click("Copy link for Asha & Jo, New time for Asha & Jo's yoga & dance");
-  expect(copy.mock.calls.at(-1)?.[0]).toBe("https://studio.test/c/Asha%20&%20Jo"); expect(button("Undo sent for Asha & Jo")).toBeTruthy();
+  expect(copy.mock.calls.at(-1)?.[0]).toBe("https://studio.test/c/Asha%20&%20Jo");
 });
 
 it("filters waiting rows and steps through short reminders without sending automatically", async () => {

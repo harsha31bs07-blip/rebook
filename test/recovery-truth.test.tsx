@@ -7,7 +7,7 @@ import { activeCovers, coverLine, coverNeedsOwner, recoveryDay, recoveryHandled 
 import type { OwnerCover } from "../lib/recovery/cover-pay";
 import type { summarizeRecovery } from "../lib/recovery/outcomes";
 
-const settled: ReturnType<typeof summarizeRecovery> = { affected: 31, kept: 9, moved: 16, saved: 25, refunded: 6, simulatedRefunded: 0, visitsReturned: 0, pending: 0, noReply: 0, revenueKept: 577,
+const settled: ReturnType<typeof summarizeRecovery> = { affected: 31, kept: 9, moved: 16, saved: 25, refunded: 6, simulatedRefunded: 0, visitsReturned: 0, pending: 0, noReply: 0, paymentRefunds: 6, creditsRestored: 0, revenueKept: 577,
   atStake: 712, completedRefundAmount: 135, simulatedRefundAmount: 0, credited: 0, keptAsCredit: 0, noReplyCustomers: 0, complete: true };
 const cover = (overrides: Partial<OwnerCover> = {}) => ({ planId: "plan", sessionId: "s1", instructorId: "i1", instructor: "Alex Rivera", class: "Yoga Flow", status: "accepted", current: true, fee: "35.00", ...overrides }) as OwnerCover;
 const payout = (status: string, error?: string) => ({ payout: { status, amount: "35.00", itemId: undefined, error } }) as Partial<OwnerCover>;
@@ -49,7 +49,7 @@ it("stops counting someone no longer teaching the class, unless their money is s
 });
 
 it("keeps simulated refunds apart from money that really went back", () => {
-  const html = headline([], { ...settled, refunded: 2, completedRefundAmount: 45, simulatedRefunded: 4, simulatedRefundAmount: 90 });
+  const html = headline([], { ...settled, refunded: 2, paymentRefunds: 2, completedRefundAmount: 45, simulatedRefunded: 4, simulatedRefundAmount: 90 });
   expect(html).toContain("2 refunds · $45.00 back to the original payment"); expect(html).toContain("4 simulated refunds · $90.00, no real money moved");
 });
 
@@ -107,4 +107,10 @@ it("shows the booking as it stands now on a later visit", () => {
   expect(refunded).toContain("no longer active"); expect(refunded).toContain("refunded"); expect(refunded).not.toContain("You&#x27;re booked");
   expect(view(200, { ...receipt, spotTaken: true })).toContain("this spot was just taken");
   expect(view(200, {})).toContain("We haven&#x27;t confirmed this payment yet");
+});
+
+it("doesn't call a returned visit or restored credit a payment refund", () => {
+  const html = headline([], { ...settled, refunded: 2, paymentRefunds: 0, completedRefundAmount: 0, visitsReturned: 1, creditsRestored: 1 });
+  expect(html).not.toContain("back to the original payment"); expect(html).not.toContain("refund ·");
+  expect(html).toContain("1 pack visit returned"); expect(html).toContain("1 booking returned to studio credit");
 });

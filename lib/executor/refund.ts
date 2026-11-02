@@ -72,7 +72,9 @@ export async function executeRefund(workspaceId: string, input: { bookingId: str
     }
   };
   let retryAllowed = !previous;
-  if (previous && ["REQUESTED", "FAILED", "PENDING", "NEEDS_REVIEW"].includes(previous.status)) {
+  // Owed but never sent: nothing at PayPal to reconcile, and earlier partial refunds don't identify this one.
+  if (previous?.neverSent && previous.status === "FAILED") retryAllowed = true;
+  else if (previous && ["REQUESTED", "FAILED", "PENDING", "NEEDS_REVIEW"].includes(previous.status)) {
     const outcome = await reconcileRefund(previous, repository);
     await fence();
     retryAllowed = outcome.kind !== "found" && (outcome.kind === "absent" || (previous.status === "REQUESTED" && canReplayRefund(previous)));

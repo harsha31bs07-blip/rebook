@@ -98,8 +98,7 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
     if (inFlight.current) return;
     try {
       await navigator.clipboard.writeText(path ? new URL(path, window.location.origin).href : outboxMessage(row, window.location.origin, !!reminders));
-      setNotice(`${row.customerName}: ${path ? "Private link" : "Message"} copied.`);
-      await mark(row, true);
+      setNotice(`${row.customerName}: ${path ? "Private link" : "Message"} copied. Mark it sent once you've sent it.`);
     } catch { setNotice(`${row.customerName}: Copy unavailable. Open as customer and copy the address, or use a sharing app.`); }
   }
 
@@ -144,7 +143,8 @@ export default function MessagesDrawer({ messages, links = [], outbox, workspace
           <button disabled={disabled || !row.emailDeliverable || sending || (!!delivery && !retryEmail)} aria-label={`${retryEmail ? "Send again to" : "Email"} ${row.customerName}`} aria-describedby={!row.emailDeliverable ? `demo-email-${row.planId}-${row.customerId}` : undefined} onClick={() => retryEmail ? setConfirmEmail(messageKey(row)) : void email(row)}>{retryEmail ? "Send again" : "Email"}</button>
           <button disabled={disabled} aria-label={`Email draft for ${row.customerName}`} onClick={() => share(row, "email")}>Email draft</button>
           <button disabled={disabled} aria-label={`Copy message for ${row.customerName}`} onClick={() => void copy(row)}>Copy</button>
-          {status.sent && <button disabled={disabled} aria-label={`Undo sent for ${row.customerName}`} onClick={() => void mark(row, false)}>Undo sent</button>}
+          {status.sent ? <button disabled={disabled} aria-label={`Undo sent for ${row.customerName}`} onClick={() => void mark(row, false)}>Undo sent</button>
+            : <button disabled={disabled} aria-label={`Mark sent for ${row.customerName}`} onClick={() => void mark(row, true)}>Mark sent</button>}
         </div>}
         {canShare && !row.emailDeliverable && <p className="muted" id={`demo-email-${row.planId}-${row.customerId}`}>Demo address · not sent</p>}
         {confirmEmail === messageKey(row) && <div className="outbox-reminder" role="group" aria-label={`Confirm email again to ${row.customerName}`}><p>A previous email may already have arrived. Check with {row.customerName} before sending again.</p><button disabled={disabled} aria-label={`Confirm send again to ${row.customerName}`} onClick={() => void email(row, true)}>Confirm send again</button><button onClick={() => setConfirmEmail(undefined)} aria-label={`Cancel email again to ${row.customerName}`}>Cancel</button></div>}

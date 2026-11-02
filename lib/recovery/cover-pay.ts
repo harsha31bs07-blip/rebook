@@ -179,7 +179,7 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
       if (previous && previous.status !== "REQUESTED" && payoutLocks(previous)) throw new StoreError(409, previous.status === "SUCCESS" ? "This cover is already paid." : "This payout is already with PayPal.");
       if (previous?.status === "REQUESTED" && !previous.batchId && previous.error === PAYOUT_VERIFICATION_ERROR) throw new StoreError(409, PAYOUT_VERIFICATION_ERROR);
       // PayPal rejects a repeated sender_batch_id for 30 days. Past that, a replay could pay twice, so stop and ask for a check.
-      if (previous?.status === "REQUESTED" && Date.parse(previous.createdAt) + PAYOUT_REPLAY_DAYS * 86_400_000 <= Date.now()) {
+      if (previous?.status === "REQUESTED" && !previous.batchId && Date.parse(previous.createdAt) + PAYOUT_REPLAY_DAYS * 86_400_000 <= Date.now()) {
         throw new StoreError(409, "PayPal never confirmed this payout and it is too old to resend safely. Check PayPal before paying another way.");
       }
       const now = new Date().toISOString(), attempt = previous?.status === "REQUESTED" ? previous.attempt : (previous?.attempt ?? 0) + 1;

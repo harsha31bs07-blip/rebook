@@ -12,7 +12,7 @@ export function paymentsNeedingAttention(state: State, ledger: LedgerEvent[], no
   return [...latest.values()].filter((event) => ["NEEDS_REVIEW", "FAILED", "CANCELLED"].includes(event.status)
     || (["REQUESTED", "PENDING"].includes(event.status) && now - Date.parse(event.firstAttemptAt ?? event.createdAt) >= ATTENTION_AGE_MS)).map((event) => {
     const booking = state.bookings.find((item) => item.id === event.bookingId);
-    return { requestId: event.requestId, bookingId: event.bookingId, amount: event.amount, status: event.status, ...(event.requestId.startsWith("sync:") && !event.captureId ? { creditReturn: true } : {}),
+    return { requestId: event.requestId, bookingId: event.bookingId, amount: event.amount, status: event.status, ...(event.neverSent && event.status === "FAILED" ? { release: event.captureId ? "Refund now" : "Return studio credit" } : {}),
       since: event.firstAttemptAt ?? event.createdAt, message: event.error,
       ageMinutes: Math.max(0, Math.floor((now - Date.parse(event.firstAttemptAt ?? event.createdAt)) / 60_000)),
       customer: state.customers.find((item) => item.id === booking?.customerId)?.name ?? event.bookingId };

@@ -21,10 +21,11 @@ export default function RecoveryHeadline({ recovery, disruption, timezone, appro
   const share = recovery.atStake > 0 ? Math.round(recovery.revenueKept / recovery.atStake * 100) : 100;
   const lines = [
     ...active.filter(coverNeedsOwner).map(coverLine),
-    `${count(recovery.kept + recovery.moved, "customer")} still ${recovery.kept + recovery.moved === 1 ? "has" : "have"} a class (${recovery.kept} kept, ${recovery.moved} moved)`,
-    recovery.refunded > 0 && `${count(recovery.refunded, "refund")} · ${money(recovery.completedRefundAmount)} back to the original payment`,
+    `${count(recovery.kept + recovery.moved, "booking")} still ${recovery.kept + recovery.moved === 1 ? "has" : "have"} a class (${recovery.kept} kept, ${recovery.moved} moved)`,
+    recovery.completedRefundAmount > 0 && `${recovery.paymentRefunds > 0 ? `${count(recovery.paymentRefunds, "refund")} · ` : ""}${money(recovery.completedRefundAmount)} back to the original payment`,
+    recovery.creditsRestored > 0 && `${count(recovery.creditsRestored, "booking")} returned to studio credit`,
     recovery.simulatedRefunded > 0 && `${count(recovery.simulatedRefunded, "simulated refund")} · ${money(recovery.simulatedRefundAmount)}, no real money moved`,
-    recovery.credited > 0 && `${count(recovery.credited, "customer")} kept ${money(recovery.keptAsCredit)} as studio credit`,
+    recovery.credited > 0 && `${count(recovery.credited, "booking")} kept ${money(recovery.keptAsCredit)} as studio credit`,
     recovery.visitsReturned > 0 && `${count(recovery.visitsReturned, "pack visit")} returned`,
     claimed.length > 0 ? `${count(claimed.length, "waitlist booking")} since this recovery${open ? ` · ${count(open, "offer")} open` : ""}`
       : open > 0 && `${count(open, "waitlist offer")} open for freed seats`,

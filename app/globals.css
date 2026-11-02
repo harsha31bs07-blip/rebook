@@ -774,7 +774,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .next-actions button, .next-actions a, .agent-connect button, #booking-sync li button, .btn-sm { border-color: var(--border-strong); }
 /* The step's main action is always full size, even inside a list of follow-ups. */
 .next-actions button.primary { min-height: 40px; padding: 8px 16px; font-size: 14px; border-radius: 10px; }
-@media (max-width: 760px) { #booking-sync li button, .agent-connect button { min-height: 44px; } }
+@media (max-width: 760px) { #booking-sync li button, .agent-connect button, .next-actions button.primary, .import-page :is(button, a, input, select, summary) { min-height: 44px; } }
 
 /* Headings and tool sections take focus from code so keyboard users land there; they are not controls. */
 [tabindex="-1"]:focus, [tabindex="-1"]:focus-visible { outline: none !important; }

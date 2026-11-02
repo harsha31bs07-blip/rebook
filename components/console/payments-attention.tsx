@@ -37,10 +37,10 @@ export default function PaymentsAttention({ workspaceId, payments, onUpdated }: 
     {payments.map((payment) => <div className="refund-row" key={payment.requestId}>
       <div><strong>{payment.customer} · ${payment.amount}</strong><span className="result-status">{payment.status === "NEEDS_REVIEW" ? "Needs review" : payment.status.toLowerCase()}</span></div>
       <p className="muted"><time dateTime={payment.since}>{payment.ageMinutes < 1 ? "Just now" : `${payment.ageMinutes} min ago`}</time></p>
-      <p>{payment.status === "NEEDS_REVIEW" ? "PayPal may already have issued this refund. Automatic retry is paused to avoid a duplicate. Check with PayPal before retrying."
+      <p>{payment.release ? payment.message : payment.status === "NEEDS_REVIEW" ? "PayPal may already have issued this refund. Automatic retry is paused to avoid a duplicate. Check with PayPal before retrying."
         : ["FAILED", "CANCELLED"].includes(payment.status) ? "This refund needs attention. Check with PayPal before retrying."
           : "PayPal has not confirmed this refund yet. Its amount remains reserved."}</p>
-      {payment.creditReturn ? <button className="primary" disabled={!!checking} onClick={() => void retry(payment.requestId)}>Return studio credit</button> : <button disabled={!!checking} onClick={() => void check(payment.requestId)}>{checking === payment.requestId ? "Checking PayPal…" : "Check with PayPal"}</button>}
+      {payment.release ? <button className="primary" disabled={!!checking} onClick={() => void retry(payment.requestId)}>{payment.release}</button> : <button disabled={!!checking} onClick={() => void check(payment.requestId)}>{checking === payment.requestId ? "Checking PayPal…" : "Check with PayPal"}</button>}
       {absent === payment.requestId && <button className="primary" disabled={!!checking} onClick={() => void retry(payment.requestId)}>Retry refund</button>}
     </div>)}
     {notice && <p role="status">{notice}</p>}

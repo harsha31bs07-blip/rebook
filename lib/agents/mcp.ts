@@ -99,7 +99,8 @@ async function call(name: string, args: Record<string, unknown>, context: Contex
     if (!active && found.seatsLeft <= 0) throw new StoreError(409, "This class is full. Use join_waitlist to join its waitlist.");
     // Agent bookings hold seats like the booking page, so they share its checkout limits.
     if (!active) limits.take([{ key: `checkout-client:${context.ip ?? "agent"}`, max: 60, ms: 60_000 }, { key: `checkout-workspace:${context.workspaceId}`, max: 120, ms: 60_000 }, { key: "checkout-global", max: 600, ms: 60_000 }]);
-    const generation = reservations.filter((row) => row.status === "failed" || (row.status === "pending" && row.expiresAt <= Date.now())).length;
+    const holdsClass = (id: string) => state.bookings.some((booking) => booking.id === id && booking.sessionId === input.classId && ["confirmed", "moved"].includes(booking.status));
+    const generation = reservations.filter((row) => row.status === "failed" || (row.status === "pending" && row.expiresAt <= Date.now()) || (row.status === "confirmed" && !holdsClass(row.id))).length;
     const requestId = active?.requestId ?? `agent-${createHash("sha256").update(`${input.classId}|${email}|${generation}`).digest("hex")}`;
     const studio = state.studio;
     const offer = active?.waitlistOfferId && context.repository.listWaitlistOffers(context.workspaceId).find((item) => item.id === active.waitlistOfferId);

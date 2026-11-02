@@ -33,6 +33,8 @@ export type LedgerEvent = {
   requestId: string; captureId: string; firstAttemptAt?: string;
   partial?: boolean;
   mergedInto?: string;
+  // Recorded as owed; no refund has been sent to PayPal for it yet.
+  neverSent?: boolean;
 };
 /** Money a customer is still owed that only the owner can release: a lost waitlist seat, or a class the booking system cancelled. */
 export const refundOwed = (event: { kind: string; status: string; requestId: string }) =>
@@ -46,7 +48,7 @@ export type CustomerLink = {
   sentAt?: string;
   // Set when the message changed after it may have been sent (e.g. a new substitute); the owner sends it again.
   revisedAt?: string;
-  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string; id?: string; fromSession?: State["sessions"][number] };
+  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string; id?: string; fromSession?: State["sessions"][number]; toSession?: State["sessions"][number] };
   replyHistory?: NonNullable<CustomerLink["reply"]>[];
 };
 export type Credit = {

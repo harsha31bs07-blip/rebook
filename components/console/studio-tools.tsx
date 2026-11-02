@@ -4,6 +4,13 @@ import { useEffect, type ReactNode } from "react";
 
 export type StudioTool = { id: string; title: string; badge?: string; children: ReactNode };
 
+/** Moves keyboard and screen-reader users with the view, so a revealed tool is also where they are. */
+function reveal(target: HTMLElement) {
+  target.scrollIntoView({ block: "start" });
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
+}
+
 /** Secondary tools stay folded so the recovery reads as one story; a link to a tool (e.g. #waitlist) unfolds it. */
 export default function StudioTools({ tools }: { tools: StudioTool[] }) {
   useEffect(() => {
@@ -12,7 +19,7 @@ export default function StudioTools({ tools }: { tools: StudioTool[] }) {
       const tool = target?.closest("details.studio-tool");
       if (!(tool instanceof HTMLDetailsElement)) return undefined;
       tool.open = true;
-      return target!;
+      return target as HTMLElement;
     };
     const onClick = (event: MouseEvent) => {
       const link = event.target instanceof Element ? event.target.closest("a[href^='#']") : null;
@@ -20,9 +27,9 @@ export default function StudioTools({ tools }: { tools: StudioTool[] }) {
       if (!target) return;
       event.preventDefault();
       history.replaceState(null, "", link.getAttribute("href"));
-      requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+      requestAnimationFrame(() => reveal(target));
     };
-    const onHash = () => { unfold(location.hash)?.scrollIntoView({ block: "start" }); };
+    const onHash = () => { const target = unfold(location.hash); if (target) reveal(target); };
     document.addEventListener("click", onClick); window.addEventListener("hashchange", onHash); onHash();
     return () => { document.removeEventListener("click", onClick); window.removeEventListener("hashchange", onHash); };
   }, []);

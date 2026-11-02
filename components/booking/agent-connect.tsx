@@ -14,8 +14,8 @@ export default function AgentConnect({ bookingId, owner = false }: { bookingId: 
   }
   return <section className="agent-connect" aria-labelledby={`agent-connect-${owner ? "owner" : "public"}`}>
     <h3 id={`agent-connect-${owner ? "owner" : "public"}`}>{owner ? "AI agents" : "Book with your AI assistant"}</h3>
-    <p className="muted">{owner ? "Customers' own AI assistants can find classes, book, join a waitlist or answer a rebooking link here. They never pay: each booking returns a PayPal link the customer approves, and refunds need the customer's confirmation."
-      : "Add this studio to Claude, ChatGPT or any MCP-capable assistant. It can find a class and hold your seat; you approve the payment yourself on PayPal."}</p>
+    <p className="muted">{owner ? "Customers' own AI assistants can find classes, book, join a waitlist or answer a rebooking link here. They never pay: each booking returns a PayPal link the customer approves, and anything that sends money back goes to the customer's private page."
+      : "Add this address to any compatible MCP client. Your assistant can find a class and hold your seat; you approve the payment yourself on PayPal."}</p>
     <p><code>{origin ? url : `/api/mcp/${bookingId}`}</code> <button type="button" onClick={() => void copy()} disabled={!origin}>Copy address</button></p>
     <p role="status" className="muted">{message}</p>
     <a href="https://github.com/harsha31bs07-blip/rebook/blob/main/docs/agents.md" target="_blank" rel="noreferrer">How it works</a>

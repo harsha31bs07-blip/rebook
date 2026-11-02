@@ -589,6 +589,8 @@ textarea { resize: vertical; min-height: 120px; }
 .judge-hint > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .judge-hint > div button { padding: 0 8px; font-size: 20px; }
 .judge-hint ol { list-style: decimal; padding-left: 20px; margin-top: 8px; }
+.judge-hint ul { list-style: disc; padding-left: 20px; margin-top: 4px; }
+.judge-hint > p.muted { margin: 8px 0 0; }
 .judge-hint li { padding-block: 3px; }
 .judge-hint li button, .judge-hint a { padding: 2px 0; border: 0; background: transparent; text-align: left; color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
 .judge-hint li button:disabled { color: var(--muted); text-decoration: none; }

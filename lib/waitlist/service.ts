@@ -115,7 +115,7 @@ export function ownerWaitlist(workspaceId: string, repository = getRepository())
     waiting: (state.waitlist ?? []).filter((entry) => entry.sessionId === sessionId && !offers.some((offer) => offer.entryId === entry.id && offer.status !== "withdrawn")
       && !state.bookings.some((booking) => booking.sessionId === sessionId && booking.customerId === entry.customerId && ["confirmed", "moved"].includes(booking.status))).length,
     offers: offers.filter((offer) => offer.sessionId === sessionId).map((offer) => ({ id: offer.id, status: offer.status, expiresAt: offer.expiresAt, createdAt: offer.createdAt,
-      ...(offer.status === "claimed" ? { amount: state.bookings.find((booking) => booking.id === offer.bookingId)?.amount ?? "0.00" } : {}),
+      ...(offer.status === "claimed" ? (() => { const booking = state.bookings.find((item) => item.id === offer.bookingId); return { amount: booking?.amount ?? "0.00", active: !!booking && ["confirmed", "moved"].includes(booking.status) }; })() : {}),
       customerName: state.customers.find((customer) => customer.id === offer.customerId)?.name ?? "Customer" })) }));
 }
 export function waitlistOutbox(workspaceId: string, repository: Repository): OutboxCustomer[] {

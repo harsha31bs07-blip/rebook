@@ -50,7 +50,7 @@ export function buildStudioData(data: Insights): AgDataSourcesDefinition<StudioR
     })),
     relationships: insightRelationships,
     expressions: [
-      ...[["revenue_booked_kpi", "Revenue booked", "bookings.amount"], ["revenue_kept_kpi", "Revenue kept", "disruptions.applied_revenue_kept"], ["refunds_issued_kpi", "Refunds issued", "money_events.issued_refund"], ["studio_credit_kpi", "Kept as studio credit", "disruptions.kept_as_credit"], ["waitlist_won_back_kpi", "Won back from waitlist", "disruptions.waitlist_won_back"], ["net_revenue_kpi", "Net revenue", "money_events.net"]].map(([id, name, field]) => ({
+      ...[["revenue_booked_kpi", "Revenue booked", "bookings.amount"], ["revenue_kept_kpi", "Revenue kept", "disruptions.applied_revenue_kept"], ["refunds_issued_kpi", "Refunds issued", "money_events.issued_refund"], ["studio_credit_kpi", "Kept as studio credit", "disruptions.kept_as_credit"], ["waitlist_won_back_kpi", "Waitlist bookings since recovery", "disruptions.waitlist_won_back"], ["net_revenue_kpi", "Net revenue", "money_events.net"]].map(([id, name, field]) => ({
         id, name, isMeasure: true, format: "currencyFormat" as const, formatOptions: { format: "$#,##0" },
         expression: { id: field, aggregation: "sum" as const },
       })),

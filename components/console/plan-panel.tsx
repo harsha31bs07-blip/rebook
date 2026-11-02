@@ -13,6 +13,8 @@ import { recoveryOutcomes, summarizeRecovery, type RecoveryOutcome } from "../..
 import type { summarizeOutbox } from "../../lib/choices/outbox";
 import { planCovers } from "../../lib/recovery/covers";
 import type { OwnerCover } from "../../lib/recovery/cover-pay";
+import { recoveryDay, recoveryHandled } from "../../lib/recovery/completion";
+import { isSeededDemo } from "../../lib/ai/examples";
 import NextSteps from "./next-steps";
 import RecoveryHeadline from "./recovery-headline";
 import type { ownerWaitlist } from "../../lib/waitlist/service";
@@ -66,14 +68,14 @@ export function RefundResults({ results, state, workspaceId, ledger }: { results
   })}{workspaceId && returnedPacks && <p><a href={`/api/workspaces/${workspaceId}/pack-balances`}>Download pack balance changes (CSV)</a><br /><span className="muted">Apply these in your booking system so balances match.</span></p>}{workspaceId && <PayPalVerification key={workspaceId} workspaceId={workspaceId} timezone={state.studio.timezone} />}</section>;
 }
 
-export default function PlanPanel({ details, plan, state, busy, approving, results, ledger, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, waitlist, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
+export default function PlanPanel({ details, plan, state, busy, approving, results, ledger, outcomes, creditPaidBookingIds, outboxSummary, coverLinks, waitlist, showSync, customerPath, onPreview, approvalRequested, disruptionText, onUndo, onMove, onApprove, onDiscard, onMessages, onWithdraw }: {
   details: PlanDetails; plan: PublicPlan; state: State; busy: boolean; results: ExecutionResult[];
   ledger?: LedgerEvent[];
   outcomes?: RecoveryOutcome[];
   creditPaidBookingIds?: string[];
   outboxSummary?: ReturnType<typeof summarizeOutbox>;
   coverLinks?: OwnerCover[];
-  waitlist?: ReturnType<typeof ownerWaitlist>;
+  waitlist?: ReturnType<typeof ownerWaitlist>; showSync?: boolean;
   customerPath?: string; onPreview?: (party: "customer" | "instructor") => void;
   onWithdraw?: () => void;
   approving?: boolean; approvalRequested?: boolean; disruptionText?: string; onUndo?: () => void; onMove?: (sessionId: string) => void; onApprove: (confirmedCoverSessionIds?: string[]) => void; onDiscard: () => void; onMessages: () => void;
@@ -107,16 +109,10 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
   const explanation = <ul className="explanation">{details.explanation.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>;
   const timeSaved = <p className="muted plan-context"><strong>Owner time saved (estimate)</strong><br />{plan.planningDurationMs !== undefined ? `Prepared in ${(plan.planningDurationMs / 1000).toFixed(1)} s · ` : ""}replaces about {plan.bookingActions.length} calls or messages once you share the links, plus {totals.refunded} manual refund{totals.refunded === 1 ? "" : "s"}.</p>;
   const messages = <button className="message-button" disabled={busy} onClick={onMessages}>{proposed ? "Preview customer messages" : "Customer messages and links"}</button>;
-  return <>
-    <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
-    <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
-    <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recovery.complete ? "Recovery complete" : "Recovery applied"}</h2>
-    {plan.correctionOf && <p className="notice" role="status">This undoes the recovery you approved for this disruption. Review the restored schedule, then approve.</p>}
-    {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
-    <p className="muted plan-context">{label.subject}<br />{label.window}</p>
-    {plan.status === "executed" && !plan.correctionOf && <RecoveryHeadline recovery={recovery} disruption={plan.disruption} timezone={state.studio.timezone} approvedAt={plan.createdAt} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} waitlist={waitlist} />}
-    {proposed && timeSaved}
-    <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
+  const planLinks = coverLinks?.filter((cover) => cover.planId === plan.id);
+  // The headline is the one summary of an approved recovery; the full numbers stay a click away.
+  const foldNumbers = plan.status === "executed" && !plan.correctionOf;
+  const stats = <div className={`stats totals-updated${proposed ? "" : " recovery-outcomes"}`} key={`${plan.id}-${plan.version ?? 1}`} aria-live="polite" aria-atomic="true">
       {proposed ? <>
         <div><span>Kept</span><strong className="success">{totals.kept}</strong><small>same time</small></div>
         <div><span>Moved</span><strong className="primary-text">{totals.moved}</strong><small>new time</small></div>
@@ -129,7 +125,18 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
         <div><span>No reply yet</span><strong>{recovery.noReply}</strong><small>customer confirmation outstanding</small></div>
         <div className="money-stat"><span>Revenue kept / refunds</span><strong>{money(recovery.revenueKept.toFixed(2))}</strong><small>Kept as studio credit: {money(recovery.keptAsCredit.toFixed(2))}</small><small>{money(recovery.completedRefundAmount.toFixed(2))} completed - {money(recovery.simulatedRefundAmount.toFixed(2))} simulated</small>{recovery.visitsReturned > 0 && <small>{recovery.visitsReturned} visits returned</small>}</div>
       </>}
-    </div>
+    </div>;
+  return <>
+    <section className="phone-plan-context" aria-label="Disruption facts"><h2>What happened?</h2><p>{disruptionText || label.subject}</p><div className="understood-card"><p className="eyebrow">Understood</p><h3>{label.subject}</h3><p>{label.window}</p><p className="muted">{state.studio.timezone} · {totals.sessionsAffected} classes affected</p></div></section>
+    <div className="section-label"><p className="eyebrow">{proposed ? "Recovery preview" : "Recovery record"}</p><span className="pill">{plan.status.replaceAll("_", " ")}</span></div>
+    <h2 ref={resultHeading} tabIndex={-1}>{proposed ? details.explanation.headline : recoveryHandled(recovery, planLinks) ? "Recovery complete" : "Recovery applied"}</h2>
+    {plan.correctionOf && <p className="notice" role="status">This undoes the recovery you approved for this disruption. Review the restored schedule, then approve.</p>}
+    {plan.correctedBy && <p className="notice" role="status">Corrected by plan {plan.correctedBy}. Settled payments stay recorded.</p>}
+    <p className="muted plan-context">{label.subject}<br />{label.window}</p>
+    {plan.status === "executed" && !plan.correctionOf && <RecoveryHeadline recovery={recovery} disruption={plan.disruption} timezone={state.studio.timezone} approvedAt={plan.createdAt} covers={planLinks} waitlist={waitlist} />}
+    {proposed && timeSaved}
+    {proposed && !isSeededDemo(state) && <p className="notice" role="note">This week was imported: availability is assumed wherever your data didn&apos;t include it, and classes with no price use a placeholder. Check these moves and totals before approving.</p>}
+    {!foldNumbers && stats}
     {proposed && <div className="recovery-adjustments"><p className="muted">Review each changed session before approving:</p><ul role="list">{plan.sessionChanges.map((change) => {
       const session = state.sessions.find((item) => item.id === change.sessionId);
       const placement = change.after;
@@ -152,10 +159,11 @@ export default function PlanPanel({ details, plan, state, busy, approving, resul
     {plan.status === "executing" && <><p className="notice" role="status">Refunding with PayPal… {plan.refundProgress?.done ?? 0} of {plan.refundProgress?.total ?? totals.refunded} complete</p>{!busy && <button className="primary full-width" onClick={() => onApprove()}>Resume refund processing</button>}</>}
     {plan.status === "partially_failed" && <div className="warning" role="alert"><p>The schedule was updated, but PayPal sandbox hasn&apos;t confirmed every refund. Retry checks existing refunds before another attempt.</p><button className="primary full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Retrying refunds…" : "Retry"}</button></div>}
     {plan.status === "executed" && results.some((result) => result.status === "PENDING") && <button className="full-width" disabled={busy} onClick={() => onApprove()}>{busy ? "Checking refund status…" : "Check refund status"}</button>}
-    {plan.status === "executed" && onPreview && <NextSteps workspaceId={plan.workspaceId} summary={outboxSummary} covers={coverLinks?.filter((cover) => cover.planId === plan.id)} customerPath={customerPath} onMessages={onMessages} onPreview={onPreview} />}
+    {plan.status === "executed" && onPreview && <NextSteps workspaceId={plan.workspaceId} summary={outboxSummary} covers={planLinks} customerPath={customerPath} day={recoveryDay(plan.disruption, state.studio.timezone)} showWaitlist={waitlist?.some((item) => item.waiting > 0 || item.offers.length > 0)} showSync={showSync} onMessages={onMessages} onPreview={onPreview} />}
     <RefundResults key={plan.id} results={results} state={state} ledger={ledger} workspaceId={!plan.correctionOf && ["executed", "partially_failed"].includes(plan.status) ? plan.workspaceId : undefined} />
     {proposed ? <>{messages}<BookingGrid plan={plan} state={state} ledger={ledger} /></> : <>
       {plan.status !== "executed" && messages}
+      {foldNumbers && <details className="record-details"><summary>All the numbers</summary>{stats}</details>}
       <details className="record-details"><summary>Bookings and substitutes</summary>{explanation}{timeSaved}<CoverRecord plan={plan} state={state} links={coverLinks} /><BookingGrid plan={plan} state={state} ledger={ledger} /></details>
     </>}
     {onWithdraw && <p className="quiet-action">Disruption over? <button className="link-button" disabled={busy} onClick={onWithdraw}>Restore the original schedule</button></p>}

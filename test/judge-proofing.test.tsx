@@ -211,7 +211,7 @@ it("remembers quick-tour dismissal after reload and routes steps to the requeste
   const preview = render(() => JudgeHint({ id: "workspace1", ready: true, preview: true, hasPlan: true, onStep }));
   // Once a recovery is under way the tour shrinks to its next step; "All steps" unfolds the list.
   const previewControls = elements(preview).filter((element) => element.type === "button");
-  expect(previewControls.map((control) => control.props["aria-label"] ?? control.props["aria-expanded"])).toEqual([false, "Dismiss quick tour", "Tour step 4: Approve and refund"]);
+  expect(previewControls.map((control) => control.props["aria-label"] ?? control.props["aria-expanded"])).toEqual([false, "Dismiss quick tour", "Tour step 3: Approve and refund"]);
   (previewControls[2].props.onClick as () => void)();
   const applied = elements(render(() => JudgeHint({ id: "workspace1", ready: true, preview: false, hasPlan: true, onStep }))).filter((element) => element.type === "button");
   (applied[2].props.onClick as () => void)();

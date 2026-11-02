@@ -32,7 +32,7 @@ it("shows the three follow-ups with live status after approval", () => {
 
 it("drops the pay shortcut once PayPal has the payout, and hides cover steps without a substitute", () => {
   const paid = renderToStaticMarkup(<NextSteps workspaceId="ws" covers={[cover({ payout: { status: "SUCCESS", amount: "35.00", itemId: "ITEM", error: undefined } })]} onMessages={vi.fn()} onPreview={vi.fn()} />);
-  expect(paid).toContain("paid with PayPal"); expect(paid).not.toContain("#cover-instructors");
+  expect(paid).toContain("Alex Rivera paid $35.00 with PayPal"); expect(paid).not.toContain("#cover-instructors");
   expect(renderToStaticMarkup(<NextSteps workspaceId="ws" covers={[]} onMessages={vi.fn()} onPreview={vi.fn()} />)).not.toContain("covers");
 });
 

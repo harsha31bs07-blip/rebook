@@ -6,10 +6,10 @@ export default function AgentReadyPage() {
     <article>
       <p className="eyebrow">Agent-ready: MCP and WebMCP</p>
       <h1>Assistants prepare.<br />Humans approve money.</h1>
-      <p>Rebook publishes structured tools in two places. Each studio is a remote MCP server that a customer’s own assistant can call from anywhere, and every page offers WebMCP tools to a compatible browser assistant. You see every result in the same interface you use yourself.</p>
+      <p>Rebook publishes structured tools in two places. Each studio is a remote MCP server that a customer’s own assistant can call from anywhere, and the owner console, booking page and dashboard expose page-scoped WebMCP tools in compatible browsers. You see every result in the same interface you use yourself.</p>
       <h2>Your customers’ own assistants (MCP)</h2>
-      <p>Each studio’s booking page shows its MCP address (<code>/api/mcp/&lt;bookingId&gt;</code>), the same public capability as the booking page. An assistant such as Claude or ChatGPT can list classes, book one, join a waitlist, or read and answer the private rebooking link the studio sent after a disruption.</p>
-      <p>It never pays. Booking holds the seat for 10 minutes and returns a PayPal approval link; the person approves the payment on PayPal and returns to the studio, where the payment is captured and checked. A refund through an assistant needs the person’s explicit confirmation first. <a href="https://github.com/harsha31bs07-blip/rebook/blob/main/docs/agents.md" target="_blank" rel="noreferrer">How the MCP server works</a></p>
+      <p>Each studio’s booking page shows its MCP address (<code>/api/mcp/&lt;bookingId&gt;</code>), the same public capability as the booking page. A compatible Streamable HTTP MCP client can list classes, book one, join a waitlist, or read and answer the private rebooking link the studio sent after a disruption.</p>
+      <p>It never pays. Booking holds the seat for 10 minutes and returns a PayPal approval link; the person approves the payment on PayPal and returns to the studio, where the payment is captured and checked. An assistant can’t send money back: a refund, or a move to a cheaper class, returns a link for the person to confirm on their own private page. <a href="https://github.com/harsha31bs07-blip/rebook/blob/main/docs/agents.md" target="_blank" rel="noreferrer">How the MCP server works</a></p>
       <h2>Browser assistants (WebMCP)</h2>
       <h2>You make the call</h2>
       <p>A recovery preview does not change your schedule or issue refunds. Only the owner’s click on <strong>Approve and refund</strong> applies the plan and starts refunds. An assistant’s approval request displays “An assistant prepared this plan. Review and approve.”</p>

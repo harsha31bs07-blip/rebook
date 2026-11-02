@@ -24,7 +24,7 @@ it("counts waitlist refills since approval and says Monday is handled once every
   ] }];
   const paid = { ...(cover as object), payout: { status: "SUCCESS", amount: "35.00" } } as never;
   const html = render({ ...base, noReply: 0, noReplyCustomers: 0, credited: 1, keptAsCredit: 22, visitsReturned: 1, complete: true }, { covers: [paid], waitlist });
-  for (const text of ["Monday is handled", "+$22.00</strong> won back from the waitlist", "2 seats refilled from the waitlist", "1 customer kept $22.00 as studio credit", "1 pack visit returned", "Alex Rivera paid $35.00 with PayPal"]) expect(html).toContain(text);
+  for (const text of ["Monday is handled", "+$22.00</strong> in waitlist bookings since", "2 waitlist bookings since this recovery", "1 customer kept $22.00 as studio credit", "1 pack visit returned", "Alex Rivera paid $35.00 with PayPal"]) expect(html).toContain(text);
   expect(html).toContain("recovery-headline handled");
 });
 it("is not handled while a refund waits on PayPal, and names multi-day recoveries plainly", () => {

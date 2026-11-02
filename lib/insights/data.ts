@@ -12,17 +12,17 @@ const dollars = (amount: string) => toCents(amount) / 100;
 /** Flat, workspace-scoped rows. Never include customer email or provider credentials. */
 export function buildInsights(state: State, plans: StoredPlan[], ledger: LedgerEvent[], links: CustomerLink[] = [], credits: Credit[] = [], checkouts: CheckoutReservation[] = [], offers: WaitlistOffer[] = []) {
   const applied = plans.filter((plan) => plan.status !== "proposed");
-  // A seat refilled from the waitlist is credited to the latest recovery applied before its offer.
+  // Only timing links a waitlist booking to a recovery, so it is reported as a booking since it, and a refunded one doesn't count.
   const appliedOrder = [...applied].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const wonBack = (plan: StoredPlan) => {
     const next = appliedOrder[appliedOrder.indexOf(plan) + 1]?.createdAt ?? "￿";
     return offers.filter((offer) => offer.status === "claimed" && offer.createdAt >= plan.createdAt && offer.createdAt < next)
-      .reduce((sum, offer) => sum + toCents(state.bookings.find((booking) => booking.id === offer.bookingId)?.amount ?? "0.00"), 0) / 100;
+      .reduce((sum, offer) => { const booking = state.bookings.find((item) => item.id === offer.bookingId); return sum + (booking && ["confirmed", "moved"].includes(booking.status) ? toCents(booking.amount) : 0); }, 0) / 100;
   };
   const creditPaidBookingIds = new Set([...checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id),
     ...credits.flatMap((credit) => credit.redemptions.map((item) => item.bookingId))]);
   const outcomes = recoveryOutcomes(state, plans, ledger, links, creditPaidBookingIds);
-  const sessions = new Map(state.sessions.map((session) => [session.id, session]));
+  const sessions = new Map([...(state.cancelledSessions ?? []), ...state.sessions].map((session) => [session.id, session]));
   // Execution removes cancellations from the live schedule. Their original records still join bookings.
   for (const plan of applied) for (const session of plan.basis?.sessions ?? []) {
     if (!sessions.has(session.id)) sessions.set(session.id, session);

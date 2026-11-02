@@ -240,6 +240,8 @@ describe("AI suggestions and privacy", () => {
 
 describe("an imported studio works end to end", () => {
   it("creates a private studio whose owner can describe a sick instructor, plan, and approve simulated refunds", async () => {
+    // The sample week is dated: approving checks classes against the clock, so hold it at the import's "now".
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
     const { AiUnavailable } = await import("../lib/ai/gemini");
     ai.generateJson.mockRejectedValue(new AiUnavailable(true));
     const { id, summary } = createImportedWorkspace(sample, { mapping: sampleMapping, classTypes: sampleTypes, timezone: TZ, studioName: "Harbour Movement Co." }, repository, NOW);

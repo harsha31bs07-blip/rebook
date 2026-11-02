@@ -14,6 +14,7 @@ export const InboundEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...base, type: z.literal("waitlist.joined"), session, customer, entitlement: optionalEntitlement }),
   z.strictObject({ ...base, type: z.literal("waitlist.left"), session, customer }),
   z.strictObject({ ...base, type: z.literal("session.capacity"), session, capacity: SessionSchema.shape.capacity.safe() }),
+  z.strictObject({ ...base, type: z.literal("session.cancelled"), session }),
 ]);
 export const EventsSchema = z.strictObject({ events: z.array(InboundEventSchema).min(1).max(100) });
 export const AckSchema = z.strictObject({ ids: z.array(z.string().min(1).max(300)).max(500) });

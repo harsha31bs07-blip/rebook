@@ -74,8 +74,11 @@ export const StateSchema = z.object({
   studio: StudioSchema, instructors: z.array(InstructorSchema), rooms: z.array(RoomSchema),
   sessions: z.array(SessionSchema), customers: z.array(CustomerSchema), bookings: z.array(BookingSchema),
   waitlist: z.array(WaitlistEntrySchema).optional(),
+  // Classes the booking system cancelled: off the live schedule, kept so their bookings still have details.
+  cancelledSessions: z.array(SessionSchema).optional(),
   syncPackBalances: z.array(z.object({ customerId: z.string(), visitsLeft: z.number().int().nonnegative(),
     expires: z.iso.date().optional(), acknowledgedBookingIds: z.array(z.string()),
+    acknowledgedReturnBookingIds: z.array(z.string()).optional(),
   })).optional(),
 });
 export const RemedySchema = z.enum(["substitute", "move_room", "move_time", "cancel"]);

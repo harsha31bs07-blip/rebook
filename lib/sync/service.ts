@@ -4,26 +4,15 @@ import type { State } from "../domain/types";
 import { packChangeId, packReturns } from "../domain/pack-balances";
 import { seatsLeft } from "../checkout/service";
 import { checkoutHoldsSeat, heldOffers } from "../waitlist/capacity";
-import { fillFreedSeats } from "../waitlist/service";
+import { fillFreedSeats, withdrawWaitlistOffers } from "../waitlist/service";
 import { getRepository, StoreError, withWorkspaceLock, type Repository, type SyncEventResult } from "../store";
 import { allChanges, pendingChanges } from "./feed";
 import { EventsSchema, type InboundEvent } from "./schemas";
 
-function updateAcknowledgedPacks(workspaceId: string, state: State, repository: Repository): void {
-  const acks = repository.syncAcks(workspaceId), returned = packReturns(repository.listLedger(workspaceId));
-  for (const baseline of state.syncPackBalances ?? []) baseline.acknowledgedBookingIds = [...returned.filter((row) => acks.has(packChangeId(row))
-    && state.bookings.some((booking) => booking.id === row.bookingId && booking.customerId === baseline.customerId && booking.entitlement?.kind === "pack")).map((row) => row.bookingId),
-  // A visit used in Rebook is part of the booking system's balance once its new booking is acknowledged.
-  ...state.bookings.filter((booking) => booking.customerId === baseline.customerId && booking.packVisitUsed && acks.has(`created:${booking.id}`)).map((booking) => booking.id)];
-}
 export async function acknowledge(workspaceId: string, ids?: string[], repository = getRepository()) {
   return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
     const known = new Set(allChanges(workspaceId, repository).map((row) => row.id));
     const acknowledged = repository.acknowledgeSync(workspaceId, [...new Set(ids ?? known)].filter((id) => known.has(id)));
-    const { state } = repository.requireWorkspace(workspaceId);
-    if (state.syncPackBalances?.length) {
-      updateAcknowledgedPacks(workspaceId, state, repository); repository.saveState(workspaceId, state);
-    }
     return { acknowledged, pending: pendingChanges(workspaceId, repository).length };
   }));
 }
@@ -45,9 +34,12 @@ function applyEvent(workspaceId: string, event: InboundEvent, repository: Reposi
   if (repository.listPlans(workspaceId).some((plan) => plan.status === "proposed")) throw new StoreError(409, "A recovery preview is open; approve or discard it first.");
   if (event.type === "pack.balance") {
     const customer = resolveCustomer(state, event.customer, false);
+    const acks = repository.syncAcks(workspaceId);
     state.syncPackBalances = (state.syncPackBalances ?? []).filter((row) => row.customerId !== customer.id);
-    state.syncPackBalances.push({ customerId: customer.id, visitsLeft: event.visitsLeft, expires: event.expires, acknowledgedBookingIds: [] });
-    updateAcknowledgedPacks(workspaceId, state, repository);
+    state.syncPackBalances.push({ customerId: customer.id, visitsLeft: event.visitsLeft, expires: event.expires,
+      acknowledgedBookingIds: state.bookings.filter((booking) => booking.customerId === customer.id && booking.packVisitUsed && acks.has(`created:${booking.id}`)).map((booking) => booking.id),
+      acknowledgedReturnBookingIds: packReturns(repository.listLedger(workspaceId)).filter((row) => acks.has(packChangeId(row))
+        && state.bookings.some((booking) => booking.id === row.bookingId && booking.customerId === customer.id && booking.entitlement?.kind === "pack")).map((row) => row.bookingId) });
     for (const booking of state.bookings) if (booking.customerId === customer.id && booking.entitlement?.kind === "pack" && event.expires) booking.entitlement.expires = event.expires;
     repository.saveState(workspaceId, StateSchema.parse(state)); return;
   }
@@ -59,7 +51,15 @@ function applyEvent(workspaceId: string, event: InboundEvent, repository: Reposi
   const session = sessions[0];
   if (Date.parse(session.start) <= Date.now()) throw new StoreError(409, "Class has already started");
   const reservations = repository.listCheckout(workspaceId), offers = repository.listWaitlistOffers(workspaceId);
-  if (event.type === "session.capacity") {
+  if (event.type === "session.cancelled") {
+    if (reservations.some((row) => row.sessionId === session.id && row.status === "capturing")) throw new StoreError(409, "A customer payment is being reconciled; retry later");
+    state.sessions = state.sessions.filter((row) => row.id !== session.id);
+    state.cancelledSessions = [...(state.cancelledSessions ?? []), session];
+    for (const booking of state.bookings) if (booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)) booking.status = "cancelled";
+    state.waitlist = (state.waitlist ?? []).filter((row) => row.sessionId !== session.id);
+    withdrawWaitlistOffers(workspaceId, new Set([session.id]), repository);
+    for (const row of reservations) if (row.sessionId === session.id && row.status === "pending") repository.saveCheckout({ ...row, status: "failed" });
+  } else if (event.type === "session.capacity") {
     const room = state.rooms.find((row) => row.id === session.roomId);
     const occupied = state.bookings.filter((row) => row.sessionId === session.id && ["confirmed", "moved"].includes(row.status)).length
       + reservations.filter((row) => row.sessionId === session.id && checkoutHoldsSeat(row)).length + heldOffers(session.id, offers, reservations);
@@ -94,7 +94,6 @@ function applyEvent(workspaceId: string, event: InboundEvent, repository: Reposi
     }
   }
   repository.saveState(workspaceId, StateSchema.parse(state));
-  fillFreedSeats(workspaceId, repository);
 }
 export async function receiveEvents(workspaceId: string, input: { events: InboundEvent[] }, repository = getRepository()) {
   input = EventsSchema.parse(input);
@@ -119,6 +118,7 @@ export async function receiveEvents(workspaceId: string, input: { events: Inboun
       }
       results.push(result);
     }
+    if (results.some((row) => row.status === "applied")) fillFreedSeats(workspaceId, repository);
     return { results };
   });
 }

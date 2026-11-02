@@ -237,6 +237,8 @@ it("adds only unacknowledged visit returns to inbound pack baselines and filters
   const csv = () => csvGet(new Request("http://localhost/pack-balances?pending=1"), context());
   expect((await (await csv()).text()).trim().split("\r\n")).toHaveLength(2);
   await acknowledge(id, [returns[1].id], repository);
+  expect(packBalance(state(), repository.listLedger(id), person.id, "Ten")).toBe(11);
+  await event({ eventId: "new-balance", type: "pack.balance", customer: customer(), visitsLeft: 10 });
   expect(packBalance(state(), repository.listLedger(id), person.id, "Ten")).toBe(10);
   expect((await (await csv()).text()).trim().split("\r\n")).toHaveLength(1);
   expect((await (await csvGet(new Request("http://localhost/pack-balances"), context())).text()).trim().split("\r\n")).toHaveLength(3);

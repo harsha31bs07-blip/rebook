@@ -117,6 +117,21 @@ it.each([
   const person = after.customers.find((customer) => customer.id === customerId)!;
   if (!free) expect(await createOrder(workspaceId, { sessionId, customer: { name: person.name, email: person.email }, waitlistToken: token() }, randomUUID(), repository)).toMatchObject({ orderId: expect.any(String) });
 });
+it.each([0, 1, 3])("uses a waitlist-only pack balance of %s and preserves its first snapshot", async (visitsLeft) => {
+  const state = setup(true), entry = state.waitlist![0]; entry.entitlement!.visitsLeft = visitsLeft;
+  repository.saveState(workspaceId, state); fillFreedSeats(workspaceId, repository);
+  const result = await respondToWaitlistOffer(token(), "claim", repository);
+  const after = repository.requireWorkspace(workspaceId).state;
+  expect(result.status).toBe(visitsLeft ? "claimed" : "offered");
+  if (visitsLeft) {
+    expect(after.bookings).toEqual([expect.objectContaining({ packVisitUsed: true, entitlement: { kind: "pack", name: "10 classes", visitsLeft } })]);
+    expect(packBalance(after, [], entry.customerId, "10 classes")).toBe(visitsLeft - 1);
+  } else {
+    expect(result.entitlement).toBeUndefined(); expect(after.bookings).toEqual([]);
+    const person = after.customers.find((customer) => customer.id === entry.customerId)!;
+    expect(await createOrder(workspaceId, { sessionId, customer: { name: person.name, email: person.email }, waitlistToken: token() }, randomUUID(), repository)).toHaveProperty("orderId");
+  }
+});
 it("advances on decline and lazily on owner reads after expiry", async () => {
   setup(); fillFreedSeats(workspaceId, repository);
   await respondToWaitlistOffer(token(), "decline", repository);

@@ -16,6 +16,7 @@ import { GET as workspaceGET } from "../app/api/workspaces/[id]/route";
 import { buildInsights } from "../lib/insights/data";
 import { recoveryMetric } from "../lib/insights/metrics";
 import type { Plan } from "../lib/domain/types";
+import { packBalance } from "../lib/domain/pack-balances";
 
 let directory: string, repository: Repository;
 let refundStatus: string, refundCalls: { url: string; init: RequestInit }[];
@@ -180,6 +181,35 @@ describe("private customer links", () => {
 });
 
 describe("one tap choices and money", () => {
+  it.each(["pack", "membership"] as const)("restricts %s moves to its studio-local expiry without spending another visit", async (kind) => {
+    const { token, workspaceId, bookingId } = fixture();
+    const state = repository.requireWorkspace(workspaceId).state, booking = state.bookings.find((item) => item.id === bookingId)!;
+    booking.entitlement = { kind, name: "Pass", expires: "2026-11-10", ...(kind === "pack" ? { visitsLeft: 2 } : {}) };
+    booking.amount = "0.00"; delete booking.payment;
+    const original = state.sessions[0];
+    state.sessions.push({ ...original, id: "expiry-evening", price: "99.00", start: "2026-11-11T04:30:00Z", end: "2026-11-11T04:59:00Z" });
+    repository.saveState(workspaceId, state);
+    const options = await customerChoice(token, repository);
+    expect(options.alternatives.map((session) => session.id)).toEqual(expect.arrayContaining(["other-type", "expiry-evening"]));
+    expect(options.alternatives.map((session) => session.id)).not.toContain("alternative");
+    expect(options.alternatives.map((session) => session.id)).not.toContain("cheaper");
+    await expect(submitChoice(token, { action: "move", sessionId: "alternative" }, repository)).rejects.toMatchObject({ status: 409 });
+    const moved = await submitChoice(token, { action: "move", sessionId: "expiry-evening" }, repository);
+    expect(moved.after?.id).toBe("expiry-evening"); expect(moved.receipt).toBeUndefined(); expect(refundCalls).toEqual([]);
+    const after = repository.requireWorkspace(workspaceId).state, transferred = after.bookings.find((item) => item.id === bookingId)!;
+    expect(transferred.entitlement).toEqual(booking.entitlement); expect(transferred.packVisitUsed).toBeUndefined();
+    if (kind === "pack") expect(packBalance(after, repository.listLedger(workspaceId), booking.customerId, "Pass")).toBe(2);
+  });
+  it.each(["baseline", "other booking"])("uses expiry from %s when a booking has no explicit expiry", async (source) => {
+    const { token, workspaceId, bookingId } = fixture();
+    const state = repository.requireWorkspace(workspaceId).state, booking = state.bookings.find((item) => item.id === bookingId)!;
+    booking.entitlement = { kind: "pack", name: "Pass" }; booking.amount = "0.00"; delete booking.payment;
+    if (source === "baseline") state.syncPackBalances = [{ customerId: booking.customerId, visitsLeft: 2, expires: "2026-11-10", acknowledgedBookingIds: [] }];
+    else state.bookings.push({ ...booking, id: "prior-pass", status: "cancelled", entitlement: { ...booking.entitlement, expires: "2026-11-10" } });
+    repository.saveState(workspaceId, state);
+    expect((await customerChoice(token, repository)).alternatives.map((session) => session.id)).not.toContain("alternative");
+    await expect(submitChoice(token, { action: "move", sessionId: "alternative" }, repository)).rejects.toMatchObject({ status: 409 });
+  });
   it.each([false, true])("keeps choice refund identities distinct across workspaces with the same booking ID (partial: %s)", async (partial) => {
     const input = partial ? { action: "move" as const, sessionId: "cheaper" } : { action: "refund" as const };
     const first = fixture();

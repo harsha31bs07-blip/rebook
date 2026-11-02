@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fillFreedSeats, waitlistOutbox } from "../waitlist/service";
 import { z } from "zod";
 import { draftCustomerMessages } from "../ai/messages";
@@ -6,6 +7,7 @@ import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc 
 import type { State } from "../domain/types";
 import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlements";
 import { packBalance, packReturnBalance, packReturns } from "../domain/pack-balances";
+import { entitlementExpiry } from "../waitlist/entitlement";
 import { executeRefund } from "../executor/refund";
 import { recoveryOutcomes } from "../recovery/outcomes";
 import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
@@ -67,10 +69,12 @@ function alternatives(link: CustomerLink, repository: Repository) {
   const end = Date.parse(zonedTimeToUtc(addLocalDays(week, 7), "00:00", state.studio.timezone));
   const payment = creditPayment(link, repository);
   const maxPrice = Math.min(toCents(booking.amount), payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
+  const expires = booking.entitlement && entitlementExpiry(state, booking.customerId, booking.entitlement);
   const paused = pausedSessionIds(link.workspaceId, repository);
   const reservations = repository.listCheckout(link.workspaceId), offers = repository.listWaitlistOffers(link.workspaceId);
   return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session, paused)
     && Date.parse(session.start) >= Date.parse(state.studio.weekStart) && Date.parse(session.start) < end
+    && (!expires || localParts(session.start, state.studio.timezone).dateKey <= expires)
     && (booking.entitlement || toCents(session.price) <= maxPrice) && seatsLeft(state, session, reservations, undefined, offers) > 0
     && !state.bookings.some((other) => other.id !== booking.id && other.customerId === booking.customerId && ["confirmed", "moved"].includes(other.status)
       && state.sessions.some((booked) => booked.id === other.sessionId && overlaps(booked.start, booked.end, session.start, session.end))))
@@ -160,6 +164,7 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
     repository.transaction(() => {
       const { state } = repository.requireReadyWorkspace(link.workspaceId);
       const booking = state.bookings.find((item) => item.id === link.bookingId)!;
+      const fromSession = state.sessions.find((item) => item.id === booking.sessionId);
       let amount = "0.00";
       let requestId: string | undefined;
       if (input.action === "move") {
@@ -184,7 +189,8 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         requestId = `choice:${link.id}`;
         booking.status = "refund_pending";
       }
-      link = { ...link, reply: { action: input.action, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
+      link = { ...link, replyHistory: [...(link.replyHistory ?? []), ...(link.reply ? [link.reply] : [])],
+        reply: { id: randomUUID(), action: input.action, fromSession, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
       repository.saveState(link.workspaceId, state);
       repository.saveCustomerLink(link);
     });

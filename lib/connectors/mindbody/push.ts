@@ -30,6 +30,18 @@ function cancelledClassPacks(context: Context, classId: number) {
     if (context.link.services[`mb-visit-${visitId}`] === context.link.snapshot.packs[clientId]?.serviceId) packEffect(context, clientId, 1, `${classId}:${visitId}:removed`);
   }
 }
+async function cancelSession(context: Context, classId: number) {
+  const marker = `cancel:${classId}`, previous = context.link.progress[marker];
+  context.link.progress[marker] = { done: true }; context.save();
+  try { await write(context, "class/cancelsingleclass", cancelClass(classId), /already cancel[le]*d/i); }
+  catch (error) {
+    if (error instanceof MindbodyError && error.upstreamStatus >= 400 && error.upstreamStatus < 500 && error.upstreamStatus !== 429) {
+      if (previous) context.link.progress[marker] = previous; else delete context.link.progress[marker]; context.save();
+    }
+    throw error;
+  }
+  cancelledClassPacks(context, classId);
+}
 async function changeBooking(context: Context, action: "added" | "removed", clientId: string, classId: number, serviceId?: number) {
   // Persist intent before the request: an uncertain response must not echo into Rebook on pull.
   const marker = `${classId}:${clientId}`, previous = context.link.ownWrites[marker];
@@ -108,8 +120,7 @@ async function moveSession(context: Context, change: Extract<SyncChange, { type:
   }
   for (const clientId of Object.values(link.snapshot.classes[original.classId]?.visits ?? {})) link.ownWrites[`${original.classId}:${clientId}`] = "removed";
   context.save();
-  await write(context, "class/cancelsingleclass", cancelClass(original.classId), /already cancel[le]*d/i);
-  cancelledClassPacks(context, original.classId);
+  await cancelSession(context, original.classId);
   link.sessions[session.id] = { ...next, classId: progress.newClassId };
   link.snapshot.classes[progress.newClassId] ??= { visits: {}, waitlist: {}, capacity: desired.capacity };
   // The old roster belongs to a cancelled instance and is no longer polled.
@@ -122,7 +133,7 @@ export async function applyMindbodyChange(context: Context, change: SyncChange):
   else if (change.type === "session.cancelled") {
     const row = mapping(link, change.session.id);
     for (const clientId of Object.values(link.snapshot.classes[row.classId]?.visits ?? {})) link.ownWrites[`${row.classId}:${clientId}`] = "removed";
-    context.save(); await write(context, "class/cancelsingleclass", cancelClass(row.classId), /already cancel[le]*d/i); cancelledClassPacks(context, row.classId);
+    context.save(); await cancelSession(context, row.classId);
   } else if (change.type === "booking.moved" && change.from.id === change.to.id) {
     const sessionChange = change.id.replace(/:booking:.*$/, `:session:${change.from.id}`);
     if (change.id.startsWith("plan:") && !link.progress[sessionChange]?.done && !link.ownChangeIds.includes(sessionChange)) throw new StoreError(409, "Send the parent class move first.");

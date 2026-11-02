@@ -1,6 +1,7 @@
 import { addLocalDays, localParts } from "../../domain/time";
 import { getRepository, StoreError, withWorkspaceLock, type Repository } from "../../store";
 import type { InboundEvent } from "../../sync/schemas";
+import { allChanges } from "../../sync/feed";
 import { receiveEvents } from "../../sync/service";
 import { MindbodyClient, mindbodyClient } from "./client";
 import { classVisits, clientReference, readClients, visitEntitlement, waitlistEntries } from "./import";
@@ -32,6 +33,8 @@ export async function pullFromMindbody(workspaceId: string, repository: Reposito
       return known ? { name: known.name, email: known.email } : clientReference(people.find((row) => String(row.Id) === id) ?? { Id: id });
     };
     const queue: { event: InboundEvent; accept(): void }[] = [];
+    const ownCancelled = new Set(allChanges(workspaceId, repository).filter((row) => row.type === "session.cancelled"
+      && (link.progress[row.id]?.done || link.ownChangeIds.includes(row.id))).map((row) => row.type === "session.cancelled" ? row.session.id : ""));
     const bases = new Map<string, string>();
     const eventId = (base: string) => {
       // A value may recur after a later change. Keep retries stable without mistaking that transition for the old event.
@@ -42,6 +45,13 @@ export async function pullFromMindbody(workspaceId: string, repository: Reposito
       const classId = mapping.classId, remote = rows.find((row) => row.Id === classId)!;
       const snapshot = link.snapshot.classes[classId] ??= { visits: {}, waitlist: {}, capacity: remote.MaxCapacity };
       const session = { id: sessionId }, currentVisits = visits.get(classId)!;
+      if (snapshot.cancelled) continue;
+      if (remote.IsCanceled) {
+        const accept = () => { snapshot.cancelled = true; snapshot.visits = {}; snapshot.waitlist = {}; };
+        if (link.progress[`cancel:${classId}`]?.done || ownCancelled.has(sessionId)) accept();
+        else queue.push({ event: { eventId: eventId(`mb:session.cancelled:${classId}`), type: "session.cancelled", session }, accept });
+        continue;
+      }
       const current = Object.fromEntries(currentVisits.map((row) => [row.Id, String(row.ClientId)]));
       const currentWaitlist = Object.fromEntries(waitlist.filter((row) => row.ClassId === classId).map((row) => [row.Id, String(row.ClientId)]));
       const ownAdded = new Set(Object.entries(link.ownWrites).filter(([key, action]) => key.startsWith(`${classId}:`) && action === "added").map(([key]) => key.slice(String(classId).length + 1)));

@@ -26,7 +26,7 @@ export function allChanges(workspaceId: string, repository: Repository = getRepo
   const { state } = repository.requireWorkspace(workspaceId), plans = repository.listPlans(workspaceId);
   const links = repository.listCustomerLinks(workspaceId), ledger = repository.listLedger(workspaceId);
   const sessions = new Map(plans.flatMap((plan) => plan.basis?.sessions ?? []).map((row) => [row.id, row]));
-  for (const row of state.sessions) sessions.set(row.id, row);
+  for (const row of [...(state.cancelledSessions ?? []), ...state.sessions]) sessions.set(row.id, row);
   const changes: SyncChange[] = [];
   for (const plan of plans.filter((row) => row.status !== "proposed" && row.basis)) {
     const basis = plan.basis!, occurredAt = links.find((link) => link.planId === plan.id)?.createdAt ?? plan.createdAt;
@@ -50,14 +50,24 @@ export function allChanges(workspaceId: string, repository: Repository = getRepo
         from: sessionView({ ...original, ...change.before }, basis), to: sessionView({ ...original, ...change.after }, basis) });
     }
   }
-  for (const link of links.filter((row) => row.kind === "choice" && row.reply)) {
-    const reply = link.reply!, booking = state.bookings.find((row) => row.id === link.bookingId);
+  const covers = repository.listCoverLinks(workspaceId);
+  for (const link of covers) {
+    const asked = covers.filter((row) => row.planId === link.planId && row.sessionId === link.sessionId), previous = asked[asked.indexOf(link) - 1];
+    const plan = plans.find((row) => row.id === link.planId && row.status !== "proposed" && row.basis);
+    const change = plan?.sessionChanges.find((row) => row.sessionId === link.sessionId), original = plan?.basis?.sessions.find((row) => row.id === link.sessionId);
+    if (!previous || !change?.after || !original) continue;
+    const before = sessionView({ ...original, ...change.after, instructorId: previous.instructorId }, plan!.basis!);
+    const after = sessionView({ ...original, ...change.after, instructorId: link.instructorId }, plan!.basis!);
+    changes.push({ id: `cover:${link.id}`, occurredAt: link.createdAt, type: "session.moved", session: after, before, after });
+  }
+  for (const link of links.filter((row) => row.kind === "choice")) for (const reply of [...(link.replyHistory ?? []), ...(link.reply ? [link.reply] : [])]) {
+    const booking = state.bookings.find((row) => row.id === link.bookingId);
     const customer = state.customers.find((row) => row.id === booking?.customerId);
     if (!booking || !customer) continue;
-    const base = { id: `choice:${link.id}:${reply.at}`, occurredAt: reply.at, bookingId: booking.id, customer: person(customer) };
+    const base = { id: `choice:${link.id}:${reply.id ?? reply.at}`, occurredAt: reply.at, bookingId: booking.id, customer: person(customer) };
     const target = sessions.get(reply.sessionId ?? "");
-    if (reply.action === "move" && target) changes.push({ ...base, type: "booking.moved", from: sessionView(link.after ?? link.before, state), to: sessionView(target, state) });
-    if (reply.action === "credit") changes.push({ ...base, type: "booking.cancelled", session: sessionView(link.after ?? link.before, state), reason: "credited", amount: reply.amount });
+    if (reply.action === "move" && target) changes.push({ ...base, type: "booking.moved", from: sessionView(reply.fromSession ?? link.after ?? link.before, state), to: sessionView(target, state) });
+    if (reply.action === "credit") changes.push({ ...base, type: "booking.cancelled", session: sessionView(reply.fromSession ?? link.after ?? link.before, state), reason: "credited", amount: reply.amount });
   }
   for (const event of repository.latestMoneyEvents(workspaceId).filter((row) => row.kind === "refund" && !row.partial &&
     ["COMPLETED", "PENDING", "SIMULATED", "VISIT_RETURNED", "CREDIT_RESTORED", "NO_REFUND"].includes(row.status))) {
@@ -87,7 +97,8 @@ export function allChanges(workspaceId: string, repository: Repository = getRepo
     if (booking && customer && session) changes.push({ id: `created:${row.id}`, occurredAt: row.at, type: "booking.created", bookingId: row.id,
       source: row.source, session: sessionView(session, state), customer: person(customer), amount: checkout?.amount ?? booking.amount, entitlement: booking.entitlement });
   }
-  return changes.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt) || a.id.localeCompare(b.id));
+  // Keep durable history order when multiple operations share a clock instant.
+  return changes.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
 }
 export function pendingChanges(workspaceId: string, repository: Repository = getRepository()): SyncChange[] {
   const acks = repository.syncAcks(workspaceId);

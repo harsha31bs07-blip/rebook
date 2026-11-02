@@ -1,20 +1,21 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { bookingCatalog, createOrder } from "../checkout/service";
+import { bookingCatalog, createOrder, type CheckoutInput } from "../checkout/service";
 import { ChoiceInputSchema, ChoiceTokenSchema, customerChoice, submitChoice } from "../choices/service";
 import { approvalLink, getOrder, PayPalError } from "../paypal/client";
 import { getRepository, StoreError, type Repository } from "../store";
 import { limits } from "../api/limits";
 import { joinWaitlist } from "../waitlist/service";
 import { localClass } from "../webmcp/tools";
+import { toCents } from "../domain/time";
 
 /**
  * A remote MCP server per studio (the public booking capability), so a customer's own AI agent can find, book or
  * rebook a class. Money rule: the agent never pays. Booking returns a PayPal link the person approves on PayPal;
- * a refund needs the customer's explicit confirmation passed back as confirm: true.
+ * refunds and cheaper moves return the person's private page for approval.
  */
 export const MCP_VERSIONS = ["2025-06-18", "2025-03-26"];
-const INSTRUCTIONS = "Rebook studio tools. You can list classes, book one for the person you help, join a waitlist, or answer their private rebooking link. You never pay: book_class returns a PayPal link the person opens to approve the payment. A refund needs the person's explicit confirmation of the amount first.";
+const INSTRUCTIONS = "Rebook studio tools. You can list classes, book one for the person you help, join a waitlist, or answer their private rebooking link. You never pay: book_class returns a PayPal link the person opens to approve the payment. Refunds and cheaper moves that return money need the person: give them the returned reviewUrl to confirm on their private page. You cannot confirm for them. Returning a pack or membership visit applies directly.";
 type Context = { workspaceId: string; bookingId: string; origin: string; ip?: string; repository: Repository };
 type Result = { text: string; data: unknown };
 const str = (maxLength: number, description: string) => ({ type: "string", maxLength, description });
@@ -39,10 +40,10 @@ const tools = [
     inputSchema: { type: "object", properties: { link: str(300, "The person's private link or its token") }, required: ["link"], additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false } },
   { name: "answer_rebooking", title: "Answer a rebooking link",
-    description: "Answer the person's private rebooking link: keep, move (with classId from get_rebooking_options), credit, or refund. A refund needs confirm: true, set only after the person explicitly confirmed the amount.",
+    description: "Answer the person's private rebooking link: keep, move (with classId from get_rebooking_options), credit, or refund. Refunds and cheaper moves returning money return needs_person with reviewUrl: give the person that link to confirm on their private page. You cannot confirm for them. Keep, moves with zero difference, studio credit, and pack or membership visit returns apply directly.",
     inputSchema: { type: "object", properties: { link: str(300, "The person's private link or its token"), option: { type: "string", enum: ["keep", "move", "credit", "refund"] },
-      classId: str(100, "For move: a classId from get_rebooking_options"), confirm: { type: "boolean", description: "Refund only: the person confirmed the refund amount" } }, required: ["link", "option"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } },
+      classId: str(100, "For move: a classId from get_rebooking_options") }, required: ["link", "option"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ] as const;
 
 const money = (value: string) => `$${value}`;
@@ -58,6 +59,20 @@ function findClass(context: Context, classId: string) {
   return found;
 }
 
+const bookingOrders = new WeakMap<Repository, Map<string, ReturnType<typeof createOrder>>>();
+function agentOrder(context: Context, input: CheckoutInput, requestId: string) {
+  let pending = bookingOrders.get(context.repository);
+  if (!pending) { pending = new Map(); bookingOrders.set(context.repository, pending); }
+  const key = `${context.workspaceId}:${requestId}`, existing = pending.get(key);
+  if (existing) return existing;
+  // Share the in-flight request too: checkout's workspace lease rejects concurrent writers.
+  const order = createOrder(context.workspaceId, input, requestId, context.repository,
+    { returnUrl: `${context.origin}/b/${context.bookingId}/paid`, cancelUrl: `${context.origin}/b/${context.bookingId}`,
+      brandName: context.repository.requireReadyWorkspace(context.workspaceId).state.studio.name }).finally(() => pending.delete(key));
+  pending.set(key, order);
+  return order;
+}
+
 async function call(name: string, args: Record<string, unknown>, context: Context): Promise<Result> {
   if (name === "list_classes") {
     const input = z.strictObject({ day: z.string().max(20).optional(), classType: z.string().max(20).optional(), query: z.string().max(80).optional() }).parse(args);
@@ -71,21 +86,26 @@ async function call(name: string, args: Record<string, unknown>, context: Contex
   if (name === "book_class") {
     const input = z.strictObject({ classId: z.string().min(1).max(100), ...Person }).parse(args);
     const found = findClass(context, input.classId);
-    if (found.status === "paused") throw new StoreError(409, "This class is paused while the studio confirms a change. Try another class.");
     const { state } = context.repository.requireReadyWorkspace(context.workspaceId), email = input.email.toLowerCase();
     const person = state.customers.find((customer) => customer.email.toLowerCase() === email);
     if (person && state.bookings.some((booking) => booking.sessionId === input.classId && booking.customerId === person.id && ["confirmed", "moved"].includes(booking.status))) {
       return { data: { status: "already_booked", class: found }, text: `${input.name} is already booked in ${found.title} (${found.weekday} ${found.startTime}). Nothing more to pay.` };
     }
-    if (found.seatsLeft <= 0) throw new StoreError(409, "This class is full. Use join_waitlist to join its waitlist.");
+    const reservations = context.repository.listCheckout(context.workspaceId).filter((row) => row.sessionId === input.classId && row.customer.email.toLowerCase() === email);
+    if (reservations.some((row) => row.status === "capturing")) return { data: { status: "confirming_payment", class: found },
+      text: `The payment for ${found.title} is being confirmed. Check its status before starting another booking.` };
+    const active = reservations.find((row) => row.status === "pending" && row.expiresAt > Date.now());
+    if (!active && found.status === "paused") throw new StoreError(409, "This class is paused while the studio confirms a change. Try another class.");
+    if (!active && found.seatsLeft <= 0) throw new StoreError(409, "This class is full. Use join_waitlist to join its waitlist.");
     // Agent bookings hold seats like the booking page, so they share its checkout limits.
-    limits.take([{ key: `checkout-client:${context.ip ?? "agent"}`, max: 60, ms: 60_000 }, { key: `checkout-workspace:${context.workspaceId}`, max: 120, ms: 60_000 }, { key: "checkout-global", max: 600, ms: 60_000 }]);
-    // One hold per person and class per 10-minute window: a retried call returns the same PayPal link.
-    const window = Math.floor(Date.now() / 600_000);
-    const requestId = `agent-${createHash("sha256").update(`${input.classId}|${input.email.toLowerCase()}|${window}`).digest("hex").slice(0, 32)}`;
+    if (!active) limits.take([{ key: `checkout-client:${context.ip ?? "agent"}`, max: 60, ms: 60_000 }, { key: `checkout-workspace:${context.workspaceId}`, max: 120, ms: 60_000 }, { key: "checkout-global", max: 600, ms: 60_000 }]);
+    const generation = reservations.filter((row) => row.status === "failed" || (row.status === "pending" && row.expiresAt <= Date.now())).length;
+    const requestId = active?.requestId ?? `agent-${createHash("sha256").update(`${input.classId}|${email}|${generation}`).digest("hex")}`;
     const studio = state.studio;
-    const order = await createOrder(context.workspaceId, { sessionId: input.classId, customer: { name: input.name, email: input.email } }, requestId, context.repository,
-      { returnUrl: `${context.origin}/b/${context.bookingId}/paid`, cancelUrl: `${context.origin}/b/${context.bookingId}`, brandName: studio.name });
+    const offer = active?.waitlistOfferId && context.repository.listWaitlistOffers(context.workspaceId).find((item) => item.id === active.waitlistOfferId);
+    const order = active?.orderId ? { orderId: active.orderId } : await agentOrder(context,
+      { sessionId: input.classId, customer: active?.customer ?? { name: input.name, email: input.email }, availability: active?.availability,
+        ...(offer ? { waitlistToken: context.repository.waitlistToken(offer) } : {}) }, requestId);
     const approvalUrl = order.approvalUrl ?? approvalLink(await getOrder(order.orderId));
     if (!approvalUrl) throw new StoreError(502, "PayPal did not return an approval link. Try again.");
     const hold = context.repository.checkoutByOrder(context.workspaceId, order.orderId);
@@ -110,14 +130,19 @@ async function call(name: string, args: Record<string, unknown>, context: Contex
       text: `${view.studio.name}: ${view.message}\n${view.canChoose ? `Options: ${view.after ? `keep ${view.after.title} on ${when(view.after.start)}; ` : ""}move to ${moves.length ? moves.slice(0, 8).map((item) => `${item.title} ${item.when} (classId ${item.classId})`).join(", ") : "no other class with room"}; ${view.entitlement ? "" : "studio credit; "}refund: ${refund}.` : view.reply ? `Already answered: ${view.reply.action}.` : "This link can no longer be answered."}` };
   }
   if (name === "answer_rebooking") {
-    const input = z.strictObject({ link: z.unknown(), option: z.enum(["keep", "move", "credit", "refund"]), classId: z.string().max(100).optional(), confirm: z.boolean().optional() }).parse(args);
-    if (input.option === "refund" && input.confirm !== true) {
-      const view = await customerChoice(token, context.repository);
-      const amount = view.entitlement ? `the visit back to their ${view.entitlement.name}` : money(view.creditRefundable ?? view.refundable);
-      return { data: { status: "needs_confirmation", option: "refund", amount: view.entitlement ? undefined : view.creditRefundable ?? view.refundable },
-        text: `Before refunding, ask the person to confirm: ${amount}${view.entitlement ? "" : ` back to ${view.paidWith === "credit" ? "studio credit" : "their original payment"}`}. Then call answer_rebooking again with confirm: true.` };
-    }
+    const input = z.strictObject({ link: z.unknown(), option: z.enum(["keep", "move", "credit", "refund"]), classId: z.string().max(100).optional() }).parse(args);
     if (input.option === "move" && !input.classId) throw new StoreError(400, "Moving needs a classId from get_rebooking_options.");
+    const current = await customerChoice(token, context.repository);
+    const target = input.option === "move" ? current.alternatives.find((item) => item.id === input.classId) : undefined;
+    if (input.option === "move" && !target) throw new StoreError(409, "This class is full or no longer eligible. Please choose another class.");
+    if ((input.option === "refund" && !current.entitlement) || (target && toCents(target.difference) > 0)) {
+      const amount = target?.difference ?? current.creditRefundable ?? current.refundable;
+      const destination = current.paidWith === "credit" ? "studio credit" : "their original payment";
+      const reason = target ? "Moving to this cheaper class returns a partial refund." : "A refund needs the person to approve.";
+      const reviewUrl = `${context.origin}/c/${token}`;
+      return { data: { status: "needs_person", reason, amount, destination, reviewUrl },
+        text: `${reason} Give the person this link to confirm ${money(amount)} back to ${destination} on their private page:\n${reviewUrl}\nYou cannot confirm for them.` };
+    }
     const choice = ChoiceInputSchema.parse(input.option === "move" ? { action: "move", sessionId: input.classId } : { action: input.option });
     const view = await submitChoice(token, choice, context.repository);
     const receipt = view.receipt ? ` Refund status: ${view.receipt.status.toLowerCase()}${view.receipt.paypalId ? ` (PayPal ${view.receipt.paypalId})` : ""}.` : "";

@@ -16,12 +16,25 @@ import { limits } from "../lib/api/limits";
 import { pausedSessionIds } from "../lib/checkout/service";
 import { coverAttendees, coverFee, payRule } from "../lib/recovery/pay-rules";
 import { PATCH as payRulePatch } from "../app/api/workspaces/[id]/instructors/[instructorId]/pay/route";
+import { request } from "../lib/paypal/client";
 
 let repository: Repository, directory: string, workspaceId: string, planId: string, sessionId: string, token: string;
 let payouts: (init: RequestInit) => Response | Promise<Response>;
 const calls: { url: string; init: RequestInit }[] = [];
 const created = (batch = "BATCH-1") => Response.json({ batch_header: { payout_batch_id: batch, batch_status: "PENDING" } }, { status: 201 });
 const payoutRows = () => repository.listCoverPayouts(workspaceId);
+const duplicate = (href = "https://api.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL") => Response.json({
+  name: "USER_BUSINESS_ERROR", message: "User business error.", debug_id: "debug-duplicate",
+  details: [{ field: "SENDER_BATCH_ID", location: "body", issue: "Batch with given sender_batch_id already exists",
+    link: [{ href, rel: "self", method: "GET", encType: "application/json" }] }], links: [],
+}, { status: 400 });
+function originalPayout(overrides: Record<string, unknown> = {}, senderBatchId = payoutRows()[0].requestId) {
+  const row = payoutRows()[0];
+  return Response.json({ batch_header: { payout_batch_id: "BATCH-ORIGINAL", batch_status: "SUCCESS", sender_batch_header: { sender_batch_id: senderBatchId } },
+    items: [{ payout_item_id: "ITEM-ORIGINAL", transaction_status: "SUCCESS", payout_item: {
+      sender_item_id: row.requestId, receiver: "sandbox-payee@example.com", amount: { value: row.amount, currency: "USD" }, ...overrides,
+    } }] });
+}
 
 async function approved(confirm = false, configure?: (state: ReturnType<typeof seedStudio>) => void) {
   const state = seedStudio(); configure?.(state); for (const booking of state.bookings) booking.payment!.simulated = true;
@@ -212,6 +225,98 @@ it("replays the same PayPal-Request-Id after a lost response instead of paying t
   await payCover(workspaceId, planId, sessionId, repository);
   expect(payoutRows()[0]).toMatchObject({ status: "PENDING", batchId: "BATCH-ORIGINAL", attempt: 1 });
   expect(new Set(posts().map(requestId)).size).toBe(1);
+});
+
+it.each(["api.sandbox.paypal.com", "api-m.sandbox.paypal.com"])("recovers the original batch from a duplicate link on %s after a lost response", async (host) => {
+  await approved(true);
+  let batches = 0;
+  payouts = () => { batches += 1; throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  payouts = (init) => init.method === "GET" ? originalPayout() : duplicate(`https://${host}/v1/payments/payouts/BATCH-ORIGINAL`);
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()).toEqual([expect.objectContaining({ status: "PENDING", batchId: "BATCH-ORIGINAL", attempt: 1 })]);
+  expect(payoutRows()[0].error).toBeUndefined();
+  expect(batches).toBe(1);
+  expect(posts()).toHaveLength(2); expect(new Set(posts().map(requestId)).size).toBe(1);
+  const gets = calls.filter((call) => call.init.method === "GET");
+  expect(gets).toHaveLength(1); expect(gets[0].url).toBe("https://api-m.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL");
+  const timers = globalThis as typeof globalThis & { rebookCoverRefresh?: Map<string, number> }; timers.rebookCoverRefresh?.clear();
+  await refreshCoverPayouts(workspaceId, repository);
+  expect(payoutRows()).toEqual([expect.objectContaining({ status: "SUCCESS", itemId: "ITEM-ORIGINAL" })]);
+  expect(coverView(token, repository).payout?.status).toBe("SUCCESS");
+  expect(posts()).toHaveLength(2);
+});
+
+it("treats a duplicate answer on the first send as an existing payout rather than a rejection", async () => {
+  await approved(true);
+  payouts = (init) => init.method === "GET" ? originalPayout() : duplicate();
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()).toEqual([expect.objectContaining({ status: "PENDING", batchId: "BATCH-ORIGINAL", attempt: 1 })]);
+  expect(posts()).toHaveLength(1);
+});
+
+it.each([
+  ["sender batch id", {}, "another-request"],
+  ["amount", { amount: { value: "36.00", currency: "USD" } }],
+  ["currency", { amount: { value: "35.00", currency: "EUR" } }],
+  ["receiver", { receiver: "someone-else@example.com" }],
+  ["sender item id", { sender_item_id: "another-item" }],
+  ["missing identity", { sender_item_id: undefined, receiver: undefined }],
+] as const)("keeps a duplicate with mismatched %s unresolved and never sends it again", async (_field, overrides, senderBatchId?: string) => {
+  await approved(true);
+  payouts = (init) => init.method === "GET" ? originalPayout(overrides, senderBatchId) : duplicate();
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502, message: expect.stringContaining("could not be verified") });
+  expect(payoutRows()).toEqual([expect.objectContaining({ status: "REQUESTED", batchId: "BATCH-ORIGINAL", attempt: 1, error: expect.stringContaining("could not be verified") })]);
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  const timers = globalThis as typeof globalThis & { rebookCoverRefresh?: Map<string, number> }; timers.rebookCoverRefresh?.clear();
+  await refreshCoverPayouts(workspaceId, repository);
+  expect(payoutRows()[0].status).toBe("REQUESTED");
+  expect(posts()).toHaveLength(1);
+  expect(calls.filter((call) => call.init.method === "GET")).toHaveLength(2);
+});
+
+it.each([
+  "https://evil.example/v1/payments/payouts/BATCH-ORIGINAL",
+  "https://api.sandbox.paypal.com.evil.example/v1/payments/payouts/BATCH-ORIGINAL",
+  "https://api.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL/items",
+  "https://api.sandbox.paypal.com/v1/payments/payouts/../BATCH-ORIGINAL",
+  "https://api.sandbox.paypal.com/v1/payments/payouts/BATCH%2FORIGINAL",
+  "https://api.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL?other=batch",
+  "https://api.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL\n",
+  "https://api.sandbox.paypal.com@evil.example/v1/payments/payouts/BATCH-ORIGINAL",
+  "http://api.sandbox.paypal.com/v1/payments/payouts/BATCH-ORIGINAL",
+  "not a URL",
+])("refuses an unsafe or malformed duplicate link: %s", async (href) => {
+  await approved(true);
+  payouts = () => duplicate(href);
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()).toEqual([expect.objectContaining({ status: "REQUESTED", error: expect.stringContaining("could not be verified") })]);
+  expect(payoutRows()[0].batchId).toBeUndefined();
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 409 });
+  expect(posts()).toHaveLength(1); expect(calls.filter((call) => call.init.method === "GET")).toHaveLength(0);
+  expect(calls.every((call) => new URL(call.url).host === "api-m.sandbox.paypal.com")).toBe(true);
+});
+
+it("remembers the duplicate batch if its lookup fails, then retries only the lookup", async () => {
+  await approved(true);
+  payouts = (init) => { if (init.method === "GET") throw new Error("socket hang up"); return duplicate(); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", batchId: "BATCH-ORIGINAL" });
+  payouts = (init) => { expect(init.method).toBe("GET"); return originalPayout(); };
+  await payCover(workspaceId, planId, sessionId, repository);
+  expect(payoutRows()[0]).toMatchObject({ status: "PENDING", batchId: "BATCH-ORIGINAL" });
+  expect(posts()).toHaveLength(1);
+});
+
+it("parses malformed PayPal error details defensively without logging the structured body", async () => {
+  payouts = () => Response.json({ name: "USER_BUSINESS_ERROR", details: [null, "bad", 4, { field: 4, issue: null, link: [null, "bad", { href: 4 }] },
+    { field: "SENDER_BATCH_ID", issue: "Batch with given sender_batch_id already exists", link: [null, { href: "private-link", rel: "self", method: "GET" }] }] }, { status: 400 });
+  await expect(request("/v1/payments/payouts")).rejects.toMatchObject({ name: "USER_BUSINESS_ERROR", details: [
+    { field: undefined, issue: undefined, link: [] },
+    { field: "SENDER_BATCH_ID", issue: "Batch with given sender_batch_id already exists", link: [{ href: "private-link", rel: "self", method: "GET" }] },
+  ] });
+  expect(console.error).toHaveBeenCalledWith("PayPal request failed", { status: 400, name: "USER_BUSINESS_ERROR", debugId: undefined });
+  expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("private-link");
 });
 
 it("marks a definitive PayPal rejection failed and pays again with a new request id", async () => {

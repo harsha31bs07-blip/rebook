@@ -42,7 +42,8 @@ export type CustomerLink = {
   sentAt?: string;
   // Set when the message changed after it may have been sent (e.g. a new substitute); the owner sends it again.
   revisedAt?: string;
-  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string };
+  reply?: { action: "keep" | "move" | "refund" | "credit"; sessionId?: string; at: string; amount: string; requestId?: string; id?: string; fromSession?: State["sessions"][number] };
+  replyHistory?: NonNullable<CustomerLink["reply"]>[];
 };
 export type Credit = {
   id: string; tokenHash: string; workspaceId: string; linkId: string; bookingId: string; customerId: string;

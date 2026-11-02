@@ -6,6 +6,8 @@ import { createMindbodyWorkspace } from "../lib/connectors/mindbody/import";
 import { pullFromMindbody } from "../lib/connectors/mindbody/pull";
 import { closeRepository, getRepository, type Repository } from "../lib/store";
 import { sandbox, reply } from "./mindbody-fixture";
+import { bookingCatalog } from "../lib/checkout/service";
+import { replan } from "../lib/solver/replan";
 
 let directory: string, repository: Repository, api: ReturnType<typeof sandbox>, id: string;
 const state = () => repository.requireWorkspace(id).state;
@@ -25,10 +27,9 @@ it("pulls a new visit with a deterministic id and never repeats it", async () =>
   expect(state().bookings.find((row) => row.customerId === customer.id)).toMatchObject({ payment: { simulated: true } });
   expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([]);
 });
-it.each(["removed", "late-cancelled", "class-cancelled"])("pulls %s visits as booking cancellations", async (kind) => {
+it.each(["removed", "late-cancelled"])("pulls %s visits as booking cancellations", async (kind) => {
   if (kind === "removed") api.visits[19167].shift();
-  else if (kind === "late-cancelled") api.visits[19167][0].LateCancelled = true;
-  else api.classes[0].IsCanceled = true;
+  else api.visits[19167][0].LateCancelled = true;
   const result = await pullFromMindbody(id, repository, api.client);
   expect(result.results).toContainEqual({ eventId: "mb:booking.cancelled:19167:100015648:100343877", status: "applied" });
   expect(state().bookings[0].status).toBe("cancelled");
@@ -88,4 +89,32 @@ it("recovers duplicate inbound delivery after a crash before snapshot persistenc
   repository.saveMindbodyLink(id, before);
   expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:booking.created:19167:700:701", status: "duplicate" }]);
   expect(repository.mindbodyLink(id)!.snapshot.classes[19167].visits[701]).toBe("700");
+});
+it("takes an externally cancelled class off sale once and never revives it from a later roster", async () => {
+  api.classes[0].IsCanceled = true;
+  const before = repository.listLedger(id), sessionId = state().sessions[0].id;
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:session.cancelled:19167", status: "applied" }]);
+  expect(bookingCatalog(id, repository).sessions.some((row) => row.id === sessionId)).toBe(false);
+  expect(state().bookings.filter((row) => row.sessionId === sessionId).every((row) => row.status === "cancelled")).toBe(true);
+  expect(repository.listLedger(id)).toEqual(before);
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([]);
+  api.classes[0].IsCanceled = false;
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([]);
+  expect(bookingCatalog(id, repository).sessions.some((row) => row.id === sessionId)).toBe(false);
+});
+it("retries a cancelled class after the owner discards an open preview", async () => {
+  const initial = state(), session = initial.sessions[0];
+  const plan = repository.createPlan(id, replan(initial, { kind: "instructor_unavailable", instructorId: session.instructorId, from: session.start, to: session.end }));
+  api.classes[0].IsCanceled = true;
+  const before = repository.mindbodyLink(id)!.snapshot.classes[19167];
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:session.cancelled:19167", status: "rejected", message: "A recovery preview is open; approve or discard it first." }]);
+  expect(repository.mindbodyLink(id)!.snapshot.classes[19167]).toEqual(before);
+  repository.discardPlan(id, plan.id);
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:session.cancelled:19167", status: "applied" }]);
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([]);
+});
+it("still imports an external class cancellation after an own booking removal", async () => {
+  const link = repository.mindbodyLink(id)!; link.ownWrites["19167:100015648"] = "removed"; repository.saveMindbodyLink(id, link);
+  api.classes[0].IsCanceled = true;
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:session.cancelled:19167", status: "applied" }]);
 });

@@ -17,9 +17,9 @@ export function packReturns(ledger: LedgerEvent[]): LedgerEvent[] {
 export function packBalance(state: State, ledger: LedgerEvent[], customerId: string, packName: string): number | null {
   const baseline = state.syncPackBalances?.find((row) => row.customerId === customerId);
   const used = state.bookings.filter((booking) => booking.customerId === customerId && booking.packVisitUsed && booking.entitlement?.kind === "pack");
-  // A synced baseline already includes every change the booking system has acknowledged.
+  // Only acknowledgements captured when the baseline arrived are included in that snapshot.
   if (baseline) return baseline.visitsLeft - used.filter((booking) => !baseline.acknowledgedBookingIds.includes(booking.id)).length
-    + packReturns(ledger).filter((event) => !baseline.acknowledgedBookingIds.includes(event.bookingId)
+    + packReturns(ledger).filter((event) => !(baseline.acknowledgedReturnBookingIds ?? baseline.acknowledgedBookingIds).includes(event.bookingId)
     && state.bookings.some((booking) => booking.id === event.bookingId && booking.customerId === customerId && booking.entitlement?.kind === "pack")).length;
   const bookings = state.bookings.filter((booking) => booking.customerId === customerId && booking.entitlement?.kind === "pack" && booking.entitlement.name === packName);
   const balances = bookings.flatMap((booking) => booking.entitlement?.visitsLeft === undefined ? [] : [booking.entitlement.visitsLeft]);

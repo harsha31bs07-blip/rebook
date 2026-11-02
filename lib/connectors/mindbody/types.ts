@@ -5,7 +5,7 @@ export type MbVisit = { Id: number; ClientId: string; LateCancelled?: boolean; S
 export type MbWaitlist = { Id: number; ClassId: number; ClientId: string; Client?: MbPerson };
 export type MbClass = { Id: number; StartDateTime: string; EndDateTime: string; ClassDescription: { Id: number; Name: string; Active?: boolean }; Staff: MbPerson;
   Location: { Id: number; Name: string }; Resource?: { Id: number; Name: string } | null; MaxCapacity: number; TotalBooked: number; IsCanceled?: boolean };
-export type ClassSnapshot = { visits: Record<string, string>; waitlist: Record<string, string>; capacity: number };
+export type ClassSnapshot = { visits: Record<string, string>; waitlist: Record<string, string>; capacity: number; cancelled?: true };
 export type MindbodyLink = {
   siteId: number; locationId: number; location: string; week: string;
   sessions: Record<string, { classId: number; descriptionId: number; locationId: number; resourceId?: number; staffId: number; inactive?: true }>;

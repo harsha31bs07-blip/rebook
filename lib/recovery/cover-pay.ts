@@ -3,7 +3,7 @@ import type { Session, State } from "../domain/types";
 import { isActiveBooking } from "../solver/score";
 import { feasibilityErrors } from "../solver/validate";
 import { PayPalError } from "../paypal/client";
-import { createPayout, getPayout } from "../paypal/payouts";
+import { createPayout, duplicatePayoutBatch, getPayout } from "../paypal/payouts";
 import { getRepository, StoreError, withWorkspaceLock, type CoverLink, type CoverPayout, type Repository, type StoredPlan } from "../store";
 import { planCovers } from "./covers";
 import { coverAttendees, coverFee, payRule, PayRuleUpdateSchema } from "./pay-rules";
@@ -151,6 +151,7 @@ export async function updateInstructorPay(workspaceId: string, instructorId: str
 
 /** Replays of an unconfirmed payout stop a day inside PayPal's 30-day duplicate check on sender_batch_id. */
 const PAYOUT_REPLAY_DAYS = 29;
+const PAYOUT_VERIFICATION_ERROR = "PayPal reported an existing payout, but its details could not be verified. Check PayPal before paying another way.";
 
 /** Owner-initiated PayPal payout. A REQUESTED row is written first; an unknown outcome replays the same request id. */
 export async function payCover(workspaceId: string, planId: string, sessionId: string, repository = getRepository()) {
@@ -169,6 +170,7 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
     const payout = repository.transaction(() => {
       const previous = repository.listCoverPayouts(workspaceId).find((item) => item.planId === planId && item.sessionId === sessionId);
       if (previous && previous.status !== "REQUESTED" && payoutLocks(previous)) throw new StoreError(409, previous.status === "SUCCESS" ? "This cover is already paid." : "This payout is already with PayPal.");
+      if (previous?.status === "REQUESTED" && !previous.batchId && previous.error === PAYOUT_VERIFICATION_ERROR) throw new StoreError(409, PAYOUT_VERIFICATION_ERROR);
       // PayPal rejects a repeated sender_batch_id for 30 days. Past that, a replay could pay twice, so stop and ask for a check.
       if (previous?.status === "REQUESTED" && Date.parse(previous.createdAt) + PAYOUT_REPLAY_DAYS * 86_400_000 <= Date.now()) {
         throw new StoreError(409, "PayPal never confirmed this payout and it is too old to resend safely. Check PayPal before paying another way.");
@@ -183,13 +185,33 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
     });
     const studio = repository.requireWorkspace(workspaceId).state.studio.name;
     try {
-      const result = await createPayout({ requestId: payout.requestId, receiver, amount: payout.amount, subject: `${studio} cover pay`,
-        note: `Cover: ${session?.title ?? "class"} ${session ? new Date(session.start).toISOString().slice(0, 10) : ""}`.trim() });
+      let result;
+      let recovered = !!payout.batchId;
+      try {
+        result = payout.batchId ? await getPayout(payout.batchId) : await createPayout({ requestId: payout.requestId, receiver, amount: payout.amount, subject: `${studio} cover pay`,
+          note: `Cover: ${session?.title ?? "class"} ${session ? new Date(session.start).toISOString().slice(0, 10) : ""}`.trim() });
+      } catch (error) {
+        const duplicate = !payout.batchId && duplicatePayoutBatch(error);
+        if (!duplicate) throw error;
+        // Keep the known batch even if its lookup fails; another owner click must only read it.
+        payout.batchId = duplicate.batchId; payout.error = PAYOUT_VERIFICATION_ERROR; payout.updatedAt = new Date().toISOString();
+        repository.renewLock(workspaceId, owner);
+        repository.saveCoverPayout(payout);
+        if (!payout.batchId) throw new Error(PAYOUT_VERIFICATION_ERROR);
+        recovered = true;
+        result = await getPayout(payout.batchId);
+      }
+      if (recovered && (result.senderBatchId !== payout.requestId || result.senderItemId !== payout.requestId || result.amount?.currency !== "USD"
+        || result.amount.value !== payout.amount || result.receiver !== receiver)) throw new Error(PAYOUT_VERIFICATION_ERROR);
       repository.renewLock(workspaceId, owner);
       repository.saveCoverPayout({ ...payout, status: "PENDING", batchId: result.batchId, error: undefined, updatedAt: new Date().toISOString() });
     } catch (error) {
       // Only a rejection of a first send proves no money moved. A replay of an unknown attempt (e.g. PayPal's duplicate
       // batch answer) may mean the original payout exists, so it stays REQUESTED with the same id and never gets a new one.
+      if (payout.error === PAYOUT_VERIFICATION_ERROR) {
+        repository.saveCoverPayout({ ...payout, updatedAt: new Date().toISOString() });
+        throw new StoreError(502, PAYOUT_VERIFICATION_ERROR);
+      }
       const replay = payout.createdAt !== payout.updatedAt;
       if (!replay && error instanceof PayPalError && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status) && !/DUPLICATE/i.test(`${error.name} ${error.message}`)) {
         repository.saveCoverPayout({ ...payout, status: "FAILED", error: `PayPal declined the payout (${error.name}).`, updatedAt: new Date().toISOString() });

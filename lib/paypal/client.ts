@@ -3,8 +3,9 @@ import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController,
 import type { ApiResponse, CapturedPayment, OAuthToken, Order, Refund, SearchResponse } from "@paypal/paypal-server-sdk";
 import { MoneySchema } from "../domain/schemas";
 
+type PayPalErrorDetail = { field?: string; issue?: string; link?: { href: string; rel?: string; method?: string }[] };
 export class PayPalError extends Error {
-  constructor(public status: number, name: string, message: string, public debugId?: string, public issues: string[] = []) {
+  constructor(public status: number, name: string, message: string, public debugId?: string, public issues: string[] = [], public details?: PayPalErrorDetail[]) {
     super(message);
     this.name = name;
   }
@@ -135,8 +136,18 @@ async function read<T>(response: Response): Promise<T> {
   const parsed = await response.json().catch(() => ({}));
   const body = parsed && typeof parsed === "object" ? parsed : {};
   if (!response.ok) {
+    const details = Array.isArray(body.details) ? body.details.flatMap((detail: unknown): PayPalErrorDetail[] => {
+      if (!detail || typeof detail !== "object") return [];
+      const { field, issue, link } = detail as Record<string, unknown>;
+      return [{ field: typeof field === "string" ? field : undefined, issue: typeof issue === "string" ? issue : undefined,
+        link: Array.isArray(link) ? link.flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== "object") return [];
+          const { href, rel, method } = entry as Record<string, unknown>;
+          return typeof href === "string" ? [{ href, rel: typeof rel === "string" ? rel : undefined, method: typeof method === "string" ? method : undefined }] : [];
+        }) : undefined }];
+    }) : undefined;
     const error = new PayPalError(response.status, typeof body.name === "string" ? body.name : "PAYPAL_ERROR",
-      typeof body.message === "string" ? body.message : "PayPal request failed", debugId);
+      typeof body.message === "string" ? body.message : "PayPal request failed", debugId, [], details);
     console.error("PayPal request failed", { status: error.status, name: error.name, debugId });
     throw error;
   }

@@ -1,5 +1,5 @@
 import { setSdkTransport } from "./paypalTransport";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,8 @@ import { handleMcp } from "../lib/agents/mcp";
 import { limits } from "../lib/api/limits";
 import { DELETE, GET, POST } from "../app/api/mcp/[bookingId]/route";
 import PayPalReturn from "../components/booking/paypal-return";
+import { confirmOrder } from "../lib/checkout/service";
+import { customerChoice, submitChoice } from "../lib/choices/service";
 
 type Body = { purchase_units: unknown[]; payment_source?: { paypal?: { experience_context?: Record<string, string> } } };
 let directory: string, repository: Repository, workspaceId: string, bookingId: string;
@@ -94,6 +96,51 @@ it("does not book or charge someone who already holds a seat in the class", asyn
   const result = await tool("book_class", { classId: yoga.classId, name: person.name, email: person.email.toUpperCase() });
   expect(result.data).toMatchObject({ status: "already_booked" }); expect(result.text).toMatch(/already booked/); expect(orders.size).toBe(0);
 });
+it("reuses a hold across clock buckets and name or email spelling changes", async () => {
+  const yoga = await yogaClass(), args = { classId: yoga.classId, name: "Avery Lane", email: "avery@example.com" };
+  vi.setSystemTime(new Date("2026-11-01T12:09:59Z"));
+  const first = await tool("book_class", args);
+  vi.setSystemTime(new Date("2026-11-01T12:10:01Z"));
+  const retry = await tool("book_class", { ...args, name: "Avery L.", email: "AVERY@example.com" });
+  expect(retry.isError).toBe(false); expect(retry.data.approvalUrl).toBe(first.data.approvalUrl);
+  expect(retry.data.holdExpiresAt).toBe(first.data.holdExpiresAt); expect(orders.size).toBe(1);
+  expect(repository.listCheckout(workspaceId)[0].requestId).toBe(`agent-${createHash("sha256").update(`${yoga.classId}|avery@example.com|0`).digest("hex")}`);
+});
+it("returns the same PayPal link for a retry holding the last seat", async () => {
+  const yoga = await yogaClass(), state = repository.requireWorkspace(workspaceId).state;
+  state.sessions.find((item) => item.id === yoga.classId)!.capacity = state.bookings.filter((item) => item.sessionId === yoga.classId).length + 1;
+  repository.saveState(workspaceId, state);
+  const args = { classId: yoga.classId, name: "Avery", email: "avery@example.com" }, first = await tool("book_class", args);
+  const retry = await tool("book_class", args);
+  expect(retry.isError).toBe(false); expect(retry.data.approvalUrl).toBe(first.data.approvalUrl); expect(orders.size).toBe(1);
+});
+it.each(["expiry", "failure"])("starts a new generation after hold %s", async (finished) => {
+  const yoga = await yogaClass(), args = { classId: yoga.classId, name: "Avery", email: "avery@example.com" };
+  const first = await tool("book_class", args), hold = repository.listCheckout(workspaceId)[0];
+  if (finished === "expiry") vi.setSystemTime(hold.expiresAt);
+  else repository.saveCheckout({ ...hold, status: "failed" });
+  const retry = await tool("book_class", args);
+  expect(retry.isError).toBe(false); expect(retry.data.approvalUrl).not.toBe(first.data.approvalUrl); expect(orders.size).toBe(2);
+  expect(repository.listCheckout(workspaceId)[1].requestId).toBe(`agent-${createHash("sha256").update(`${yoga.classId}|avery@example.com|1`).digest("hex")}`);
+});
+it("coalesces concurrent booking calls into one payable order", async () => {
+  const yoga = await yogaClass(), args = { classId: yoga.classId, name: "Avery", email: "avery@example.com" };
+  const [first, second] = await Promise.all([tool("book_class", args), tool("book_class", { ...args, name: "Avery L." })]);
+  expect(first.isError).toBe(false); expect(second.isError).toBe(false);
+  expect(first.data.approvalUrl).toBe(second.data.approvalUrl); expect(orders.size).toBe(1); expect(repository.listCheckout(workspaceId)).toHaveLength(1);
+});
+it("waits for a capturing payment and reports already booked after confirmation", async () => {
+  const yoga = await yogaClass(), args = { classId: yoga.classId, name: "Avery", email: "avery@example.com" };
+  await tool("book_class", args);
+  const hold = repository.listCheckout(workspaceId)[0]; repository.saveCheckout({ ...hold, status: "capturing" });
+  vi.setSystemTime(hold.expiresAt + 1);
+  const pending = await tool("book_class", args);
+  expect(pending.data).toMatchObject({ status: "confirming_payment" }); expect(pending.text).toMatch(/being confirmed/); expect(orders.size).toBe(1);
+  const order = orders.get(hold.orderId!)!;
+  confirmOrder(hold, { ...order, status: "COMPLETED", purchase_units: [{ ...(order.purchase_units[0] as object),
+    payments: { captures: [{ id: "CAPTURE-AGENT", status: "COMPLETED", amount: { currency_code: "USD", value: hold.amount } }] } }] }, repository);
+  expect((await tool("book_class", args)).data).toMatchObject({ status: "already_booked" }); expect(orders.size).toBe(1);
+});
 it("sends a full class to the waitlist, keeping one place per email", async () => {
   const state = repository.requireWorkspace(workspaceId).state, yoga = await yogaClass();
   state.sessions.find((item) => item.id === yoga.classId)!.capacity = state.bookings.filter((item) => item.sessionId === yoga.classId).length;
@@ -108,7 +155,7 @@ it("sends a full class to the waitlist, keeping one place per email", async () =
   expect((await tool("join_waitlist", { classId: open.classId, name: "Sam Lee", email: "sam@example.com" })).text).toMatch(/book it instead/);
 });
 
-it("answers a rebooking link, and refunds only after the person confirmed", async () => {
+it("hands refunds to the person on their private page and rejects a model-supplied confirm flag", async () => {
   const plan = repository.createPlan(workspaceId, replan(repository.requireWorkspace(workspaceId).state, demoDisruption));
   await executePlan(workspaceId, plan.id, repository);
   const links = repository.listCustomerLinks(workspaceId).filter((link) => link.kind === "choice");
@@ -116,12 +163,66 @@ it("answers a rebooking link, and refunds only after the person confirmed", asyn
   const options = await tool("get_rebooking_options", { link: url });
   expect(options.data).toMatchObject({ canChoose: true }); expect(options.text).toMatch(/Options:/);
   const asked = await tool("answer_rebooking", { link: url, option: "refund" });
-  expect(asked.data).toMatchObject({ status: "needs_confirmation" }); expect(asked.text).toMatch(/confirm/);
+  expect(asked.data).toMatchObject({ status: "needs_person", amount: expect.any(String), destination: "their original payment", reviewUrl: url }); expect(asked.text).toMatch(/private page/);
   expect(repository.customerLinkByToken(repository.customerToken(links[0]))!.reply).toBeUndefined();
   const refunded = await tool("answer_rebooking", { link: url, option: "refund", confirm: true });
-  expect(refunded.data).toMatchObject({ status: "answered", answered: "refund" });
+  expect(refunded.isError).toBe(true); expect(repository.customerLinkByToken(repository.customerToken(links[0]))!.reply).toBeUndefined();
+  expect((await submitChoice(repository.customerToken(links[0]), { action: "refund" }, repository)).reply?.action).toBe("refund");
   expect((await tool("answer_rebooking", { link: repository.customerToken(links[1]), option: "keep" })).data).toMatchObject({ answered: "keep" });
   expect((await tool("get_rebooking_options", { link: "short" })).isError).toBe(true);
+});
+
+function rebooking(kind?: "pack" | "membership") {
+  const state = repository.requireWorkspace(workspaceId).state, booking = state.bookings[0], session = state.sessions.find((item) => item.id === booking.sessionId)!;
+  state.bookings = [booking]; state.waitlist = [];
+  booking.amount = kind ? "0.00" : "22.00";
+  if (kind) { booking.entitlement = { kind, name: "Pass" }; delete booking.payment; }
+  state.sessions = [session, { ...session, id: "same", start: "2026-11-11T15:00:00Z", end: "2026-11-11T16:00:00Z", price: "22.00" },
+    { ...session, id: "cheaper", start: "2026-11-12T15:00:00Z", end: "2026-11-12T16:00:00Z", price: "18.00" },
+    { ...session, id: "dearer", start: "2026-11-12T17:00:00Z", end: "2026-11-12T18:00:00Z", price: "99.00" }];
+  repository.saveState(workspaceId, state);
+  const plan = repository.createPlan(workspaceId, replan(state, { ...demoDisruption, from: "2026-11-16T00:00:00Z", to: "2026-11-17T00:00:00Z" }));
+  repository.savePlan({ ...plan, status: "executed" });
+  const link = repository.createCustomerLink({ workspaceId, bookingId: booking.id, planId: plan.id, kind: "choice", before: session, after: session,
+    expiresAt: Date.parse(session.start), message: { subject: "Class changed", body: "Choose a class" } });
+  return { token: repository.customerToken(link), bookingId: booking.id };
+}
+it("hands cheaper moves to the person using the server's difference and rejects ineligible classes", async () => {
+  const { token, bookingId } = rebooking(), before = repository.requireWorkspace(workspaceId).state;
+  const result = await tool("answer_rebooking", { link: token, option: "move", classId: "cheaper" });
+  expect(result.isError, result.text).toBe(false);
+  expect(result.data).toMatchObject({ status: "needs_person", reason: expect.stringMatching(/refund/), amount: "4.00", destination: "their original payment", reviewUrl: `https://rebook.example/c/${token}` });
+  expect(result.text).toContain(`https://rebook.example/c/${token}`);
+  expect(repository.customerLinkByToken(token)!.reply).toBeUndefined(); expect(repository.requireWorkspace(workspaceId).state).toEqual(before);
+  expect(repository.latestMoneyEvents(workspaceId).filter((event) => event.bookingId === bookingId && event.kind === "refund")).toEqual([]);
+  expect((await tool("answer_rebooking", { link: token, option: "move", classId: "dearer" })).isError).toBe(true);
+  expect((await tool("answer_rebooking", { link: token, option: "move", classId: "missing" })).isError).toBe(true);
+});
+it("rejects confirm even on a first refund call without changing the booking", async () => {
+  const { token, bookingId } = rebooking();
+  expect((await tool("answer_rebooking", { link: token, option: "refund", confirm: true })).isError).toBe(true);
+  expect(repository.customerLinkByToken(token)!.reply).toBeUndefined();
+  expect(repository.latestMoneyEvents(workspaceId).filter((event) => event.bookingId === bookingId && event.kind === "refund")).toEqual([]);
+});
+it.each(["keep", "credit", "move"])("applies %s directly when no money leaves", async (option) => {
+  const { token } = rebooking();
+  const result = await tool("answer_rebooking", { link: token, option, ...(option === "move" ? { classId: "same" } : {}) });
+  expect(result.isError, result.text).toBe(false); expect(result.data).toMatchObject({ status: "answered", answered: option });
+});
+it.each(["pack", "membership"] as const)("returns a %s visit directly and allows dearer transfers without money", async (kind) => {
+  const { token } = rebooking(kind);
+  const moved = await tool("answer_rebooking", { link: token, option: "move", classId: "dearer" });
+  expect(moved.isError, moved.text).toBe(false); expect(moved.data).toMatchObject({ status: "answered", answered: "move" });
+  const result = await tool("answer_rebooking", { link: token, option: "refund" });
+  expect(result.data).toMatchObject({ status: "answered", answered: "refund", receipt: { status: "VISIT_RETURNED" } });
+  expect((await customerChoice(token, repository)).receipt?.amount).toBe("0.00");
+});
+it("advertises person handoffs without a confirm parameter", async () => {
+  const listed = (await rpc("tools/list")).result as { tools: { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, boolean> }[] };
+  const answer = listed.tools.find((item) => item.name === "answer_rebooking")!;
+  expect(answer.inputSchema.properties).not.toHaveProperty("confirm"); expect(answer.description).toMatch(/private page/);
+  expect(answer.annotations.openWorldHint).toBe(false);
+  expect((await rpc("initialize")).result?.instructions).toMatch(/cheaper/);
 });
 
 it("guards the HTTP endpoint", async () => {

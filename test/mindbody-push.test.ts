@@ -9,6 +9,10 @@ import * as feed from "../lib/sync/feed";
 import type { SyncChange, SyncSession } from "../lib/sync/feed";
 import { closeRepository, getRepository, type Repository } from "../lib/store";
 import { sandbox, reply } from "./mindbody-fixture";
+import { replan } from "../lib/solver/replan";
+import { executePlan } from "../lib/executor/executePlan";
+import { askNextCover, respondToCover } from "../lib/recovery/cover-pay";
+import { customerChoice, submitChoice } from "../lib/choices/service";
 
 let directory: string, repository: Repository, api: ReturnType<typeof sandbox>, id: string, changes: SyncChange[];
 const state = () => repository.requireWorkspace(id).state;
@@ -33,6 +37,48 @@ it("substitutes only the instructor at the same time and room", async () => {
   expect(await pushToMindbody(id, repository, api.client)).toMatchObject({ applied: 1, pending: 0, failed: [] });
   expect(writes()).toHaveLength(1); expect(writes()[0]).toMatchObject({ path: "class/substituteclassteacher", body: { ClassId: 19167, StaffId: repository.mindbodyLink(id)!.sessions[before.id].staffId } });
   expect(repository.syncAcks(id).has("one")).toBe(true);
+});
+it("does not echo its own whole-class cancellation on pull, including an empty roster", async () => {
+  const empty = state().sessions[1], data = state(); data.sessions = data.sessions.filter((row) => row.id !== empty.id); repository.saveState(id, data);
+  const remote = api.classes.find((row) => row.Id === repository.mindbodyLink(id)!.sessions[empty.id].classId)!;
+  const view = { id: empty.id, title: empty.title, start: empty.start, end: empty.end, instructor: "Teacher", room: "Room" };
+  changes.push({ ...base(), type: "session.cancelled", session: view });
+  expect((await pushToMindbody(id, repository, api.client)).applied).toBe(1); expect(remote.IsCanceled).toBe(true);
+  expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([]);
+});
+async function realCover() {
+  vi.restoreAllMocks();
+  const data = state(), original = data.sessions[0], teacher = data.instructors.find((row) => row.id === original.instructorId)!;
+  data.instructors.push({ ...teacher, id: "mb-staff-1", name: "First substitute" }, { ...teacher, id: "mb-staff-2", name: "Next substitute" });
+  repository.saveState(id, data);
+  const plan = repository.createPlan(id, replan(data, { kind: "instructor_unavailable", instructorId: teacher.id, from: original.start, to: original.end }));
+  await executePlan(id, plan.id, repository);
+  expect((await pushToMindbody(id, repository, api.client)).failed).toEqual([]);
+  api.calls.length = 0;
+  return { plan, original, cover: repository.listCoverLinks(id)[0] };
+}
+it("sends a replacement cover from the real feed as a new substitute call", async () => {
+  const { plan, original, cover } = await realCover(); expect(cover).toBeTruthy();
+  await respondToCover(repository.coverToken(cover), "decline", repository);
+  await askNextCover(id, plan.id, original.id, repository);
+  expect(await pushToMindbody(id, repository, api.client)).toMatchObject({ applied: 1, failed: [], pending: 0 });
+  const replacement = state().sessions.find((row) => row.id === original.id)!.instructorId;
+  expect(replacement).not.toBe(cover.instructorId);
+  expect(writes()).toMatchObject([{ path: "class/substituteclassteacher", body: { ClassId: 19167, StaffId: Number(replacement.replace("mb-staff-", "")) } }]);
+});
+it("pushes consecutive customer moves using the last booked class, retaining the earlier change", async () => {
+  const { original } = await realCover();
+  const link = repository.listCustomerLinks(id).find((row) => row.kind === "choice" && state().bookings.find((booking) => booking.id === row.bookingId)?.entitlement?.kind === "pack")!;
+  const token = repository.customerToken(link), b = (await customerChoice(token, repository)).alternatives[0].id;
+  await submitChoice(token, { action: "move", sessionId: b }, repository);
+  expect((await pushToMindbody(id, repository, api.client)).applied).toBe(1);
+  const first = feed.allChanges(id, repository).find((row) => row.id.startsWith(`choice:${link.id}:`))!;
+  const c = (await customerChoice(token, repository)).alternatives.find((row) => row.id !== original.id)!.id;
+  await submitChoice(token, { action: "move", sessionId: c }, repository); api.calls.length = 0;
+  expect(await pushToMindbody(id, repository, api.client)).toMatchObject({ applied: 1, failed: [], pending: 0 });
+  const mapping = repository.mindbodyLink(id)!.sessions;
+  expect(writes()).toMatchObject([{ path: "class/removeclientfromclass", body: { ClassId: mapping[b].classId } }, { path: "class/addclienttoclass", body: { ClassId: mapping[c].classId } }]);
+  expect(feed.allChanges(id, repository)).toContainEqual(first);
 });
 it("recreates a moved class, moves its active bookings with services and suppresses dependent booking moves", async () => {
   const before = session(), after = { ...before, start: "2026-11-02T19:15:00.000Z", end: "2026-11-02T20:15:00.000Z" };

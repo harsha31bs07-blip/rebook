@@ -1,6 +1,6 @@
 # Booking system sync
 
-Rebook sits beside the booking system. Import its studio week first, then connect a script, Zapier, Make, or vendor-specific middleware to this API. No vendor connector is bundled. Inbound events never capture, refund, or otherwise move money. The workspace covers one studio week and expires with the demo.
+Rebook sits beside the booking system. Import its studio week first, then use the bundled [Mindbody sandbox connector](mindbody.md), or connect a script, Zapier, Make, or vendor-specific middleware to this API. Inbound events never capture, refund, or otherwise move money. The workspace covers one studio week and expires with the demo.
 
 ## Authentication and limits
 
@@ -18,7 +18,7 @@ Use `Content-Type: application/json` for POSTs. Times are ISO instants with offs
 { "changes": [{ "id": "plan:p:session:s1", "occurredAt": "2026-11-05T12:00:00Z", "type": "session.cancelled", "session": { "id": "s1", "title": "Dance Flow", "start": "2026-11-09T23:00:00Z", "end": "2026-11-10T00:00:00Z", "instructor": "Maya", "room": "Studio" } }], "pending": 1 }
 ```
 
-Returns unacknowledged Rebook changes, oldest first (timestamp, then stable id), at most 200. `pending` counts all remaining changes. IDs identify durable operations and remain stable across reads/restarts. Store applied IDs in your connector too: delivery is at least once, and a failed acknowledgement must not apply a move or return twice. Tied timestamps do not imply dependencies; apply session changes before matching booking changes when your vendor requires it. Reads derive the feed from approved plan snapshots, money/visit ledger, latest choice outcomes, claimed offers and confirmed checkouts; imported rows and inbound writes are not echoed.
+Returns unacknowledged Rebook changes, oldest first by timestamp, retaining durable history order for ties, at most 200. `pending` counts all remaining changes. IDs identify durable operations and remain stable across reads/restarts. Store applied IDs in your connector too: delivery is at least once, and a failed acknowledgement must not apply a move or return twice. Apply session changes before matching booking changes when your vendor requires it. Reads derive the feed from approved plan snapshots, replacement cover links, money/visit ledger, customer reply history, claimed offers and confirmed checkouts; imported rows and inbound writes are not echoed.
 
 After applying a batch in the booking system:
 
@@ -38,7 +38,7 @@ Up to 500 IDs per request, body at most 200 KiB. Unknown IDs are ignored; repeat
 
 Every change has `id`, `occurredAt`, and `type`. Session objects include `{ id, title, start, end, instructor, room }`; customer objects include `{ id, name, email? }`. Match by IDs after the first mapping, using the human fields to establish vendor record mappings.
 
-`session.moved` includes the whole before/after placement, including substitute instructors and room changes. Corrections and owner-adjusted approved plans produce their own changes.
+`session.moved` includes the whole before/after placement, including substitute instructors and room changes. Corrections and owner-adjusted approved plans produce their own changes. Each replacement cover after a decline adds a change with a stable `cover:<linkId>` ID, even if the original recovery was already acknowledged.
 
 ```json
 { "id": "plan:p:session:s1", "occurredAt": "2026-11-05T12:00:00Z", "type": "session.moved", "session": { "id": "s1", "title": "Dance Flow", "start": "2026-11-10T23:00:00Z", "end": "2026-11-11T00:00:00Z", "instructor": "Maya", "room": "Studio" }, "before": { "id": "s1", "title": "Dance Flow", "start": "2026-11-09T23:00:00Z", "end": "2026-11-10T00:00:00Z", "instructor": "Maya", "room": "Studio" }, "after": { "id": "s1", "title": "Dance Flow", "start": "2026-11-10T23:00:00Z", "end": "2026-11-11T00:00:00Z", "instructor": "Maya", "room": "Studio" } }
@@ -50,7 +50,7 @@ Every change has `id`, `occurredAt`, and `type`. Session objects include `{ id, 
 { "id": "plan:q:session:s1", "occurredAt": "2026-11-05T12:01:00Z", "type": "session.cancelled", "session": { "id": "s1", "title": "Dance Flow", "start": "2026-11-10T23:00:00Z", "end": "2026-11-11T00:00:00Z", "instructor": "Maya", "room": "Studio" } }
 ```
 
-`booking.moved` comes from a plan or customer move. A class moving in time keeps its Rebook session ID; a customer picking a different class has different `from.id`/`to.id`.
+`booking.moved` comes from a plan or customer move. A class moving in time keeps its Rebook session ID; a customer picking a different class has different `from.id`/`to.id`. Each customer move retains its own ID and actual previous class, so consecutive moves from A to B to C are separate A-to-B and B-to-C changes. Older replies without a previous-class snapshot retain their original fallback to the customer link's placement.
 
 ```json
 { "id": "plan:p:booking:b1", "occurredAt": "2026-11-05T12:00:00Z", "type": "booking.moved", "bookingId": "b1", "customer": { "id": "c1", "name": "Avery", "email": "avery@example.com" }, "from": { "id": "s1", "title": "Dance Flow", "start": "2026-11-09T23:00:00Z", "end": "2026-11-10T00:00:00Z", "instructor": "Maya", "room": "Studio" }, "to": { "id": "s1", "title": "Dance Flow", "start": "2026-11-10T23:00:00Z", "end": "2026-11-11T00:00:00Z", "instructor": "Maya", "room": "Studio" } }
@@ -88,7 +88,7 @@ Every change has `id`, `occurredAt`, and `type`. Session objects include `{ id, 
 
 Send 1–100 events, at most 200 KiB. Choose a stable nonempty `eventId` (max 100 characters) per vendor operation. Events run in input order inside the workspace lock; each event is atomic. Mixed applied/rejected batches return 200. A later event can depend on an earlier applied event. Replaying an applied event returns status `duplicate` and changes nothing. A rejected event is not final: retry it with the same event ID once its cause is fixed (for example after the owner approves or discards an open recovery preview). Do not reuse an ID for different payloads or event types. Persisting a result and its mutation is atomic.
 
-Session references are either `{ "id": "s1" }` or `{ "title": "Dance Flow", "start": "2026-11-10T23:00:00Z" }`. Titles match case-insensitively, times match the exact instant. Ambiguous matches reject. Customer references require `name` and optionally `email`: email matches first case-insensitively, then exact name. Ambiguous names reject; use email. New customers are created only for `booking.created` and `waitlist.joined`. Missing email does not become a deliverable address.
+Session references are either `{ "id": "s1" }` or `{ "title": "Dance Flow", "start": "2026-11-10T23:00:00Z" }`. Titles match case-insensitively, times match the exact instant. Ambiguous matches reject. Customer references require `name` and optionally `email`: when email is supplied, matching is by case-insensitive email only; otherwise an unambiguous exact name is used. Ambiguous names reject; use email. New customers are created only for `booking.created` and `waitlist.joined`. Missing email does not become a deliverable address.
 
 All mutations reject while a recovery preview is open: `A recovery preview is open; approve or discard it first.` Missing/cancelled classes and classes that have started reject. No money is touched, and no inbound event is echoed in the outbound feed (a later Rebook recovery or claimed waitlist offer is a new Rebook operation).
 
@@ -100,13 +100,13 @@ Create an active booking. Seat checks include active bookings, held checkouts an
 { "eventId": "vendor-book-124", "type": "booking.created", "session": { "id": "s1" }, "customer": { "name": "Avery", "email": "avery@example.com" }, "entitlement": { "kind": "pack", "name": "Ten classes", "visitsLeft": 4, "expires": "2026-12-01" }, "amount": "0.00" }
 ```
 
-Cancel an active booking, then offer the freed seat to the waitlist. Cancellation does not refund or return visits; send a separate baseline event if the vendor changes the pack balance.
+Cancel an active booking. After the entire batch has run, remaining free seats are offered to the waitlist, so a cancellation followed by its replacement booking in the same batch can use that seat. Cancellation does not refund or return visits; send a separate baseline event if the vendor changes the pack balance.
 
 ```json
 { "eventId": "vendor-cancel-125", "type": "booking.cancelled", "session": { "id": "s1" }, "customer": { "name": "Avery", "email": "avery@example.com" } }
 ```
 
-Set the customer’s pack baseline (nonnegative integer), optionally updating its expiry. Displayed balance = baseline + returned visits whose outbound changes have not been acknowledged. Acknowledged returns are assumed included in the vendor baseline. Workspaces without this event retain imported minimum-balance arithmetic. This generic event represents one customer-level pack balance; connectors for multiple independent packs must consolidate/map them before posting. Acknowledging pending returns removes their provisional addition; send the vendor’s new baseline as it changes.
+Set the customer’s pack baseline (nonnegative integer), optionally updating its expiry. The snapshot captures which outbound spends and returns are acknowledged at the moment it arrives. Displayed balance = baseline minus Rebook visits used but not included in that snapshot, plus returns not included in that snapshot. Acknowledging a change alone never changes the balance; send a later `pack.balance` to include it in a new snapshot. Spends and returns are tracked separately even when they concern the same booking. Workspaces without this event retain imported minimum-balance arithmetic. This generic event represents one customer-level pack balance; connectors for multiple independent packs must consolidate/map them before posting.
 
 ```json
 { "eventId": "vendor-balance-126", "type": "pack.balance", "customer": { "name": "Avery", "email": "avery@example.com" }, "visitsLeft": 4, "expires": "2026-12-01" }
@@ -128,6 +128,12 @@ Change class capacity (integer 1 through the current room’s capacity), then fi
 
 ```json
 { "eventId": "vendor-capacity-129", "type": "session.capacity", "session": { "title": "Dance Flow", "start": "2026-11-10T23:00:00Z" }, "capacity": 20 }
+```
+
+Cancel an upcoming class. It becomes unavailable in the booking catalog, customer alternatives and waitlist offers; all active bookings are cancelled, waiting entries dropped, open offers withdrawn and pending checkouts failed. Class details remain available for history and private customer links. No refund, pack return or other money operation runs, and no cancellation is echoed outbound. A checkout capture being reconciled rejects the event for retry. An open recovery preview rejects this event just like other inbound changes; retry the same ID after approval or discard. Cancellation is permanent for this session: later bookings, capacity changes and waitlist joins cannot reopen it.
+
+```json
+{ "eventId": "vendor-class-cancel-130", "type": "session.cancelled", "session": { "id": "s1" } }
 ```
 
 ## Owner tools and CSV

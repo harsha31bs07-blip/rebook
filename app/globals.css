@@ -777,4 +777,4 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 760px) { #booking-sync li button, .agent-connect button { min-height: 44px; } }
 
 /* Headings and tool sections take focus from code so keyboard users land there; they are not controls. */
-[tabindex="-1"]:focus { outline: none; }
+[tabindex="-1"]:focus, [tabindex="-1"]:focus-visible { outline: none !important; }

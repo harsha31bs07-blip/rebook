@@ -13,9 +13,9 @@ export default function NextSteps({ workspaceId, summary, covers, customerPath, 
 }) {
   const total = summary ? summary.sent + summary.notSent : 0;
   const active = activeCovers(covers);
-  const previewable = active.find((cover) => cover.current);
-  const coverStep = (cover: OwnerCover) => <li key={`${cover.planId}-${cover.sessionId}-${cover.instructorId}`}><div><strong>{cover.instructor} covers {cover.class}</strong><span>{coverLine(cover)}</span></div>
-    <div className="next-actions">{cover === previewable && <button onClick={() => onPreview("instructor")}>See {cover.instructor}’s page</button>}{coverNeedsOwner(cover) && <a href="#cover-instructors">{cover.status === "accepted" && !cover.payout ? "Pay with PayPal" : "Open cover pay"}</a>}</div></li>;
+  const previewable = active.find((cover) => cover.current && cover.status !== "declined");
+  const coverStep = (cover: OwnerCover) => <li key={`${cover.planId}-${cover.sessionId}-${cover.instructorId}`}><div><strong>{cover.current && cover.status === "declined" ? `${cover.class} needs a new instructor` : `${cover.instructor} covers ${cover.class}`}</strong><span>{coverLine(cover)}</span></div>
+    <div className="next-actions">{cover === previewable && <button onClick={() => onPreview("instructor")}>See {cover.instructor}’s page</button>}{coverNeedsOwner(cover) && <a href="#cover-instructors">{cover.status === "accepted" && !cover.payout ? "Pay with PayPal" : cover.status === "declined" && cover.next ? `Ask ${cover.next}` : "Open cover pay"}</a>}</div></li>;
   return <section className="next-steps" aria-labelledby="next-steps-title"><h3 id="next-steps-title">What happens next</h3><ol>
     {active.filter(coverNeedsOwner).map(coverStep)}
     <li><div><strong>Customers choose</strong><span>{summary ? `${summary.replied} of ${summary.needsReply} replied · ${summary.sent} of ${total} messages sent` : "Private links are ready"}</span></div>

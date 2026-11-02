@@ -69,8 +69,10 @@ it("shows only the follow-ups a recovery has, declined covers first, and names t
   expect(renderToStaticMarkup(<NextSteps {...props} covers={[]} />)).toContain("See what this recovery cost");
   const full = renderToStaticMarkup(<NextSteps {...props} showWaitlist showSync covers={[cover({ instructor: "Alex Rivera", status: "asked" }), cover({ sessionId: "s2", instructorId: "i2", instructor: "Sam Lee", status: "declined", next: null })]} />);
   expect(full).toContain('href="#waitlist"'); expect(full).toContain('href="#booking-sync"');
-  expect(full.indexOf("Sam Lee covers")).toBeLessThan(full.indexOf("Customers choose")); expect(full.indexOf("Customers choose")).toBeLessThan(full.indexOf("Alex Rivera covers"));
+  expect(full.indexOf("Yoga Flow needs a new instructor")).toBeLessThan(full.indexOf("Customers choose")); expect(full).not.toContain("Sam Lee covers"); expect(full.indexOf("Customers choose")).toBeLessThan(full.indexOf("Alex Rivera covers"));
   expect(full).toContain("no one else qualified is free");
+  const ask = renderToStaticMarkup(<NextSteps {...props} covers={[cover({ status: "declined", next: "Priya Shah" })]} />);
+  expect(ask).toContain(">Ask Priya Shah</a>"); expect(ask).not.toContain("’s page</button>");
   // The party preview shows one substitute, so only that row offers it.
   expect(full.split("’s page</button>").length - 1).toBe(1);
 });

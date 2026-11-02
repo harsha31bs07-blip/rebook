@@ -1,7 +1,7 @@
 import type { AgReportState } from "ag-studio";
 import type { StudioRegistry } from "@/components/insights/widgets";
 
-export const REPORT_STATE_VERSION = 7;
+export const REPORT_STATE_VERSION = 3;
 export const REPORT_TRACKS = 30;
 export function reportLayout(canvasHeight: number) {
   return { rowHeight: Math.max(8, Math.floor((canvasHeight - 24) / REPORT_TRACKS)), pagePadding: 12, minWidth: 720 };
@@ -18,8 +18,8 @@ const barFormat = (text: string) => ({ ...title(text), style: { custom: { catego
 const at = (xTrack: number, yTrack: number, xSpan: number, ySpan: number) => ({ xTrack, yTrack, xSpan, ySpan });
 const kpi = (text: string, value: { id: string; aggregation?: "sum" }, caption?: string) => ({ type: "value" as const, dataMapping: { value: [value] }, format: { ...title(text), ...(caption ? { caption: { enabled: true, text: caption, typography: { fontSize: 10 } } } : {}), style: { typography: { fontSize: 26, fontWeight: "bold" as const }, textScaling: { enabled: true } } } });
 const metric = (text: string, metric: string, fields: string[]) => ({ type: "recovery-metric" as const, dataMapping: { rows: fields.map((id) => ({ id })) }, format: { ...title(text), style: { metric } } });
-export const recoveryFields = "id subject window status kept moved credited kept_as_credit refunded pending no_reply simulated_refunded visits_returned applied_affected sessions_affected revenue_kept refund_amount created_at".split(" ").map((field) => ({ id: `disruptions.${field}` }));
-export const receiptFields = [..."id kind paypal_id amount display_amount status created_at booking_id plan_id".split(" ").map((field) => ({ id: `money_events.${field}` })), { id: "customers.name" }];
+export const recoveryFields = "id subject window status kept moved refunded sessions_affected revenue_kept refund_amount created_at".split(" ").map((field) => ({ id: `disruptions.${field}` }));
+export const receiptFields = [..."id kind paypal_id amount status created_at booking_id plan_id".split(" ").map((field) => ({ id: `money_events.${field}` })), { id: "customers.name" }];
 export const heatmapFields = "id instructor local_day booked capacity disrupted".split(" ").map((field) => ({ id: `sessions.${field}` }));
 
 export const initialReport: AgReportState<StudioRegistry> = {
@@ -29,26 +29,24 @@ export const initialReport: AgReportState<StudioRegistry> = {
     { id: "week-overview", widgets: {
       booked: kpi("Revenue booked", { id: "revenue_booked_kpi" }),
       kept: metric("Revenue kept through disruptions", "kept", ["disruptions.id", "disruptions.applied_revenue_kept"]),
-      refunded: metric("Refunds issued", "refunded", ["money_events.id", "money_events.kind", "money_events.issued_refund", "money_events.visits_returned"]),
+      refunded: metric("Refunds issued", "refunded", ["money_events.id", "money_events.kind", "money_events.issued_refund"]),
       saved: metric("Saved rate", "saved", ["disruptions.id", "disruptions.applied_saved", "disruptions.applied_affected"]),
       revenue: { type: "bar-chart-grouped", dataMapping: { categoryKey: [{ id: "sessions.class_type" }], valueKey: [sum("bookings.amount")] }, sort: [{ field: sum("bookings.amount"), direction: "desc" }], format: barFormat("Revenue by class type") },
       heatmap: { type: "week-heatmap", dataMapping: { rows: heatmapFields }, format: { ...title("Week heatmap · instructor utilisation"), crossFilter: "filter", style: { showValues: true } } },
       sessions: { type: "grid", dataMapping: { cols: "title local_day local_start instructor room capacity price status".split(" ").map((field) => ({ id: `sessions.${field}` })) }, sort: [{ field: { id: "sessions.start" }, direction: "asc" }], format: title("This week’s sessions") },
-    }, widgetLayout: { booked: at(0, 0, 6, 7), kept: at(6, 0, 6, 7), refunded: at(12, 0, 6, 7), saved: at(18, 0, 6, 7), revenue: at(0, 7, 9, 15), heatmap: at(9, 7, 15, 15), sessions: at(0, 22, 24, 8) } },
+    }, widgetLayout: { booked: at(0, 0, 6, 7), kept: at(6, 0, 6, 7), refunded: at(12, 0, 6, 7), saved: at(18, 0, 6, 7), revenue: at(0, 7, 9, 11), heatmap: at(9, 7, 15, 11), sessions: at(0, 18, 24, 12) } },
     { id: "disruptions", widgets: {
       impact: { type: "recovery-impact", dataMapping: { rows: recoveryFields }, format: title("Recovery impact") },
       receipts: { type: "refund-receipts", dataMapping: { rows: receiptFields }, format: title("Refund receipts") },
-      actions: { type: "grid", dataMapping: { cols: [{ id: "customers.name" }, { id: "booking_actions.action" }, { id: "booking_actions.reason" }, { id: "booking_actions.display_amount" }, { id: "disruptions.status" }] }, sort: [{ field: { id: "booking_actions.action" }, direction: "desc" }], format: title("Booking actions · every reason") },
+      actions: { type: "grid", dataMapping: { cols: [{ id: "customers.name" }, { id: "booking_actions.action" }, { id: "booking_actions.reason" }, { id: "booking_actions.amount" }, { id: "disruptions.status" }] }, sort: [{ field: { id: "booking_actions.action" }, direction: "desc" }], format: title("Booking actions · every reason") },
       reasons: { type: "bar-chart-grouped", dataMapping: { categoryKey: [{ id: "money_events.reason" }], valueKey: [sum("money_events.issued_refund")] }, sort: [{ field: sum("money_events.issued_refund"), direction: "desc" }], format: barFormat("Refunds issued by reason") },
     }, filter: { widget: { reasons: [{ field: { id: "money_events.kind" }, model: { operator: "isIn", value: ["refund"] } }] } }, widgetLayout: { impact: at(0, 0, 13, 15), receipts: at(13, 0, 11, 15), actions: at(0, 15, 14, 15), reasons: at(14, 15, 10, 15) } },
     { id: "money", widgets: {
-      credits: kpi("Kept as studio credit", { id: "studio_credit_kpi" }, "Revenue retained; included in net revenue"),
-      wonBack: kpi("Waitlist bookings since recovery", { id: "waitlist_won_back_kpi" }, "Booked from the waitlist after a recovery, excluding refunds"),
       net: kpi("Net revenue", { id: "net_revenue_kpi" }, "Captures less issued refunds"),
       cashflow: { type: "column-chart-grouped", dataMapping: { categoryKey: [{ id: "money_events.local_day" }], valueKey: [sum("money_events.captured"), sum("money_events.issued_refund")] }, sort: [{ field: { id: "money_events.local_day" }, direction: "asc" }], format: title("Captures vs refunds · receipt date") },
       receipts: { type: "refund-receipts", dataMapping: { rows: receiptFields }, format: title("Refund receipts") },
-      ledger: { type: "grid", dataMapping: { cols: "local_day kind display_amount status payment_mode".split(" ").map((field) => ({ id: `money_events.${field}` })) }, sort: [{ field: { id: "money_events.created_at" }, direction: "desc" }], format: title("Payment ledger · latest status per request") },
-    }, widgetLayout: { net: at(0, 0, 7, 7), credits: at(7, 0, 9, 7), wonBack: at(16, 0, 8, 7), cashflow: at(7, 7, 17, 10), receipts: at(0, 7, 7, 23), ledger: at(7, 17, 17, 13) } },
+      ledger: { type: "grid", dataMapping: { cols: "local_day kind amount status payment_mode".split(" ").map((field) => ({ id: `money_events.${field}` })) }, sort: [{ field: { id: "money_events.created_at" }, direction: "desc" }], format: title("Payment ledger · latest status per request") },
+    }, widgetLayout: { net: at(0, 0, 7, 7), cashflow: at(7, 0, 17, 15), receipts: at(0, 7, 7, 23), ledger: at(7, 15, 17, 15) } },
   ],
 };
 

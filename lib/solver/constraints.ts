@@ -8,11 +8,7 @@ export function activeConstraints(state: State): Disruption[] {
 }
 export function preserveConstraints(state: State, parsed: State): ConstrainedState {
   const constraints = activeConstraints(state);
-  return (state as ConstrainedState).activeConstraints !== undefined
-    ? { ...parsed, activeConstraints: constraints.map((item) => DisruptionSchema.parse(item)) } : parsed;
-}
-export function deactivateConstraint(state: State, disruption: Disruption): ConstrainedState {
-  return { ...state, activeConstraints: activeConstraints(state).filter((item) => JSON.stringify(item) !== JSON.stringify(disruption)) };
+  return constraints.length ? { ...parsed, activeConstraints: constraints.map((item) => DisruptionSchema.parse(item)) } : parsed;
 }
 export function activateConstraint(state: State, disruption: Disruption): ConstrainedState {
   const constraints = activeConstraints(state);

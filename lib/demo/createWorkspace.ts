@@ -169,7 +169,7 @@ export function startWarmPool(repository: Repository = getRepository()): Promise
   if (repository.stalePreparations(Date.now(), 0).some((workspace) => workspace.pooled)) return Promise.resolve();
   const state = initialState();
   let release: () => void;
-  try { release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length, true, true); }
+  try { release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length); }
   catch (error) { if (error instanceof StoreError && error.status === 429) return Promise.resolve(); throw error; }
   let workspace: Workspace;
   try { workspace = repository.createWorkspace(state, undefined, { preparing: true, pooled: true }); }
@@ -218,7 +218,7 @@ export async function resumeStalePreparations(repository: Repository = getReposi
           const recentDelay = Date.parse(current.updatedAt) + 120_001 - Date.now();
           if (recentDelay > 0) { schedule(recentDelay); return; }
           const captured = new Set(repository.latestMoneyEvents(workspace.id).filter((event) => event.kind === "capture" && event.status === "COMPLETED").map((event) => event.bookingId));
-          const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false, !!current.pooled);
+          const release = limits.preparation(current.state.bookings.filter((booking) => !booking.payment?.simulated && !captured.has(booking.id)).length, false);
           try { await prepare(workspace.id, {}, repository); } finally { release(); }
         }
       } catch (error) {
@@ -242,12 +242,12 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
   const state = initialState(true);
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     for (const event of repository.latestMoneyEvents(workspaceId)) {
-      if (event.kind !== "refund" || !["REQUESTED", "PENDING", "NEEDS_REVIEW"].includes(event.status)) continue;
+      if (event.kind !== "refund" || !["REQUESTED", "PENDING"].includes(event.status)) continue;
       repository.renewLock(workspaceId, owner);
       await reconcileRefund(event, repository);
     }
     if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing") ||
-      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
+      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN"].includes(event.status)) ||
       repository.listPlans(workspaceId).some((plan) => ["executing", "partially_failed"].includes(plan.status))) {
       throw new StoreError(409, "Finish or retry pending refunds first");
     }

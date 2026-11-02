@@ -5,10 +5,6 @@ import type { CustomerMessage } from "../ai/messages";
 import type { Disruption } from "../domain/types";
 import type { ExecutionResult, LedgerEvent, StoredPlan, Workspace } from "../store";
 import type { OwnerCustomerChoices } from "../choices/service";
-import type { PaymentAttention } from "../recovery/payment-attention";
-import type { OwnerCover } from "../recovery/cover-pay";
-import type { PayRule } from "../recovery/pay-rules";
-import type { MoneyVerification } from "../paypal/verify";
 
 export type PublicPlan = Omit<StoredPlan, "basis">;
 export type WorkspaceResponse = Workspace & {
@@ -16,56 +12,35 @@ export type WorkspaceResponse = Workspace & {
   ledger: LedgerEvent[];
   ledgerSummary: Record<string, unknown>;
   customerChoices?: OwnerCustomerChoices;
-  paymentsNeedingAttention?: PaymentAttention[];
-  covers?: OwnerCover[];
-  waitlist?: ReturnType<typeof import("../waitlist/service").ownerWaitlist>;
-  sync?: ReturnType<typeof import("../sync/service").ownerSync>;
-  mindbody?: import("../connectors/mindbody/types").MindbodyStatus;
 };
 export type PlanDetails = { plan: PublicPlan; explanation: PlanExplanation; messages: CustomerMessage[]; sessions: Workspace["state"]["sessions"] };
 export type { Interpretation, ExecutionResult };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public code?: string, public retryAfter?: number) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
-async function request<T>(path: string, body?: object, signal?: AbortSignal, method?: string, keepalive = false): Promise<T> {
+async function request<T>(path: string, body?: object, signal?: AbortSignal, method?: string): Promise<T> {
   const response = await fetch(`/api/workspaces${path}`, {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store", signal, keepalive,
+    cache: "no-store", signal,
   });
   const data = await response.json();
-  if (!response.ok) {
-    const header = response.headers.get("Retry-After");
-    const seconds = header === null ? NaN : /^\d+$/.test(header) ? Number(header) : (Date.parse(header) - Date.now()) / 1000;
-    throw new ApiError(response.status, data.message ?? data.error ?? "Something went wrong. Please try again.", data.code,
-      Number.isFinite(seconds) ? Math.max(1, Math.ceil(seconds)) : undefined);
-  }
+  if (!response.ok) throw new ApiError(response.status, data.message ?? data.error ?? "Something went wrong. Please try again.", data.code);
   return data as T;
 }
 
 const workspacePath = (id: string) => `/${encodeURIComponent(id)}`;
 export const api = {
-  verifyMoney: (id: string, signal?: AbortSignal) => request<MoneyVerification>(`${workspacePath(id)}/verify`, {}, signal),
   create: () => request<{ id: string }>("", {}),
   workspace: (id: string, signal?: AbortSignal) => request<WorkspaceResponse>(workspacePath(id), undefined, signal),
   interpret: (id: string, text: string, signal?: AbortSignal) => request<Interpretation>(`${workspacePath(id)}/interpret`, { text }, signal),
-  plan: (id: string, disruption: Disruption, signal?: AbortSignal, confirmed?: boolean) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption, ...(confirmed ? { confirmed: true } : {}) }, signal),
+  plan: (id: string, disruption: Disruption, signal?: AbortSignal) => request<PublicPlan>(`${workspacePath(id)}/plans`, { disruption }, signal),
   details: (id: string, planId: string, signal?: AbortSignal) => request<PlanDetails>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, signal),
   discard: (id: string, planId: string) => request<{ discarded: true }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}`, undefined, undefined, "DELETE"),
-  withdraw: (id: string, planId: string) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/withdraw`, {}),
   adjust: (id: string, planId: string, input: OwnerAdjustment | { undo: true }, version: number) => request<PublicPlan>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/adjust`, { ...input, version }),
-  approve: (id: string, planId: string, version = 1, confirmedCoverSessionIds: string[] = []) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version, confirmedCoverSessionIds }),
-  checkRefund: (id: string, requestId: string) => request<{ kind: "found" | "absent" | "unknown" | "settled" }>(`${workspacePath(id)}/refunds/check`, { requestId }),
-  payCover: (id: string, planId: string, sessionId: string) => request<OwnerCover[]>(`${workspacePath(id)}/covers/pay`, { planId, sessionId }),
-  instructorPay: (id: string, instructorId: string, input: PayRule | { reset: true }) => request<OwnerCover[]>(`${workspacePath(id)}/instructors/${encodeURIComponent(instructorId)}/pay`, input, undefined, "PATCH"),
-  askNextCover: (id: string, planId: string, sessionId: string) => request<OwnerCover[]>(`${workspacePath(id)}/covers/next`, { planId, sessionId }),
-  retryRefund: (id: string, requestId: string) => request<{ status: string }>(`${workspacePath(id)}/refunds/retry`, { requestId }),
+  approve: (id: string, planId: string, version = 1) => request<{ plan: PublicPlan; results: ExecutionResult[] }>(`${workspacePath(id)}/plans/${encodeURIComponent(planId)}/approve`, { version }),
   reset: (id: string) => request<{ id: string }>(`${workspacePath(id)}/reset`, {}),
-  contact: (id: string, planId: string, customerId: string, sent: boolean) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox`, { planId, customerId, sent }, undefined, undefined, true),
-  email: (id: string, planId: string, customerId: string, reminder = false, resend = false) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email`, { planId, customerId, reminder, resend }),
-  emailAll: (id: string, planId: string) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email/all`, { planId }),
-  emailStatus: (id: string, planId: string) => request<OwnerCustomerChoices>(`${workspacePath(id)}/outbox/email/status`, { planId }),
 };

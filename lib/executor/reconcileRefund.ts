@@ -15,14 +15,12 @@ function body(response: ApiResponse<CapturedPayment | Refund>): Record<string, u
 
 /** Read-only SDK reconciliation, isolated from the refund writer and its retry policy. */
 export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> {
-  if (["CREDIT_RESTORED", "VISIT_RETURNED"].includes(event.status)) return { kind: "unknown" };
-  const environment = process.env.PAYPAL_ENV ?? "sandbox";
-  if (environment !== "sandbox") throw new Error("PAYPAL_ENV must be sandbox; this demo cannot use live PayPal");
+  const environment = process.env.PAYPAL_ENV || "sandbox";
   const clientId = process.env.PAYPAL_CLIENT_ID, secret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !secret) return { kind: "unknown" };
+  if (!["sandbox", "live"].includes(environment) || !clientId || !secret) return { kind: "unknown" };
   // A short-lived read client also avoids retaining a rejected SDK OAuth promise across retries.
   const controller = new PaymentsController(new Client({
-    environment: Environment.Sandbox, timeout: 20_000,
+    environment: environment === "live" ? Environment.Production : Environment.Sandbox, timeout: 20_000,
     clientCredentialsAuthCredentials: { oAuthClientId: clientId, oAuthClientSecret: secret },
     httpClientOptions: { retryConfig: { maxNumberOfRetries: 0, retryOnTimeout: false } },
   }));
@@ -53,13 +51,10 @@ export async function lookupRefund(event: LedgerEvent): Promise<Reconciliation> 
 export async function reconcileRefund(event: LedgerEvent, repository: Repository): Promise<Reconciliation> {
   const outcome = await lookupRefund(event);
   if (outcome.kind !== "found") return outcome;
+  const delivered = repository.latestMoneyEvents(event.workspaceId).find((item) => item.kind === "refund" && item.requestId === event.requestId);
+  const status = delivered?.status === "COMPLETED" ? "COMPLETED" : outcome.payment.status;
+  const paypalId = delivered?.status === "COMPLETED" ? delivered.paypalId : outcome.payment.id;
   const settled = repository.transaction(() => {
-    const delivered = repository.latestMoneyEvents(event.workspaceId).find((item) => item.kind === "refund" && item.requestId === event.requestId);
-    // A webhook or a new lease owner may have written while this GET was in flight.
-    // Compare and persist under the SQLite write transaction, including across processes.
-    if (delivered?.id !== event.id) return delivered;
-    const status = delivered.status === "COMPLETED" ? "COMPLETED" : outcome.payment.status;
-    const paypalId = delivered.status === "COMPLETED" ? delivered.paypalId : outcome.payment.id;
     const recorded = repository.appendLedger({ ...event, paypalId, status,
       error: status === "FAILED" ? "PayPal reports that this refund failed" : undefined });
     const workspace = repository.requireWorkspace(event.workspaceId, true);
@@ -70,6 +65,5 @@ export async function reconcileRefund(event: LedgerEvent, repository: Repository
     }
     return recorded;
   });
-  if (!settled) return outcome;
   return { kind: "found", payment: { ...outcome.payment, id: settled.paypalId, status: settled.status } };
 }

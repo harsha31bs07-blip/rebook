@@ -1,65 +1,51 @@
-import { randomUUID } from "node:crypto";
-import { fillFreedSeats, waitlistOutbox } from "../waitlist/service";
 import { z } from "zod";
 import { draftCustomerMessages } from "../ai/messages";
-import { pausedSessionIds, seatsLeft, sessionAvailable } from "../checkout/service";
+import { seatsLeft, sessionAvailable } from "../checkout/service";
 import { addLocalDays, fromCents, localParts, overlaps, toCents, zonedTimeToUtc } from "../domain/time";
 import type { State } from "../domain/types";
-import { entitlementLabel, entitlementPaymentLabel } from "../domain/entitlements";
-import { packBalance, packReturnBalance, packReturns } from "../domain/pack-balances";
-import { entitlementExpiry } from "../waitlist/entitlement";
 import { executeRefund } from "../executor/refund";
-import { recoveryOutcomes } from "../recovery/outcomes";
-import { remainingCaptured as capturedBalance, spendableCredit, unreturnedRedemption } from "../credits/balance";
-import { revisedAt, type OutboxCustomer } from "./outbox";
-import { deliverableAddress } from "./email-content";
-import { customerLinkReadableUntil, getRepository, StoreError, withWorkspaceLock, type Credit, type CustomerLink, type Repository, type StoredPlan } from "../store";
+import { getRepository, StoreError, withWorkspaceLock, type CustomerLink, type Repository, type StoredPlan } from "../store";
 
 export const ChoiceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const ChoiceInputSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("keep") }),
   z.strictObject({ action: z.literal("move"), sessionId: z.string().min(1).max(100) }),
   z.strictObject({ action: z.literal("refund") }),
-  z.strictObject({ action: z.literal("credit") }),
 ]);
 export type ChoiceInput = z.infer<typeof ChoiceInputSchema>;
 
 export function createCustomerLinks(plan: StoredPlan, before: State, after: State, repository: Repository): void {
-  const messages = draftCustomerMessages(plan, before, repository.listLedger(plan.workspaceId));
-  const checkouts = new Map(repository.listCheckout(plan.workspaceId).map((row) => [row.id, row]));
+  const messages = draftCustomerMessages(plan, before);
   for (const action of plan.bookingActions) {
     const booking = before.bookings.find((item) => item.id === action.bookingId)!;
     const original = before.sessions.find((item) => item.id === booking.sessionId)!;
     const current = after.sessions.find((item) => item.id === booking.sessionId);
     const message = messages.find((item) => item.bookingId === booking.id)!;
-    const checkout = checkouts.get(booking.id);
-    let body = checkout ? message.body.replace(`Hi ${message.customerName},`, () => `Hi ${checkout.customer.name},`) : message.body;
-    if (checkout?.paidWith === "credit" && action.action === "refund") body = body.replace(`We'll arrange a refund of ${before.studio.currency} ${action.amount}.`, `${before.studio.currency} ${action.amount} will be returned to your studio credit.`);
     repository.createCustomerLink({ workspaceId: plan.workspaceId, planId: plan.id, bookingId: booking.id,
       kind: action.action === "refund" ? "receipt" : "choice",
       expiresAt: Math.min(Date.now() + 7 * 86_400_000, Date.parse(current?.start ?? original.start)),
       before: original, after: action.action === "refund" ? undefined : current,
-      message: { subject: message.subject, body: body.replace("Doesn't work? Reply for a refund.", "Choose below to keep your new time, find another class, or take a refund.") },
+      message: { subject: message.subject, body: message.body.replace("Doesn't work? Reply for a refund.", "Choose below to keep your new time, find another class, or take a refund.") },
     });
   }
 }
 
-export function requireLink(token: string, repository: Repository): CustomerLink {
+function requireLink(token: string, repository: Repository): CustomerLink {
   const link = repository.customerLinkByToken(ChoiceTokenSchema.parse(token));
-  if (!link) throw new StoreError(404, "This link is no longer available. Rebook's demo runs on a free server that resets when it restarts, so demo links can end early. Nothing was charged: payments run in PayPal's sandbox.");
-  if (customerLinkReadableUntil(link) <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
+  if (!link) throw new StoreError(404, "This private link is unavailable.");
+  if (link.expiresAt <= Date.now()) throw new StoreError(410, "This private link has expired. Please contact the studio.");
   repository.requireReadyWorkspace(link.workspaceId);
   return link;
 }
 
 function remainingCaptured(link: CustomerLink, repository: Repository): number {
-  return capturedBalance(link.workspaceId, link.bookingId, repository);
-}
-
-function creditPayment(link: CustomerLink, repository: Repository) {
-  const checkout = repository.listCheckout(link.workspaceId).find((row) => row.id === link.bookingId && row.paidWith === "credit");
-  const credit = checkout && repository.listCredits(link.workspaceId).find((item) => item.id === checkout.creditId);
-  return { paidWith: checkout?.paidWith, remaining: credit ? unreturnedRedemption(credit, link.bookingId) : 0 };
+  const { state } = repository.requireReadyWorkspace(link.workspaceId);
+  const booking = state.bookings.find((item) => item.id === link.bookingId);
+  const capture = repository.latestMoneyEvents(link.workspaceId).find((event) => event.kind === "capture" && event.paypalId === booking?.payment?.captureId);
+  if (!capture || !["COMPLETED", "SIMULATED"].includes(capture.status)) return 0;
+  return Math.max(0, toCents(capture.amount) - repository.latestMoneyEvents(link.workspaceId)
+    .filter((event) => event.kind === "refund" && event.captureId === capture.captureId && ["REQUESTED", "PENDING", "COMPLETED", "SIMULATED"].includes(event.status))
+    .reduce((sum, event) => sum + toCents(event.amount), 0));
 }
 
 function alternatives(link: CustomerLink, repository: Repository) {
@@ -67,21 +53,16 @@ function alternatives(link: CustomerLink, repository: Repository) {
   const booking = state.bookings.find((item) => item.id === link.bookingId)!;
   const week = localParts(state.studio.weekStart, state.studio.timezone).dateKey;
   const end = Date.parse(zonedTimeToUtc(addLocalDays(week, 7), "00:00", state.studio.timezone));
-  const payment = creditPayment(link, repository);
-  const maxPrice = Math.min(toCents(booking.amount), payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
-  const expires = booking.entitlement && entitlementExpiry(state, booking.customerId, booking.entitlement);
-  const paused = pausedSessionIds(link.workspaceId, repository);
-  const reservations = repository.listCheckout(link.workspaceId), offers = repository.listWaitlistOffers(link.workspaceId);
-  return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session, paused)
+  const maxPrice = Math.min(toCents(booking.amount), remainingCaptured(link, repository));
+  return state.sessions.filter((session) => session.id !== booking.sessionId && sessionAvailable(state, session)
     && Date.parse(session.start) >= Date.parse(state.studio.weekStart) && Date.parse(session.start) < end
-    && (!expires || localParts(session.start, state.studio.timezone).dateKey <= expires)
-    && (booking.entitlement || toCents(session.price) <= maxPrice) && seatsLeft(state, session, reservations, undefined, offers) > 0
+    && toCents(session.price) <= maxPrice && seatsLeft(state, session, repository.listCheckout(link.workspaceId)) > 0
     && !state.bookings.some((other) => other.id !== booking.id && other.customerId === booking.customerId && ["confirmed", "moved"].includes(other.status)
       && state.sessions.some((booked) => booked.id === other.sessionId && overlaps(booked.start, booked.end, session.start, session.end))))
     .sort((a, b) => Number(b.classType === link.before.classType) - Number(a.classType === link.before.classType) || a.start.localeCompare(b.start))
-    .map((session) => ({ ...session, seatsLeft: seatsLeft(state, session, reservations, undefined, offers),
+    .map((session) => ({ ...session, seatsLeft: seatsLeft(state, session, repository.listCheckout(link.workspaceId)),
       instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team",
-      difference: booking.entitlement ? "0.00" : fromCents(maxPrice - toCents(session.price)) }));
+      difference: fromCents(maxPrice - toCents(session.price)) }));
 }
 
 function receiptFor(link: CustomerLink, repository: Repository) {
@@ -90,7 +71,7 @@ function receiptFor(link: CustomerLink, repository: Repository) {
   return event ? { amount: event.amount, status: event.status, paypalId: event.paypalId, error: event.error } : undefined;
 }
 
-export function view(link: CustomerLink, repository: Repository) {
+function view(link: CustomerLink, repository: Repository) {
   const { state } = repository.requireReadyWorkspace(link.workspaceId);
   const booking = state.bookings.find((item) => item.id === link.bookingId);
   if (!booking) throw new StoreError(410, "This booking is no longer available.");
@@ -98,26 +79,16 @@ export function view(link: CustomerLink, repository: Repository) {
     instructor: state.instructors.find((item) => item.id === session.instructorId)?.name ?? "Studio team" });
   const current = state.sessions.find((item) => item.id === booking.sessionId);
   const newest = repository.listCustomerLinks(link.workspaceId).filter((item) => item.bookingId === link.bookingId).at(-1);
-  const credit = repository.listCredits(link.workspaceId).find((item) => item.linkId === link.id);
-  const payment = creditPayment(link, repository);
-  const canChoose = link.expiresAt > Date.now() && link.kind === "choice" && !link.reply?.requestId && link.reply?.action !== "credit" && newest?.id === link.id
+  const canChoose = link.kind === "choice" && !link.reply?.requestId && newest?.id === link.id
     && ["confirmed", "moved"].includes(booking.status) && !!current && sessionAvailable(state, current);
-  const newerCorrection = newest && newest.id !== link.id && repository.getPlan(link.workspaceId, newest.planId)?.correctionOf;
-  const balance = booking.entitlement?.kind === "pack" ? packBalance(state, repository.listLedger(link.workspaceId), booking.customerId, booking.entitlement.name) : null;
-  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: newerCorrection ? newest.message : link.message,
+  return { studio: { name: state.studio.name, timezone: state.studio.timezone }, message: link.message,
     before: describe(link.before), after: current && link.kind === "choice" ? describe(current) : undefined,
     reply: link.reply ? { action: link.reply.action, at: link.reply.at } : undefined,
-    kind: link.kind, canChoose, choicesClosed: link.expiresAt <= Date.now(), expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
-    refundable: fromCents(remainingCaptured(link, repository)), ...(booking.entitlement ? { entitlement: booking.entitlement } : {}), ...(balance !== null ? { packBalance: balance } : {}), ...(payment.paidWith ? { paidWith: payment.paidWith, creditRefundable: fromCents(payment.remaining) } : {}), receipt: receiptFor(link, repository),
-    ...(credit ? { credit: { ...spendableCredit(credit, repository), path: creditPath(credit, repository), readableUntil: customerLinkReadableUntil(link),
-      emailed: repository.listDeliveries(link.workspaceId).find((item) => item.kind === `credit:${link.id}`)?.status } } : {}),
+    kind: link.kind, canChoose, expiresAt: link.expiresAt, simulated: !!booking.payment?.simulated,
+    refundable: fromCents(remainingCaptured(link, repository)), receipt: receiptFor(link, repository),
     alternatives: canChoose ? alternatives(link, repository) : [] };
 }
 export type CustomerChoiceView = ReturnType<typeof view>;
-/** The credit's own link outlives the choice page; the token rides in the fragment, never in a request. */
-export function creditPath(credit: Credit, repository: Repository): string {
-  return `/b/${repository.requireWorkspace(credit.workspaceId).bookingId}#credit=${repository.creditToken(credit)}`;
-}
 
 async function finishRefund(link: CustomerLink, repository: Repository, owner: string) {
   if (link.kind === "receipt") {
@@ -150,21 +121,15 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
   return withWorkspaceLock(repository, initial.workspaceId, async (owner) => {
     let link = requireLink(token, repository);
     if (link.kind !== "choice") throw new StoreError(409, "This link is a refund receipt only.");
-    if (link.reply?.action === "credit" || repository.listCredits(link.workspaceId).some((item) => item.bookingId === link.bookingId)) {
-      if (input.action !== "credit") throw new StoreError(409, "Your studio credit choice is final.");
-      return view(link, repository);
-    }
     if (link.reply?.requestId) {
       if (input.action !== link.reply.action || (input.action === "move" && input.sessionId !== link.reply.sessionId)) throw new StoreError(409, "Your choice is final once a refund starts.");
       await finishRefund(link, repository, owner);
       return view(link, repository);
     }
-    if (link.expiresAt <= Date.now()) throw new StoreError(410, "Choices closed at the class deadline. Your booking outcome and receipt remain available here.");
     if (!view(link, repository).canChoose) throw new StoreError(409, "This booking has changed. Please use the studio's latest message.");
     repository.transaction(() => {
       const { state } = repository.requireReadyWorkspace(link.workspaceId);
       const booking = state.bookings.find((item) => item.id === link.bookingId)!;
-      const fromSession = state.sessions.find((item) => item.id === booking.sessionId);
       let amount = "0.00";
       let requestId: string | undefined;
       if (input.action === "move") {
@@ -172,84 +137,28 @@ export async function submitChoice(token: string, input: ChoiceInput, repository
         if (!target) throw new StoreError(409, "This class is full or no longer eligible. Please choose another class.");
         amount = target.difference;
         if (toCents(amount) > 0) requestId = `choice:${link.id}`;
-        booking.sessionId = target.id; booking.amount = booking.entitlement ? "0.00" : target.price; booking.status = "moved";
+        booking.sessionId = target.id; booking.amount = target.price; booking.status = "moved";
         link = { ...link, expiresAt: Math.min(link.expiresAt, Date.parse(target.start)) };
-      } else if (input.action === "credit") {
-        if (booking.entitlement) throw new StoreError(409, "This booking is covered by a pack or membership.");
-        if (creditPayment(link, repository).paidWith) throw new StoreError(409, "This booking was paid with studio credit.");
-        amount = fromCents(remainingCaptured(link, repository));
-        if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available for studio credit.");
-        booking.status = "cancelled";
-        repository.createCredit({ workspaceId: link.workspaceId, linkId: link.id, bookingId: booking.id, customerId: booking.customerId, amount });
       } else if (input.action === "refund") {
-        const payment = creditPayment(link, repository);
-        amount = fromCents(payment.paidWith ? payment.remaining : remainingCaptured(link, repository));
-        if (!booking.entitlement && toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available to refund.");
+        amount = fromCents(remainingCaptured(link, repository));
+        if (toCents(amount) <= 0) throw new StoreError(409, "There is no captured amount available to refund.");
         // Seed booking IDs repeat across workspaces; the durable link identifies this operation.
         requestId = `choice:${link.id}`;
         booking.status = "refund_pending";
       }
-      link = { ...link, replyHistory: [...(link.replyHistory ?? []), ...(link.reply ? [link.reply] : [])],
-        reply: { id: randomUUID(), action: input.action, fromSession, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
+      link = { ...link, reply: { action: input.action, ...(input.action === "move" ? { sessionId: input.sessionId } : {}), amount, requestId, at: new Date().toISOString() } };
       repository.saveState(link.workspaceId, state);
       repository.saveCustomerLink(link);
     });
     await finishRefund(link, repository, owner);
-    fillFreedSeats(link.workspaceId, repository);
     return view(link, repository);
-  });
-}
-
-/** Owner retry for a customer's own refund; the executor still replays only after PayPal proves it absent. */
-export async function retryChoiceRefund(workspaceId: string, requestId: string, repository = getRepository()) {
-  return withWorkspaceLock(repository, workspaceId, async (owner) => {
-    const link = repository.listCustomerLinks(workspaceId).find((item) => item.kind === "choice" && item.reply?.requestId === requestId);
-    if (!link) throw new StoreError(404, "Refund not found");
-    await finishRefund(link, repository, owner);
-    return receiptFor(link, repository);
   });
 }
 
 export function ownerCustomerChoices(workspaceId: string, repository = getRepository()) {
   const { state } = repository.requireWorkspace(workspaceId);
   const links = repository.listCustomerLinks(workspaceId);
-  const outbox = new Map<string, OutboxCustomer>();
-  const plans = repository.listPlans(workspaceId);
-  const checkouts = repository.listCheckout(workspaceId), deliveries = repository.listDeliveries(workspaceId);
-  const ledger = repository.listLedger(workspaceId);
-  for (const link of links.toSorted((a, b) => Number(b.kind === "choice") - Number(a.kind === "choice"))) {
-    const booking = state.bookings.find((item) => item.id === link.bookingId);
-    if (!booking) continue;
-    const key = `${link.planId}:${booking.customerId}`;
-    const row = outbox.get(key) ?? { customerId: booking.customerId,
-      customerName: state.customers.find((item) => item.id === booking.customerId)?.name ?? "Customer", planId: link.planId, changes: [] };
-    const action = plans.find((plan) => plan.id === link.planId)?.bookingActions.find((item) => item.bookingId === link.bookingId);
-    const reply = link.reply;
-    const receipt = receiptFor(link, repository);
-    const balance = packReturnBalance(state, ledger, booking);
-    row.changes.push({ bookingId: link.bookingId, ...link.message, kind: link.kind, ...(booking.entitlement ? { entitlement: booking.entitlement } : {}),
-      ...(balance ? { packBalance: balance } : {}),
-      path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt, sentAt: link.sentAt, ...(link.revisedAt ? { revisedAt: link.revisedAt } : {}),
-      reply: receipt?.status === "VISIT_RETURNED" && booking.entitlement ? { at: reply?.at ?? link.createdAt, status: entitlementLabel(booking.entitlement, balance) }
-        : receipt?.status === "CREDIT_RESTORED" ? { at: reply?.at ?? link.createdAt, status: "returned to your studio credit" }
-        : reply ? { at: reply.at, status: reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking.status === "refunded" ? "refunded" : "refund requested" : reply.action === "move" ? "chose another class" : action?.action === "move" ? "moved" : "kept" } : undefined });
-    outbox.set(key, row);
-  }
-  for (const row of outbox.values()) {
-    const customer = state.customers.find((item) => item.id === row.customerId);
-    row.emailDeliverable = !!customer && deliverableAddress(customer.email, row.changes.map((change) => change.bookingId), checkouts);
-    for (const kind of ["message", "reminder"] as const) {
-      const delivery = deliveries.find((item) => item.planId === row.planId && item.customerId === row.customerId && item.kind === kind);
-      const revised = revisedAt(row);
-      if (delivery && !(revised && delivery.createdAt < revised)) row[kind === "message" ? "delivery" : "reminderDelivery"] = { status: delivery.status, updatedAt: delivery.updatedAt };
-    }
-  }
-  const creditPaidBookingIds = checkouts.filter((row) => row.paidWith === "credit").map((row) => row.id);
-  const returnedPacks = packReturns(ledger).filter((event) => state.bookings.find((booking) => booking.id === event.bookingId)?.entitlement?.kind === "pack");
-  return { outcomes: recoveryOutcomes(state, plans, repository.listLedger(workspaceId), links, new Set(creditPaidBookingIds)), creditPaidBookingIds,
-    ...(returnedPacks.length ? { packReturns: returnedPacks } : {}),
-    outbox: [...outbox.values(), ...waitlistOutbox(workspaceId, repository)],
-    links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
+  return { links: links.map((link) => ({ bookingId: link.bookingId, planId: link.planId, kind: link.kind,
     path: `/c/${repository.customerToken(link)}`, expiresAt: link.expiresAt })),
     replies: links.filter((link) => link.reply).map((link) => {
       const reply = link.reply!;
@@ -258,24 +167,9 @@ export function ownerCustomerChoices(workspaceId: string, repository = getReposi
       const session = state.sessions.find((item) => item.id === (reply.sessionId ?? booking?.sessionId));
       const when = session ? new Intl.DateTimeFormat("en-US", { timeZone: state.studio.timezone, weekday: "long", hour: "numeric", minute: "2-digit" }).format(new Date(session.start)) : "their class";
       const receipt = receiptFor(link, repository);
-      const money = booking?.entitlement ? ` (${(reply.action === "refund" ? entitlementLabel : entitlementPaymentLabel)(booking.entitlement)})` : receipt?.status === "CREDIT_RESTORED" ? ` ($${receipt.amount} returned to your studio credit)`
-        : receipt ? ` ($${receipt.amount}, ${receipt.status === "SIMULATED" ? "simulated" : "PayPal"} ${receipt.paypalId || "pending"} · ${receipt.status.toLowerCase()})` : "";
+      const money = receipt ? ` ($${receipt.amount}, ${receipt.status === "SIMULATED" ? "simulated" : "PayPal"} ${receipt.paypalId || "pending"} · ${receipt.status.toLowerCase()})` : "";
       return { id: link.id, at: reply.at, action: reply.action,
-        text: `${customer} ${reply.action === "credit" ? `kept a $${Number(reply.amount)} studio credit` : reply.action === "refund" ? booking?.entitlement ? "cancelled this booking" : "took a refund" : reply.action === "move" ? `picked ${session?.title ?? "another class"} on ${when}` : `kept ${when}`}${money}` };
+        text: `${customer} ${reply.action === "refund" ? "took a refund" : reply.action === "move" ? `picked ${session?.title ?? "another class"} on ${when}` : `kept ${when}`}${money}` };
     }).sort((a, b) => b.at.localeCompare(a.at)) };
 }
 export type OwnerCustomerChoices = ReturnType<typeof ownerCustomerChoices>;
-
-export async function markCustomerContact(workspaceId: string, planId: string, customerId: string, sent: boolean, repository = getRepository()) {
-  return withWorkspaceLock(repository, workspaceId, () => repository.transaction(() => {
-    const { state } = repository.requireReadyWorkspace(workspaceId);
-    const links = repository.listCustomerLinks(workspaceId).filter((link) => link.planId === planId
-      && state.bookings.some((booking) => booking.id === link.bookingId && booking.customerId === customerId));
-    const offer = repository.listWaitlistOffers(workspaceId).find((item) => item.id === planId && item.customerId === customerId && item.status === "offered");
-    if (offer) repository.saveWaitlistOffer({ ...offer, sentAt: sent ? new Date().toISOString() : undefined });
-    if (!links.length && !offer) throw new StoreError(404, "Customer message not found in this recovery.");
-    const sentAt = sent ? new Date().toISOString() : undefined;
-    for (const link of links) repository.saveCustomerLink({ ...link, sentAt });
-    return ownerCustomerChoices(workspaceId, repository);
-  }));
-}

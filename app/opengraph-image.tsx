@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Rebook: when your schedule breaks, rebook everyone in one approval";
+export const alt = "Rebook: when your schedule breaks, recover your whole week in one approval";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -15,7 +15,7 @@ export default function OpenGraphImage() {
         <span style={{ fontSize: 46, fontWeight: 700, letterSpacing: -2 }}>rebook</span><span style={{ fontSize: 46, fontWeight: 700, color: "#b5643c", marginLeft: -18 }}>.</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-        <span style={{ fontSize: 68, lineHeight: 1.05, letterSpacing: -2, maxWidth: 980 }}>When your schedule breaks, rebook everyone in one approval.</span>
+        <span style={{ fontSize: 68, lineHeight: 1.05, letterSpacing: -2, maxWidth: 980 }}>When your schedule breaks, recover your whole week in one approval.</span>
         <span style={{ fontSize: 28, color: "#4a433c" }}>A recovery desk for class studios · refunds and cover pay with PayPal</span>
       </div>
       <div style={{ display: "flex", gap: 18 }}>{stat("25 of 31", "bookings kept")}{stat("$577", "of $712 kept")}{stat("6", "PayPal refunds, one approval")}</div>

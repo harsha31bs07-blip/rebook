@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   // Link previews need absolute URLs; behind Render the request host is internal.
   metadataBase: new URL(process.env.PUBLIC_ORIGIN?.trim() || "https://rebook-by9u.onrender.com"),
   title: "Rebook — a calmer week for your studio",
-  description: "When your schedule breaks, rebook everyone in one approval. Preview a recovery plan and handle refunds with PayPal sandbox.",
+  description: "When your schedule breaks, recover your whole week in one approval. Preview a recovery plan and handle refunds with PayPal sandbox.",
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {

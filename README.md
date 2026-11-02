@@ -1,6 +1,6 @@
 # Rebook
 
-When your schedule breaks, rebook everyone in one approval: a recovery desk for class studios, with owner-approved PayPal sandbox refunds.
+When your schedule breaks, recover your whole week in one approval: a recovery desk for class studios, with owner-approved PayPal sandbox refunds.
 
 **[Open the live demo](https://rebook-by9u.onrender.com)** | [How it is built](https://rebook-by9u.onrender.com/built-with) | [Agent-ready flow](https://rebook-by9u.onrender.com/agent-ready)
 

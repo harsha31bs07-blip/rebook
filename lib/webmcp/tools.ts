@@ -2,9 +2,17 @@ import type { PublicPlan } from "../client/api";
 import type { State } from "../domain/types";
 import { localParts } from "../domain/time";
 import type { ToolInput, ToolSchema, WebMcpTool } from "./bridge";
+import type { ChoiceProposal } from "../choices/assistant";
 
 const empty: ToolSchema = { type: "object", properties: {}, additionalProperties: false };
 const string = { type: "string" };
+export function choiceTools({ canChoose, busy, ask }: { canChoose: boolean; busy: boolean; ask(message: string, signal: AbortSignal): Promise<ChoiceProposal> }): WebMcpTool[] {
+  return canChoose && !busy ? [{ name: "ask_rebook_assistant",
+    description: "Propose one booking choice from the customer's preferences and show it on this private page. Does not change bookings or issue refunds. A human must click Confirm.",
+    inputSchema: { ...empty, properties: { message: { ...string, minLength: 1, maxLength: 300 } }, required: ["message"] },
+    annotations: { readOnlyHint: true }, execute: (input, { signal }) => ask(textArgument(input, "message", 300, true)!, signal),
+  }] : [];
+}
 export function textArgument(input: ToolInput, key: string, max: number, required = false): string | undefined {
   const value = input[key];
   if (value === undefined && !required) return;

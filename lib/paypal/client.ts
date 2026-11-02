@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController, PaymentsController, PaypalExperienceUserAction, TransactionSearchController } from "@paypal/paypal-server-sdk";
+import { ApiError, CheckoutPaymentIntent, Client, Environment, OrdersController, PaymentsController, PaypalExperienceUserAction, PaypalWalletContextShippingPreference, TransactionSearchController } from "@paypal/paypal-server-sdk";
 import type { ApiResponse, CapturedPayment, OAuthToken, Order, Refund, SearchResponse } from "@paypal/paypal-server-sdk";
 import { MoneySchema } from "../domain/schemas";
 
+type PayPalErrorDetail = { field?: string; issue?: string; link?: { href: string; rel?: string; method?: string }[] };
 export class PayPalError extends Error {
-  constructor(public status: number, name: string, message: string, public debugId?: string, public issues: string[] = []) {
+  constructor(public status: number, name: string, message: string, public debugId?: string, public issues: string[] = [], public details?: PayPalErrorDetail[]) {
     super(message);
     this.name = name;
   }
@@ -30,7 +31,7 @@ function sdk(): Client {
     let pending: Promise<OAuthToken> | undefined;
     const authFailure: { error?: unknown } = {};
     const client = new Client({
-      environment: settings.baseUrl.includes("sandbox") ? Environment.Sandbox : Environment.Production,
+      environment: Environment.Sandbox,
       timeout: 20_000,
       clientCredentialsAuthCredentials: {
         oAuthClientId: settings.clientId, oAuthClientSecret: settings.secret, oAuthClockSkew: 60,
@@ -107,17 +108,18 @@ function orderResult(response: ApiResponse<Order>): PayPalOrder {
 }
 
 function config(): Config {
-  const environment = process.env.PAYPAL_ENV || "sandbox";
-  if (environment !== "sandbox" && environment !== "live") throw new Error("PAYPAL_ENV must be sandbox or live");
+  const environment = process.env.PAYPAL_ENV ?? "sandbox";
+  if (environment !== "sandbox") throw new Error("PAYPAL_ENV must be sandbox; this demo cannot use live PayPal");
   const clientId = process.env.PAYPAL_CLIENT_ID;
   const secret = process.env.PAYPAL_CLIENT_SECRET;
   if (!clientId || !secret) throw new Error("PayPal credentials are not configured");
-  const baseUrl = environment === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
+  const baseUrl = "https://api-m.sandbox.paypal.com";
   return { baseUrl, clientId, secret, key: `${baseUrl}:${clientId}:${secret}` };
 }
 
 async function send(url: string, init: RequestInit): Promise<Response> {
-  // Three attempts total. Every retry reuses the exact request body and idempotency key.
+  // The fetch-only webhook verification endpoint and its OAuth exchange need their own
+  // retry policy. Three attempts total reuse the exact request body and idempotency key.
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(20_000) });
     if ((response.status !== 429 && response.status < 500) || attempt === 2) return response;
@@ -134,8 +136,18 @@ async function read<T>(response: Response): Promise<T> {
   const parsed = await response.json().catch(() => ({}));
   const body = parsed && typeof parsed === "object" ? parsed : {};
   if (!response.ok) {
+    const details = Array.isArray(body.details) ? body.details.flatMap((detail: unknown): PayPalErrorDetail[] => {
+      if (!detail || typeof detail !== "object") return [];
+      const { field, issue, link } = detail as Record<string, unknown>;
+      return [{ field: typeof field === "string" ? field : undefined, issue: typeof issue === "string" ? issue : undefined,
+        link: Array.isArray(link) ? link.flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== "object") return [];
+          const { href, rel, method } = entry as Record<string, unknown>;
+          return typeof href === "string" ? [{ href, rel: typeof rel === "string" ? rel : undefined, method: typeof method === "string" ? method : undefined }] : [];
+        }) : undefined }];
+    }) : undefined;
     const error = new PayPalError(response.status, typeof body.name === "string" ? body.name : "PAYPAL_ERROR",
-      typeof body.message === "string" ? body.message : "PayPal request failed", debugId);
+      typeof body.message === "string" ? body.message : "PayPal request failed", debugId, [], details);
     console.error("PayPal request failed", { status: error.status, name: error.name, debugId });
     throw error;
   }
@@ -185,7 +197,7 @@ const purchaseUnits = (amount: string, refs: PaymentRefs) => [{
 
 export async function createCardCapture(amount: string, refs: PaymentRefs): Promise<{ orderId: string; captureId: string; status: string; debugId?: string }> {
   // These test card details must never be sent to a live account.
-  if ((process.env.PAYPAL_ENV || "sandbox") !== "sandbox") throw new Error("Demo card captures require PayPal sandbox");
+  config();
   const order = orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
     paypalRequestId: refs.requestId ?? `${refs.workspaceId}${refs.bookingId}`, prefer: "return=representation",
     body: { intent: CheckoutPaymentIntent.Capture, purchaseUnits: purchaseUnits(amount, refs), paymentSource: { card: {
@@ -212,14 +224,21 @@ export async function captureOrder(orderId: string, requestId: string): Promise<
   })));
 }
 
-/** No payment source: the v6 wallet or card session supplies the buyer's choice. */
-export async function createBookingOrder(amount: string, refs: PaymentRefs & { requestId: string }, description: string): Promise<PayPalOrder> {
+export type BuyerHandoff = { returnUrl: string; cancelUrl: string; brandName: string };
+/**
+ * No payment source: the v6 wallet or card session supplies the buyer's choice. With a handoff (an AI agent prepared
+ * the order), the buyer approves on PayPal's own page through the payer-action link and returns to returnUrl.
+ */
+export async function createBookingOrder(amount: string, refs: PaymentRefs & { requestId: string }, description: string, handoff?: BuyerHandoff): Promise<PayPalOrder> {
   return orderResult(await sdkCall(() => new OrdersController(sdk()).createOrder({
     paypalRequestId: refs.requestId, prefer: "return=representation",
     body: { intent: CheckoutPaymentIntent.Capture,
-      purchaseUnits: purchaseUnits(amount, refs).map((unit) => ({ ...unit, description: description.slice(0, 127) })) },
+      purchaseUnits: purchaseUnits(amount, refs).map((unit) => ({ ...unit, description: description.slice(0, 127) })),
+      ...(handoff ? { paymentSource: { paypal: { experienceContext: { returnUrl: handoff.returnUrl, cancelUrl: handoff.cancelUrl, brandName: handoff.brandName.slice(0, 127),
+        userAction: PaypalExperienceUserAction.PayNow, shippingPreference: PaypalWalletContextShippingPreference.NoShipping } } } } : {}) },
   })));
 }
+export const approvalLink = (order: PayPalOrder): string | undefined => order.links?.find((link) => link.rel === "payer-action" || link.rel === "approve")?.href;
 
 export async function getOrder(orderId: string): Promise<PayPalOrder> {
   return orderResult(await sdkCall(() => new OrdersController(sdk()).getOrder({ id: orderId })));

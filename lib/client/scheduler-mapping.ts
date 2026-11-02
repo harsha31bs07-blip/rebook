@@ -6,10 +6,21 @@ import { addLocalDays, localParts, zonedTimeToUtc } from "../domain/time";
 
 export type RowMode = "instructors" | "rooms";
 export const visibleWorkingTime = { fromHour: 7, toHour: 21 };
+/** 7am-9pm, widened to every class and opening hour, so an imported 6am class or late class stays on the axis. */
+export function workingHours(state: State) {
+  const tz = state.studio.timezone, hours = Object.values(state.studio.openHours).flat();
+  const starts = [...state.sessions.map((session) => localParts(session.start, tz).minutesOfDay), ...hours.map((item) => clockMinutes(item.open))];
+  const ends = [...state.sessions.map((session) => localParts(session.end, tz).minutesOfDay || 24 * 60), ...hours.map((item) => clockMinutes(item.close))];
+  return { fromHour: Math.min(visibleWorkingTime.fromHour, ...starts.map((minutes) => Math.floor(minutes / 60))),
+    toHour: Math.max(visibleWorkingTime.toHour, ...ends.map((minutes) => Math.ceil(minutes / 60))) };
+}
+const clockMinutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+export const hourLabel = (hour: number) => hour % 24 === 0 ? "12am" : hour === 12 ? "12pm" : hour < 12 ? `${hour}am` : `${hour - 12}pm`;
+const clockOf = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
 export const classColors = {
-  yoga: ["#dbeafe", "#1e3a8a"], pilates: ["#dcfce7", "#14532d"],
-  spin: ["#fef3c7", "#78350f"], dance: ["#fce7f3", "#831843"],
-  hiit: ["#fee2e2", "#7f1d1d"], barre: ["#ede9fe", "#4c1d95"],
+  yoga: ["#e3ece2", "#2f5238"], pilates: ["#f3e2d6", "#7a3f22"],
+  spin: ["#f4e8cc", "#6b4c0b"], dance: ["#f4dfe4", "#7d2f45"],
+  hiit: ["#f1dbd4", "#7e2b1f"], barre: ["#e8e0ee", "#4f3563"],
 } as const;
 
 export function formatTime(instant: string, timezone: string) {
@@ -35,7 +46,7 @@ export function scheduleRange(state: State, zoom: "day" | "week", day: number, f
   const startKey = zoom === "day" ? addLocalDays(week.startKey, day) : week.startKey;
   const endKey = addLocalDays(startKey, zoom === "day" ? 1 : 7);
   return { startKey, endKey,
-    start: zonedTimeToUtc(startKey, zoom === "day" ? "07:00" : "00:00", state.studio.timezone),
+    start: zonedTimeToUtc(startKey, zoom === "day" ? clockOf(workingHours(state).fromHour) : "00:00", state.studio.timezone),
     end: zonedTimeToUtc(endKey, "00:00", state.studio.timezone),
     focusKey: focusPlan ? recoveryBounds(state, focusPlan).startKey : startKey };
 }
@@ -64,6 +75,7 @@ export function formatDisruptionWindow(from: string, to: string, timezone: strin
 }
 
 export function interpretationSource(source: string, model?: string) {
+  if (source === "groq") return "Groq";
   if (source !== "gemini") return "Rules";
   if (model?.includes("flash-lite")) return "Gemini Flash-Lite";
   if (model?.includes("flash")) return "Gemini Flash";

@@ -23,10 +23,11 @@ declare global {
   interface Window { paypal?: { createInstance(options: { clientId: string; components: string[]; pageType: string }): Promise<PayPalV6> } }
 }
 
-export function calendarFile(receipt: { bookingId: string; class: string; start: string; end: string }, studio: string) {
+export function calendarFile(receipt: { bookingId: string; class: string; start: string; end: string; current?: { class: string; start: string; end: string } }, studio: string) {
+  const session = receipt.current ?? receipt;
   const escape = (text: string) => text.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll(";", "\\;").replaceAll(",", "\\,").replaceAll("\r", "");
   const instant = (value: string) => new Date(value).toISOString().replaceAll(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Rebook//Class booking//EN", "BEGIN:VEVENT",
-    `UID:${receipt.bookingId}@rebook`, `DTSTAMP:${instant(new Date().toISOString())}`, `DTSTART:${instant(receipt.start)}`,
-    `DTEND:${instant(receipt.end)}`, `SUMMARY:${escape(receipt.class)}`, `LOCATION:${escape(studio)}`, "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+    `UID:${receipt.bookingId}@rebook`, `DTSTAMP:${instant(new Date().toISOString())}`, `DTSTART:${instant(session.start)}`,
+    `DTEND:${instant(session.end)}`, `SUMMARY:${escape(session.class)}`, `LOCATION:${escape(studio)}`, "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
 }

@@ -31,10 +31,10 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
     },
     instructors: [
       { id: "instructor-01", name: "Maya Chen", skills: ["yoga", "dance", "barre"], maxSessionsPerDay: 3 },
-      { id: "instructor-02", name: "Alex Rivera", skills: ["yoga", "pilates"], maxSessionsPerDay: 3 },
+      { id: "instructor-02", name: "Alex Rivera", skills: ["yoga", "pilates"], maxSessionsPerDay: 3, pay: { perClass: "35.00" } },
       { id: "instructor-03", name: "Sam Okafor", skills: ["spin", "hiit"], maxSessionsPerDay: 3 },
-      { id: "instructor-04", name: "Jordan Lee", skills: ["yoga", "hiit"], maxSessionsPerDay: 3 },
-      { id: "instructor-05", name: "Priya Shah", skills: ["pilates", "yoga"], maxSessionsPerDay: 3 },
+      { id: "instructor-04", name: "Jordan Lee", skills: ["yoga", "hiit"], maxSessionsPerDay: 3, pay: { perClass: "30.00", perAttendee: "2.00", cap: "50.00" } },
+      { id: "instructor-05", name: "Priya Shah", skills: ["pilates", "yoga"], maxSessionsPerDay: 3, pay: { perClass: "40.00" } },
       { id: "instructor-06", name: "Chris Morgan", skills: ["spin", "hiit", "pilates"], maxSessionsPerDay: 3 },
     ],
     rooms: [
@@ -157,11 +157,32 @@ export function seedStudio(seed = 42, weekStart = "2026-11-09T00:00:00-05:00"): 
       const suffix = String(state.bookings.length + 1).padStart(4, "0");
       state.bookings.push({
         id: `booking-${suffix}`, sessionId: session.id, customerId: customer.id, status: "confirmed", amount: session.price,
+        bookedAt: addMinutes(state.studio.weekStart, -7 * 24 * 60 + state.bookings.length),
         payment: { orderId: `SEED-ORDER-${suffix}`, captureId: `SEED-CAP-${suffix}` },
       });
       bookingCounts.set(customer.id, (bookingCounts.get(customer.id) ?? 0) + 1);
     }
   }
+  // Two members prefer refunds. Avery only books Maya; the substitute is not accepted.
+  // Taylor and Uma cannot attend Tuesday lunch; Indigo already booked Tuesday evening.
+  state.customers[0].prefs.windows = [
+    ...windows([1, 4], "07:00", "20:00"), ...windows([2], "17:00", "20:00"), ...windows([6], "09:30", "10:30"),
+  ];
+  state.customers[8].prefs.windows = [
+    ...windows([1], "17:00", "20:00"), ...windows([2], "12:15", "13:15"), ...windows([2], "18:45", "19:45"),
+  ];
+  delete state.customers[8].prefs.refundOnly;
+  for (const index of [19, 20]) state.customers[index].prefs.windows = state.customers[index].prefs.windows.filter((window) => window.weekday !== 2);
+  const taylorTuesday = state.bookings.find((booking) => booking.customerId === state.customers[19].id && booking.sessionId === "session-011");
+  if (taylorTuesday) taylorTuesday.customerId = state.customers[78].id;
+  // Devon can make Tuesday lunch, so availability no longer forces a demo refund.
+  state.customers[39].prefs.windows.push({ weekday: 2, from: "12:15", to: "13:15" });
+  // Monday's Dance and Barre Flow are full with a waitlist, so seats the recovery frees go to the next person in line.
+  for (const session of state.sessions.slice(1, 3)) session.capacity = state.bookings.filter((booking) => booking.sessionId === session.id).length;
+  state.waitlist = [1, 2].flatMap((sessionIndex) => state.customers.filter((customer) =>
+    !state.bookings.some((booking) => booking.sessionId === state.sessions[sessionIndex].id && booking.customerId === customer.id)).slice(0, 3)
+    .map((customer, index) => ({ id: `waitlist-${sessionIndex}-${index}`, sessionId: state.sessions[sessionIndex].id, customerId: customer.id,
+      joinedAt: addMinutes(state.studio.weekStart, -1440 + index) })));
   return state;
 }
 

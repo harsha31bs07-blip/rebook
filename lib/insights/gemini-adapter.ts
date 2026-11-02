@@ -6,7 +6,8 @@ type WireCall = NonNullable<StudioChatRequest["messages"][number]["tool_calls"]>
 type RememberedCall = { call: WireCall; turnId: string };
 type SignedCall = AgAiToolCall & { extra_content?: WireCall["extra_content"]; rebook_turn_id?: string };
 
-export const ANALYST_UNAVAILABLE = "The Recovery analyst can't reach Gemini right now. Your dashboard still works. Please try again shortly.";
+export const ANALYST_UNAVAILABLE = "The analyst is busy right now \u2014 try again in a moment.";
+export const ANALYST_CALL_TIMEOUT_MS = 45_000;
 
 export function toChatRequest(request: AgLlmRequest, remembered: ReadonlyMap<string, RememberedCall> = new Map()): StudioChatRequest {
   const messages: StudioChatRequest["messages"] = [];
@@ -70,29 +71,72 @@ export function fromChatCompletion(completion: StudioCompletion, remembered: Map
   return { response, events };
 }
 
+class AnalystInputError extends Error {}
+
+/** Free-tier providers refuse bursts for seconds at a time; a delegated chart request fires several turns quickly. */
+export const ANALYST_BUSY_RETRIES = 2;
+const retryDelayMs = (header: string | null) => {
+  const seconds = header === null ? NaN : Number(header);
+  return Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, 35_000);
+};
+
 export function geminiAdapter(endpoint: string, agent?: RecoveryAgentId): AgLlmAdapter {
   // Studio has no provider-metadata slot. Keep exact wire calls by callId as well as on output
   // items, so the opaque Google signature survives even if Studio clones its conversation items.
   const remembered = new Map<string, RememberedCall>();
   return {
     executeTurn(request, options) {
-      const pending = (async () => {
-        const unavailable = () => fromChatCompletion({ id: `unavailable-${Date.now()}`, choices: [{ finish_reason: "stop", message: { role: "assistant", content: ANALYST_UNAVAILABLE } }] }, remembered);
-        let response: Response;
-        try { response = await fetch(endpoint, { method: "POST", signal: options?.signal,
-          headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body: JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools, toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) }) });
-        } catch {
+      let controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      let rejectCancelled: (reason: unknown) => void = () => {};
+      const cancelled = new Promise<never>((_, reject) => {
+        rejectCancelled = reject;
+        onAbort = () => { controller.abort(); reject(options?.signal?.reason ?? new DOMException("Cancelled", "AbortError")); };
+        options?.signal?.addEventListener("abort", onAbort, { once: true });
+        if (options?.signal?.aborted) onAbort();
+      });
+      // Each attempt gets its own deadline; manual cancellation and the run guard still end everything.
+      const armTimeout = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        controller = new AbortController();
+        timer = setTimeout(() => { controller.abort(); rejectCancelled(new Error(ANALYST_UNAVAILABLE)); }, ANALYST_CALL_TIMEOUT_MS);
+      };
+      const body = JSON.stringify({ ...toChatRequest(request, remembered), ...(agent ? { harness: { agent, instructions: request.instructions ?? "", tools: request.tools ?? [], toolChoice: request.toolChoice, responseFormat: request.responseFormat } } : {}) });
+      const pending = Promise.race([(async () => {
+        for (let attempt = 0; ; attempt += 1) {
           options?.signal?.throwIfAborted();
-          return unavailable();
+          armTimeout();
+          const response = await fetch(endpoint, { method: "POST", signal: controller.signal,
+            headers: { "Content-Type": "application/json", ...(agent ? { "X-Rebook-Studio": "harness" } : {}) }, body });
+          // Retry only when the server reports that a model frees up shortly; real outages fail fast.
+          if ((response.status === 503 || response.status === 429) && response.headers.has("retry-after") && attempt < ANALYST_BUSY_RETRIES) {
+            if (timer !== undefined) clearTimeout(timer);
+            await response.body?.cancel();
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs(response.headers.get("retry-after"))));
+            continue;
+          }
+          return response;
         }
+      })().then(async (response) => {
         if (!response.ok) {
-          if (response.status >= 500 || response.status === 429) return unavailable();
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || "The recovery analyst is unavailable. Please try again shortly.");
+          if ([400, 404, 409, 413].includes(response.status)) {
+            const error = await response.json().catch(() => ({}));
+            const message = error.issues?.find((issue: { message?: unknown }) => typeof issue.message === "string")?.message ?? error.error;
+            throw new AnalystInputError(typeof message === "string" ? message : ANALYST_UNAVAILABLE);
+          }
+          throw new Error(ANALYST_UNAVAILABLE);
         }
-        try { return fromChatCompletion(await response.json(), remembered); }
-        catch { options?.signal?.throwIfAborted(); return unavailable(); }
-      })();
+        return fromChatCompletion(await response.json(), remembered);
+      }), cancelled]).catch((error: unknown) => {
+        options?.signal?.throwIfAborted();
+        if (error instanceof AnalystInputError) throw error;
+        // Reject both channels: successful text makes delegated runners retry complete_task.
+        throw new Error(ANALYST_UNAVAILABLE);
+      }).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        if (onAbort) options?.signal?.removeEventListener("abort", onAbort);
+      });
       const complete = pending.then((result) => result.response);
       // The stream consumer owns failures; avoid an unhandled rejection before it awaits complete.
       void complete.catch(() => {});

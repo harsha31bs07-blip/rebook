@@ -395,7 +395,7 @@ it("returns studio credit in one owner action when the booking system cancels a 
   await receiveEvents(workspace.id, { events: [{ eventId: "class-off", type: "session.cancelled", session: { id: booking.sessionId } }] }, repository);
   expect(state().bookings.find((row) => row.id === booking.id)?.status).toBe("refund_pending");
   expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "0.00" });
-  const requestId = `sync:${booking.id}`;
+  const requestId = `sync:${workspace.id}:${booking.id}`;
   expect(paymentsNeedingAttention(state(), repository.latestMoneyEvents(workspace.id))).toContainEqual(expect.objectContaining({ requestId, release: "Return studio credit" }));
   const response = await retryRefundRoute(new Request(`http://localhost/api/workspaces/${workspace.id}/refunds/retry`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ requestId }) }), { params: Promise.resolve({ id: workspace.id }) });
   expect(await response.json()).toMatchObject({ status: "CREDIT_RESTORED" });

@@ -160,7 +160,7 @@ it("hands a cancelled booking to the owner when Rebook holds its payment, and mo
   expect(state().bookings.find((row) => row.id === upstream.id)?.status).toBe("cancelled");
   expect(state().bookings.find((row) => row.id === held.id)?.status).toBe("refund_pending");
   const attention = paymentsNeedingAttention(state(), repository.latestMoneyEvents(id));
-  expect(attention).toEqual([expect.objectContaining({ requestId: `sync:${held.id}`, status: "FAILED", message: expect.stringContaining("Rebook still holds") })]);
+  expect(attention).toEqual([expect.objectContaining({ requestId: `sync:${id}:${held.id}`, status: "FAILED", message: expect.stringContaining("Rebook still holds") })]);
   expect(repository.listLedger(id).filter((row) => row.kind === "refund" && row.status !== "FAILED")).toEqual([]);
 });
 it("records an inbound paid booking as simulated, so a recovery's refund settles instead of failing forever", async () => {

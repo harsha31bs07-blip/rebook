@@ -282,10 +282,12 @@ it("lets the owner refund what's left after an earlier partial refund, once the 
   repository.appendLedger({ ...money, kind: "capture", amount: "22.00", paypalId: "CAP-PART", requestId: "capture:partly", status: "COMPLETED" });
   repository.appendLedger({ ...money, kind: "refund", amount: "4.00", paypalId: "PART-REFUND", requestId: "choice:partly", partial: true, status: "COMPLETED" });
   await receiveEvents(workspaceId, { events: [{ eventId: "off", type: "booking.cancelled", session: { id: sessionId }, customer: { name: customer.name, email: customer.email } }] }, repository);
-  const owed = () => repository.latestMoneyEvents(workspaceId).find((event) => event.requestId === "sync:partly")!;
+  // PayPal request ids are unique across the whole merchant account, and seeded studios share booking ids.
+  const requestId = `sync:${workspaceId}:partly`;
+  const owed = () => repository.latestMoneyEvents(workspaceId).find((event) => event.requestId === requestId)!;
   expect(owed()).toMatchObject({ status: "FAILED", amount: "18.00", neverSent: true });
-  expect(paymentsNeedingAttention(repository.requireWorkspace(workspaceId).state, repository.latestMoneyEvents(workspaceId))).toContainEqual(expect.objectContaining({ requestId: "sync:partly", release: "Refund now" }));
-  const response = await retryRefund(new Request(`http://localhost/api/workspaces/${workspaceId}/refunds/retry`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ requestId: "sync:partly" }) }), { params: Promise.resolve({ id: workspaceId }) });
+  expect(paymentsNeedingAttention(repository.requireWorkspace(workspaceId).state, repository.latestMoneyEvents(workspaceId))).toContainEqual(expect.objectContaining({ requestId, release: "Refund now" }));
+  const response = await retryRefund(new Request(`http://localhost/api/workspaces/${workspaceId}/refunds/retry`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ requestId }) }), { params: Promise.resolve({ id: workspaceId }) });
   expect(await response.json()).toMatchObject({ status: "COMPLETED" });
   expect(owed()).toMatchObject({ status: "COMPLETED", amount: "18.00" });
   expect(repository.requireWorkspace(workspaceId).state.bookings.find((item) => item.id === "partly")?.status).toBe("refunded");

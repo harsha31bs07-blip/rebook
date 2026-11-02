@@ -106,7 +106,7 @@ export async function askNextCover(workspaceId: string, planId: string, sessionI
     const revisedAt = new Date().toISOString();
     for (const link of repository.listCustomerLinks(workspaceId).filter((item) => item.planId === planId
       && state.bookings.some((booking) => booking.id === item.bookingId && booking.sessionId === sessionId && isActiveBooking(booking)))) {
-      const body = previous ? link.message.body.split(previous).join(next.name) : link.message.body;
+      const body = previous ? renameInstructor(link.message.body, state.studio.name, previous, next.name) : link.message.body;
       repository.saveCustomerLink({ ...link, sentAt: undefined, revisedAt, ...(link.after ? { after: { ...link.after, instructorId: next.id } } : {}),
         message: { subject: `New instructor for your ${session.title} class`, body: body.replace(/^(Hi [^\n]*,\n\n)/, `$1Update: ${next.name} is now teaching this class${previous ? ` instead of ${previous}` : ""}. `) } });
     }
@@ -147,6 +147,13 @@ export async function updateInstructorPay(workspaceId: string, instructorId: str
     }
   }));
   return ownerCovers(workspaceId, repository);
+}
+
+/** Swap an instructor's name in a customer's message, leaving their greeting, the studio's name and longer words alone. */
+export function renameInstructor(body: string, studio: string, from: string, to: string): string {
+  const name = new RegExp(`(?<![\\p{L}\\p{N}])${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "gu");
+  const [, greeting = "", rest = body] = /^(Hi [^\n]*,\n\n)([\s\S]*)$/.exec(body) ?? [];
+  return greeting + rest.split(studio).map((part) => part.replace(name, () => to)).join(studio);
 }
 
 /** Replays of an unconfirmed payout stop a day inside PayPal's 30-day duplicate check on sender_batch_id. */
@@ -215,8 +222,9 @@ export async function payCover(workspaceId: string, planId: string, sessionId: s
       const replay = payout.createdAt !== payout.updatedAt;
       if (!replay && error instanceof PayPalError && error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status) && !/DUPLICATE/i.test(`${error.name} ${error.message}`)) {
         repository.saveCoverPayout({ ...payout, status: "FAILED", error: `PayPal declined the payout (${error.name}).`, updatedAt: new Date().toISOString() });
+        throw new StoreError(422, `PayPal declined this payout (${error.name}). Nothing was sent, so you can fix it and pay again.`);
       } else {
-        if (error instanceof PayPalError) repository.saveCoverPayout({ ...payout, error: "PayPal may already have this payout. Check it in PayPal before paying another way.", updatedAt: new Date().toISOString() });
+        repository.saveCoverPayout({ ...payout, error: "PayPal may already have this payout. Check it in PayPal before paying another way.", updatedAt: new Date().toISOString() });
         throw new StoreError(502, "PayPal did not confirm the payout yet. Check again before paying another way.");
       }
     }

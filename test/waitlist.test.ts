@@ -18,6 +18,8 @@ import { GET, POST } from "../app/api/waitlist/[token]/route";
 import { POST as retryRefund } from "../app/api/workspaces/[id]/refunds/retry/route";
 import { StateSchema } from "../lib/domain/schemas";
 import { packBalance } from "../lib/domain/pack-balances";
+import { refundOwed } from "../lib/store";
+import { resetWorkspace } from "../lib/demo/createWorkspace";
 
 let directory: string, repository: Repository, workspaceId: string, sessionId: string;
 type Order = { id: string; status: string; purchase_units: { reference_id: string; custom_id: string; amount: { currency_code: string; value: string }; payments?: { captures: { id: string; status: string; amount: { currency_code: string; value: string } }[] } }[] };
@@ -250,4 +252,22 @@ it("lets a visitor join a full class's waitlist from the public booking page, sa
   expect((await call(input)).status).toBe(200);
   expect(repository.requireWorkspace(workspaceId).state.waitlist!.filter((entry) => entry.sessionId === sessionId)).toHaveLength(4);
   expect((await call(input, "https://evil.example")).status).toBe(403);
+});
+
+it("returns a late waitlist payment when the buyer comes back, without waiting for the owner", async () => {
+  const state = setup(); fillFreedSeats(workspaceId, repository);
+  const customer = state.customers[0], order = await createOrder(workspaceId, { sessionId, customer: { name: customer.name, email: customer.email }, waitlistToken: token() }, randomUUID(), repository);
+  state.bookings.push({ id: "other", customerId: state.customers[2].id, sessionId, amount: "0.00", status: "confirmed" });
+  repository.saveState(workspaceId, state);
+  const paid = orders.get(order.orderId)!; paid.status = "COMPLETED";
+  paid.purchase_units[0].payments = { captures: [{ id: "LATE-CAPTURE", status: "COMPLETED", amount: paid.purchase_units[0].amount }] };
+  const row = repository.listCheckout(workspaceId)[0];
+  // The webhook can only record what's owed, which keeps the studio from being pruned or reset away.
+  confirmOrder(row, paid, repository);
+  const owed = () => repository.latestMoneyEvents(workspaceId).find((event) => event.requestId === `waitlist:${row.id}`)!;
+  expect(owed().status).toBe("FAILED"); expect(refundOwed(owed())).toBe(true);
+  await expect(resetWorkspace(workspaceId, { repository })).rejects.toMatchObject({ status: 409 });
+  repository.pruneOlderThan(-1); expect(repository.getWorkspace(workspaceId)).toBeTruthy();
+  expect(await captureCheckout(workspaceId, order.orderId, repository)).toMatchObject({ spotTaken: true, current: { status: "refunded" } });
+  expect(owed().status).toBe("COMPLETED");
 });

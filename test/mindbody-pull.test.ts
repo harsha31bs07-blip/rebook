@@ -118,3 +118,17 @@ it("still imports an external class cancellation after an own booking removal", 
   api.classes[0].IsCanceled = true;
   expect((await pullFromMindbody(id, repository, api.client)).results).toEqual([{ eventId: "mb:session.cancelled:19167", status: "applied" }]);
 });
+
+it("keeps pulling when Mindbody sends a value Rebook can't use, and treats an overdrawn pack as empty", async () => {
+  api.services["100015648"][0].Remaining = -2; api.classes[0].MaxCapacity = 0;
+  api.people.push({ Id: "700", FirstName: "Reese", LastName: "Lane", Email: "reese@example.com" });
+  api.visits[19167].push({ Id: 701, ClientId: "700" });
+  const { results } = await pullFromMindbody(id, repository, api.client);
+  expect(results).toContainEqual({ eventId: "mb:capacity:19167:0", status: "rejected", message: "Mindbody sent a value Rebook can't use." });
+  expect(results).toContainEqual({ eventId: "mb:booking.created:19167:700:701", status: "applied" });
+  expect(results.find((row) => row.eventId.startsWith("mb:pack:"))).toMatchObject({ status: "applied" });
+  expect(state().syncPackBalances?.[0].visitsLeft).toBe(0);
+  // The bad value keeps being rejected on its own; everything else stays applied once.
+  const again = await pullFromMindbody(id, repository, api.client);
+  expect(again.results.map((row) => row.status)).toEqual(["rejected"]);
+});

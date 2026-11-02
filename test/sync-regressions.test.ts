@@ -15,6 +15,7 @@ import { packBalance } from "../lib/domain/pack-balances";
 import { buildInsights } from "../lib/insights/data";
 import { allChanges, pendingChanges } from "../lib/sync/feed";
 import { acknowledge, receiveEvents } from "../lib/sync/service";
+import { paymentsNeedingAttention } from "../lib/recovery/payment-attention";
 
 let directory: string, repository: Repository, id: string;
 const state = () => repository.requireWorkspace(id).state;
@@ -117,7 +118,7 @@ it("exports each replacement cover from durable links after an acknowledged reco
   expect(allChanges(id, repository)).toContainEqual(changes[0]);
 });
 it("imports a full class's replacement before offering its freed seat to the waitlist", async () => {
-  const initial = seedStudio(); initial.sessions = [initial.sessions[0]]; initial.sessions[0].capacity = 1; initial.bookings = [initial.bookings[0]];
+  const initial = seedStudio(); initial.sessions = [initial.sessions[0]]; initial.sessions[0].capacity = 1; initial.bookings = [initial.bookings[0]]; initial.bookings[0].payment!.simulated = true;
   initial.waitlist = [{ id: "waiting", sessionId: initial.sessions[0].id, customerId: initial.customers[1].id, joinedAt: new Date().toISOString() }];
   id = repository.createWorkspace(initial).id;
   const result = await receiveEvents(id, { events: [
@@ -125,7 +126,7 @@ it("imports a full class's replacement before offering its freed seat to the wai
     { eventId: "replacement", type: "booking.created", session: { id: initial.sessions[0].id }, customer: { name: initial.customers[2].name } },
   ] }, repository);
   expect(result.results.map((row) => row.status)).toEqual(["applied", "applied"]);
-  expect(repository.listWaitlistOffers(id)).toEqual([]); expect(repository.listLedger(id)).toEqual([]);
+  expect(repository.listWaitlistOffers(id)).toEqual([]); expect(repository.listLedger(id).filter((row) => row.kind === "refund")).toEqual([]);
 });
 it("cancels a class without money movement, retaining details and excluding it from all booking paths", async () => {
   await hero(); const links = repository.listCustomerLinks(id).filter((row) => row.kind === "choice"), link = links[0];
@@ -146,4 +147,28 @@ it("cancels a class without money movement, retaining details and excluding it f
   expect(buildInsights(state(), repository.listPlans(id), repository.listLedger(id)).sessions.find((row) => row.id === session.id)?.title).toBe(session.title);
   expect(allChanges(id, repository)).toEqual(feed); expect(repository.listLedger(id)).toEqual(before);
   expect((await receiveEvents(id, { events: [{ eventId: "revive", type: "booking.created", session: { id: session.id }, customer: person() }] }, repository)).results[0]).toMatchObject({ status: "rejected" });
+});
+
+it("hands a cancelled booking to the owner when Rebook holds its payment, and moves no money", async () => {
+  const initial = seedStudio(); initial.sessions = [initial.sessions[0]]; initial.sessions[0].capacity = 9;
+  initial.bookings = [initial.bookings[0], initial.bookings[1]]; for (const booking of initial.bookings) booking.sessionId = initial.sessions[0].id;
+  initial.bookings[1].payment!.simulated = true;
+  id = repository.createWorkspace(initial).id;
+  const [held, upstream] = initial.bookings, name = (booking: typeof held) => initial.customers.find((row) => row.id === booking.customerId)!;
+  const cancel = (eventId: string, booking: typeof held) => receiveEvents(id, { events: [{ eventId, type: "booking.cancelled", session: { id: initial.sessions[0].id }, customer: { name: name(booking).name, email: name(booking).email } }] }, repository);
+  await cancel("held", held); await cancel("upstream", upstream);
+  expect(state().bookings.find((row) => row.id === upstream.id)?.status).toBe("cancelled");
+  expect(state().bookings.find((row) => row.id === held.id)?.status).toBe("refund_pending");
+  const attention = paymentsNeedingAttention(state(), repository.latestMoneyEvents(id));
+  expect(attention).toEqual([expect.objectContaining({ requestId: `sync:${held.id}`, status: "FAILED", message: expect.stringContaining("Rebook still holds") })]);
+  expect(repository.listLedger(id).filter((row) => row.kind === "refund" && row.status !== "FAILED")).toEqual([]);
+});
+it("records an inbound paid booking as simulated, so a recovery's refund settles instead of failing forever", async () => {
+  const initial = seedStudio(); initial.sessions = [initial.sessions[0]]; initial.sessions[0].capacity = 9; initial.bookings = [];
+  id = repository.createWorkspace(initial).id;
+  await receiveEvents(id, { events: [{ eventId: "paid", type: "booking.created", session: { id: initial.sessions[0].id }, customer: person(), amount: "22.00" }] }, repository);
+  const [booking] = state().bookings;
+  expect(booking.payment).toMatchObject({ simulated: true });
+  expect(await executeRefund(id, { bookingId: booking.id, amount: "22.00", reason: "Recovery" }, "plan:refund", repository, () => {})).toMatchObject({ status: "SIMULATED" });
+  expect(state().bookings[0].status).toBe("refunded");
 });

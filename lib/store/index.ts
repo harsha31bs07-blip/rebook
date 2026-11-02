@@ -34,6 +34,10 @@ export type LedgerEvent = {
   partial?: boolean;
   mergedInto?: string;
 };
+/** Money a customer is still owed that only the owner can release: a lost waitlist seat, or a class the booking system cancelled. */
+export const refundOwed = (event: { kind: string; status: string; requestId: string }) =>
+  event.kind === "refund" && event.status === "FAILED" && /^(waitlist|sync):/.test(event.requestId);
+
 export type CustomerLink = {
   id: string; tokenHash: string; workspaceId: string; planId: string; bookingId: string;
   kind: "choice" | "receipt"; expiresAt: number; createdAt: string;
@@ -686,7 +690,7 @@ export class Repository {
         if (this.listCredits(id).some((credit) => credit.status === "available" && toCents(credit.remaining) > 0)) continue;
         // A timed-out capture can still have charged the buyer; keep its recovery reference.
         if (this.listCheckout(id).some((row) => row.status === "capturing" || (row.status === "pending" && row.expiresAt > Date.now()))) continue;
-        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status))) continue;
+        if (this.latestMoneyEvents(id).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status) || refundOwed(event))) continue;
         // An unconfirmed or still-open payout keeps the batch reference the owner needs to check it in PayPal.
         if (this.listCoverPayouts(id).some((payout) => ["REQUESTED", "PENDING", "UNCLAIMED", "ONHOLD"].includes(payout.status))) continue;
         this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);

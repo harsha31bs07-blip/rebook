@@ -24,7 +24,7 @@ export function ReturnView({ outcome, timezone, onCheck }: { outcome: Outcome; t
   if (outcome.kind === "stopped") return <><h1>{outcome.title}</h1><p role="alert">{outcome.message}</p></>;
   if (outcome.kind === "unknown") return <><h1>We haven&apos;t confirmed this payment yet</h1><p role="alert">{outcome.message}</p><button className="primary" onClick={onCheck}>Check this payment again</button></>;
   const { receipt } = outcome, paid = <p className="muted">Paid ${receipt.amount} with PayPal (sandbox){receipt.captureId ? ` · capture ${receipt.captureId}` : ""}.</p>;
-  if (receipt.spotTaken) return <><h1>Sorry, this spot was just taken</h1><p role="status">Your payment of ${receipt.amount} is being refunded to your PayPal account.</p></>;
+  if (receipt.spotTaken) return <><h1>Sorry, this spot was just taken</h1><p role="status">We&apos;re returning your ${receipt.amount} to your PayPal account. The studio can see this until it&apos;s done.</p></>;
   const current = receipt.current;
   // On a later visit the class may have moved or been refunded by a recovery: the booking as it stands now comes first.
   if (current?.changed && ["confirmed", "moved"].includes(current.status)) return <><h1>Your booking has changed</h1><p role="status">{current.class} · <time dateTime={current.start}>{format(current.start)}</time></p>{paid}<p className="muted">You first booked {receipt.class}, {format(receipt.start)}.</p></>;

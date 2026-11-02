@@ -21,6 +21,9 @@ import { executePlan } from "../lib/executor/executePlan";
 import { executeRefund } from "../lib/executor/refund";
 import { checkRefund } from "../lib/executor/refund-sweep";
 import { withWorkspaceLock } from "../lib/store";
+import { receiveEvents } from "../lib/sync/service";
+import { paymentsNeedingAttention } from "../lib/recovery/payment-attention";
+import { POST as retryRefundRoute } from "../app/api/workspaces/[id]/refunds/retry/route";
 
 let directory: string, repository: Repository, calls: string[];
 beforeEach(() => {
@@ -383,4 +386,20 @@ it("emails the lasting credit link when the customer chooses credit on the priva
   expect(JSON.parse(brevo.mock.calls[0][1].body).textContent).toContain(`https://studio.org${view.credit.path}`);
   expect((await choose()).status).toBe(200); expect(brevo).toHaveBeenCalledOnce();
   vi.unstubAllGlobals();
+});
+
+it("returns studio credit in one owner action when the booking system cancels a credit-paid class", async () => {
+  const { workspace, creditToken } = await issue();
+  const receipt = await redeemCredit(workspace.id, input(creditToken), randomUUID(), repository);
+  const state = () => repository.requireWorkspace(workspace.id).state, booking = state().bookings.find((row) => row.id === receipt.bookingId)!;
+  await receiveEvents(workspace.id, { events: [{ eventId: "class-off", type: "session.cancelled", session: { id: booking.sessionId } }] }, repository);
+  expect(state().bookings.find((row) => row.id === booking.id)?.status).toBe("refund_pending");
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "0.00" });
+  const requestId = `sync:${booking.id}`;
+  expect(paymentsNeedingAttention(state(), repository.latestMoneyEvents(workspace.id))).toContainEqual(expect.objectContaining({ requestId, creditReturn: true }));
+  const response = await retryRefundRoute(new Request(`http://localhost/api/workspaces/${workspace.id}/refunds/retry`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ requestId }) }), { params: Promise.resolve({ id: workspace.id }) });
+  expect(await response.json()).toMatchObject({ status: "CREDIT_RESTORED" });
+  expect(studioCredit(workspace.id, creditToken, repository)).toMatchObject({ remaining: "22.00", status: "available" });
+  expect(state().bookings.find((row) => row.id === booking.id)?.status).toBe("refunded");
+  expect(calls).toEqual([]);
 });

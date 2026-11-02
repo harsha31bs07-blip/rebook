@@ -1,6 +1,6 @@
 import { addLocalDays, localParts } from "../../domain/time";
 import { getRepository, StoreError, withWorkspaceLock, type Repository } from "../../store";
-import type { InboundEvent } from "../../sync/schemas";
+import { InboundEventSchema, type InboundEvent } from "../../sync/schemas";
 import { allChanges } from "../../sync/feed";
 import { receiveEvents } from "../../sync/service";
 import { MindbodyClient, mindbodyClient } from "./client";
@@ -92,12 +92,14 @@ export async function pullFromMindbody(workspaceId: string, repository: Reposito
       if (!service) continue;
       if (link.ownPacks[clientId] === service.Remaining) { snapshot.remaining = service.Remaining; delete link.ownPacks[clientId]; }
       const expires = service.ExpirationDate?.slice(0, 10);
-      if (service.Remaining !== snapshot.remaining || expires !== snapshot.expires) queue.push({ event: { eventId: eventId(`mb:pack:${clientId}:${service.Remaining}`), type: "pack.balance", customer: person(clientId), visitsLeft: service.Remaining, ...(expires ? { expires } : {}) }, accept: () => { snapshot.remaining = service.Remaining; snapshot.expires = expires; } });
+      if (service.Remaining !== snapshot.remaining || expires !== snapshot.expires) queue.push({ event: { eventId: eventId(`mb:pack:${clientId}:${service.Remaining}`), type: "pack.balance", customer: person(clientId), visitsLeft: Math.max(0, service.Remaining), ...(expires ? { expires } : {}) }, accept: () => { snapshot.remaining = service.Remaining; snapshot.expires = expires; } });
     }
-    const results: Awaited<ReturnType<typeof receiveEvents>>["results"] = [];
-    for (let index = 0; index < queue.length; index += 100) {
+    const usable = queue.filter((row) => InboundEventSchema.safeParse(row.event).success);
+    const results: Awaited<ReturnType<typeof receiveEvents>>["results"] = queue.filter((row) => !usable.includes(row))
+      .map((row) => ({ eventId: row.event.eventId, status: "rejected" as const, message: "Mindbody sent a value Rebook can't use." }));
+    for (let index = 0; index < usable.length; index += 100) {
       fence();
-      const batch = queue.slice(index, index + 100), received = await receiveEvents(workspaceId, { events: batch.map((row) => row.event) }, repository);
+      const batch = usable.slice(index, index + 100), received = await receiveEvents(workspaceId, { events: batch.map((row) => row.event) }, repository);
       for (const result of received.results) {
         if (result.status !== "rejected") {
           batch.find((row) => row.event.eventId === result.eventId)!.accept();
@@ -112,11 +114,6 @@ export async function pullFromMindbody(workspaceId: string, repository: Reposito
       for (const clientId of unknown) {
         const reference = person(clientId), customer = latest.customers.find((row) => row.email.toLowerCase() === reference.email.toLowerCase());
         if (customer) link.clients[customer.id] = clientId;
-      }
-      for (const booking of latest.bookings.filter((row) => !row.entitlement && !row.payment && (row.customerId in link.clients))) {
-        const captureId = `IMPORT-CAP-${booking.id}`;
-        booking.payment = { orderId: `IMPORT-ORDER-${booking.id}`, captureId, simulated: true };
-        repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "capture", amount: booking.amount, paypalId: captureId, captureId, requestId: `${workspaceId}${booking.id}`, status: "SIMULATED" });
       }
       repository.saveState(workspaceId, latest);
       link.lastPull = new Date().toISOString(); fence(); repository.saveMindbodyLink(workspaceId, link);

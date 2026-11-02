@@ -46,7 +46,7 @@ export default function WaitlistOfferPage({ token, clientId }: { token: string; 
       {paying && data.session ? <><h2>Complete your booking</h2><p>{data.customer.name} · {data.customer.email}</p>
         <Payments id={data.bookingId} session={data.session} customer={data.customer} waitlistToken={token} clientId={clientId} sandbox validate={() => true}
           onSuccess={(receipt) => { setData({ ...data, status: receipt.spotTaken ? "expired" : "claimed", canClaim: false }); setPaying(false);
-            if (receipt.spotTaken) setError("Sorry, this spot was just taken. Your payment needs a refund; please contact the studio."); }} onLockChange={setLocked} />
+            if (receipt.spotTaken) setError("Sorry, this spot was just taken. We're returning your payment to your PayPal account, and the studio can see this until it's done."); }} onLockChange={setLocked} />
         <button disabled={locked} onClick={() => setPaying(false)}>Back</button></>
         : <div className="choice-actions"><button className="primary" disabled={busy || !data.canClaim} onClick={() => void choose("claim")}>Claim this spot</button><button disabled={busy} onClick={() => void choose("decline")}>No thanks</button></div>}
     </>}</> : <><h1>Your waitlist spot</h1>{!error && <p role="status">Loading your waitlist spot…</p>}</>}

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BookingSchema, CustomerSchema, StateSchema, WaitlistEntrySchema } from "../domain/schemas";
+import { toCents } from "../domain/time";
 import type { State } from "../domain/types";
 import { packChangeId, packReturns } from "../domain/pack-balances";
 import { seatsLeft } from "../checkout/service";
@@ -29,6 +30,15 @@ function resolveCustomer(state: State, reference: { name: string; email?: string
     prefs: { windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, from: "00:00", to: "23:59" })), acceptsSubstitute: true, availabilityKnown: false } });
   state.customers.push(customer); return customer;
 }
+/** Inbound events never move money. When Rebook itself holds the payment, the refund waits for the owner under payments needing attention. */
+function cancelInbound(workspaceId: string, booking: State["bookings"][number], repository: Repository): void {
+  const creditPaid = repository.listCheckout(workspaceId).some((row) => row.id === booking.id && row.paidWith === "credit");
+  if (!creditPaid && (!booking.payment || booking.payment.simulated)) { booking.status = "cancelled"; return; }
+  booking.status = "refund_pending";
+  repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "refund", amount: booking.amount, paypalId: "", captureId: booking.payment?.captureId ?? "", requestId: `sync:${booking.id}`,
+    status: "FAILED", error: creditPaid ? "Cancelled in your booking system. Return this studio credit to the customer." : "Cancelled in your booking system. Rebook still holds this payment, so refund it here." });
+}
+
 function applyEvent(workspaceId: string, event: InboundEvent, repository: Repository): void {
   const { state } = repository.requireReadyWorkspace(workspaceId);
   if (repository.listPlans(workspaceId).some((plan) => plan.status === "proposed")) throw new StoreError(409, "A recovery preview is open; approve or discard it first.");
@@ -55,7 +65,7 @@ function applyEvent(workspaceId: string, event: InboundEvent, repository: Reposi
     if (reservations.some((row) => row.sessionId === session.id && row.status === "capturing")) throw new StoreError(409, "A customer payment is being reconciled; retry later");
     state.sessions = state.sessions.filter((row) => row.id !== session.id);
     state.cancelledSessions = [...(state.cancelledSessions ?? []), session];
-    for (const booking of state.bookings) if (booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)) booking.status = "cancelled";
+    for (const booking of state.bookings) if (booking.sessionId === session.id && ["confirmed", "moved"].includes(booking.status)) cancelInbound(workspaceId, booking, repository);
     state.waitlist = (state.waitlist ?? []).filter((row) => row.sessionId !== session.id);
     withdrawWaitlistOffers(workspaceId, new Set([session.id]), repository);
     for (const row of reservations) if (row.sessionId === session.id && row.status === "pending") repository.saveCheckout({ ...row, status: "failed" });
@@ -73,11 +83,18 @@ function applyEvent(workspaceId: string, event: InboundEvent, repository: Reposi
       if (active) throw new StoreError(409, "Customer is already booked in this class");
       if (!seatsLeft(state, session, reservations, undefined, offers)) throw new StoreError(409, "Class is full");
       if (event.entitlement && event.amount && event.amount !== "0.00") throw new StoreError(400, "Entitlement bookings must have zero amount");
-      state.bookings.push(BookingSchema.parse({ id: randomUUID(), sessionId: session.id, customerId: customer.id,
-        status: "confirmed", bookedAt: new Date().toISOString(), amount: event.entitlement ? "0.00" : event.amount ?? session.price, entitlement: event.entitlement }));
+      const booking = BookingSchema.parse({ id: randomUUID(), sessionId: session.id, customerId: customer.id,
+        status: "confirmed", bookedAt: new Date().toISOString(), amount: event.entitlement ? "0.00" : event.amount ?? session.price, entitlement: event.entitlement });
+      // The booking system holds this payment. Recording it as simulated, like an imported booking, lets a recovery report its refund instead of failing on a capture Rebook never made.
+      if (!booking.entitlement && toCents(booking.amount) > 0) {
+        const captureId = `IMPORT-CAP-${booking.id}`;
+        booking.payment = { orderId: `IMPORT-ORDER-${booking.id}`, captureId, simulated: true };
+        repository.appendLedger({ workspaceId, bookingId: booking.id, kind: "capture", amount: booking.amount, paypalId: captureId, captureId, requestId: `${workspaceId}${booking.id}`, status: "SIMULATED" });
+      }
+      state.bookings.push(booking);
     } else if (event.type === "booking.cancelled") {
       if (!active) throw new StoreError(404, "Active booking not found");
-      active.status = "cancelled";
+      cancelInbound(workspaceId, active, repository);
     } else if (event.type === "waitlist.joined") {
       if (active) throw new StoreError(409, "Customer is already booked in this class");
       state.waitlist ??= [];

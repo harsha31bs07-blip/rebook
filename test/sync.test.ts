@@ -142,8 +142,8 @@ it("applies booking creation, matches title/instant and email, rejects duplicate
   expect(await event(input)).toEqual({ eventId: "create", status: "applied" });
   expect(await event(input)).toEqual({ eventId: "create", status: "duplicate" });
   expect(await event({ ...input, eventId: "again" })).toMatchObject({ status: "rejected", message: "Customer is already booked in this class" });
-  expect(state().bookings).toHaveLength(1); expect(state().bookings[0].payment).toBeUndefined();
-  expect(changeFeed(id, repository).pending).toBe(0); expect(repository.listLedger(id)).toEqual([]);
+  expect(state().bookings).toHaveLength(1); expect(state().bookings[0].payment).toMatchObject({ simulated: true });
+  expect(changeFeed(id, repository).pending).toBe(0); expect(repository.listLedger(id).filter((row) => row.kind === "refund")).toEqual([]);
 });
 it("creates customers only for bookings and joining, including optional entitlement names", async () => {
   expect(await event({ eventId: "missing", type: "pack.balance", customer: { name: "New" }, visitsLeft: 3 })).toMatchObject({ status: "rejected", message: "Customer not found" });
@@ -181,7 +181,7 @@ it("cancellation frees a seat for a waitlist offer, leaving money alone; leaving
   expect(state().bookings[0].status).toBe("cancelled"); expect(repository.listWaitlistOffers(id)[0].status).toBe("offered");
   expect(await event({ eventId: "left", type: "waitlist.left", session: ref(), customer: customer(1) })).toMatchObject({ status: "applied" });
   expect(state().waitlist).toEqual([]); expect(repository.listWaitlistOffers(id)[0].status).toBe("withdrawn");
-  expect(allChanges(id, repository)).toEqual([]); expect(repository.listLedger(id)).toEqual([]);
+  expect(allChanges(id, repository)).toEqual([]); expect(repository.listLedger(id).filter((row) => row.kind === "refund")).toEqual([]);
 });
 it("capacity increases offer seats and decreases respect bookings, checkout holds and open offers", async () => {
   setup(1);

@@ -23,7 +23,8 @@ export function coverNeedsOwner(cover: Cover): boolean {
   if (coverSettled(cover) || !cover.current) return false;
   if (cover.status === "declined") return true;
   if (!cover.payout) return cover.status === "accepted";
-  return !IN_MOTION.includes(cover.payout.status) || (cover.payout.status === "REQUESTED" && !!cover.payout.error);
+  // A send finishes within the request, so a payout still REQUESTED is one PayPal never confirmed. Only the owner's check resolves it.
+  return !IN_MOTION.includes(cover.payout.status) || cover.payout.status === "REQUESTED";
 }
 
 /** One plain sentence for a cover. Every payout status is named, so a failed payout never reads as on its way. */
@@ -33,7 +34,7 @@ export function coverLine(cover: Cover): string {
     const amount = money(payout.amount);
     switch (payout.status) {
       case "SUCCESS": return `${name} paid ${amount} with PayPal`;
-      case "REQUESTED": return payout.error ? `${name}'s ${amount} payout needs checking in PayPal before paying another way` : `${name}'s ${amount} payout is being sent to PayPal`;
+      case "REQUESTED": return `PayPal hasn't confirmed ${name}'s ${amount} payout; check it before paying another way`;
       case "PENDING": return `${name}'s ${amount} payout is processing at PayPal`;
       case "UNCLAIMED": return `${name} hasn't claimed the ${amount} payout yet`;
       case "ONHOLD": return `PayPal has put ${name}'s ${amount} payout on hold`;

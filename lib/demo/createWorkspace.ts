@@ -3,7 +3,8 @@ import type { State } from "../domain/types";
 import { createCardCapture, lookupCardCapture, PayPalError } from "../paypal/client";
 import { demoDisruptionFor, floodDisruptionFor, nextWeekStart, seedStudio } from "../seed/seed";
 import { affectedSessions } from "../solver/validate";
-import { getRepository, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
+import { toCents } from "../domain/time";
+import { getRepository, refundOwed, StoreError, withWorkspaceLock, type Repository, type Workspace } from "../store";
 import { reconcileRefund } from "../executor/reconcileRefund";
 import { limits } from "../api/limits";
 
@@ -247,9 +248,16 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
       await reconcileRefund(event, repository);
     }
     if (repository.listCheckout(workspaceId).some((row) => row.status === "capturing") ||
-      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status)) ||
+      repository.latestMoneyEvents(workspaceId).some((event) => ["REQUESTED", "PENDING", "UNKNOWN", "NEEDS_REVIEW"].includes(event.status) || refundOwed(event)) ||
       repository.listPlans(workspaceId).some((plan) => ["executing", "partially_failed"].includes(plan.status))) {
       throw new StoreError(409, "Finish or retry pending refunds first");
+    }
+    // Clearing plans would delete these with them, along with what the owner needs to check them.
+    if (repository.listCoverPayouts(workspaceId).some((payout) => ["REQUESTED", "PENDING", "UNCLAIMED", "ONHOLD"].includes(payout.status))) {
+      throw new StoreError(409, "A cover payout is still open with PayPal. Check it under Cover pay, or open a fresh demo.", "RESET_BLOCKED");
+    }
+    if (repository.listCredits(workspaceId).some((credit) => credit.status === "available" && toCents(credit.remaining) > 0)) {
+      throw new StoreError(409, "A customer still holds studio credit here. Open a fresh demo instead of resetting.", "RESET_BLOCKED");
     }
     const release = limits.preparation(state.bookings.filter((booking) => !booking.payment?.simulated).length);
     try {
@@ -262,7 +270,7 @@ export async function resetWorkspace(workspaceId: string, options: CreateWorkspa
     } finally { release(); }
   }).catch((error) => {
     // An active execution can hold the lease before reset can inspect its ledger.
-    if (error instanceof StoreError && error.status === 409) throw new StoreError(409, "Finish or retry pending refunds first");
+    if (error instanceof StoreError && error.status === 409 && error.code !== "RESET_BLOCKED") throw new StoreError(409, "Finish or retry pending refunds first");
     throw error;
   });
 }

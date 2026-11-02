@@ -28,7 +28,7 @@ export default function PaymentsAttention({ workspaceId, payments, onUpdated }: 
     try {
       const result = await api.retryRefund(workspaceId, requestId);
       setAbsent("");
-      setNotice(["COMPLETED", "SIMULATED"].includes(result.status) ? "Refund completed." : result.status === "PENDING" ? "Refund sent. PayPal is still confirming it." : "PayPal did not complete the retry. The amount stays reserved.");
+      setNotice(result.status === "CREDIT_RESTORED" ? "Returned to the customer's studio credit." : ["COMPLETED", "SIMULATED"].includes(result.status) ? "Refund completed." : result.status === "PENDING" ? "Refund sent. PayPal is still confirming it." : "PayPal did not complete the retry. The amount stays reserved.");
       onUpdated();
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to retry the refund."); }
     finally { setChecking(""); }
@@ -40,7 +40,7 @@ export default function PaymentsAttention({ workspaceId, payments, onUpdated }: 
       <p>{payment.status === "NEEDS_REVIEW" ? "PayPal may already have issued this refund. Automatic retry is paused to avoid a duplicate. Check with PayPal before retrying."
         : ["FAILED", "CANCELLED"].includes(payment.status) ? "This refund needs attention. Check with PayPal before retrying."
           : "PayPal has not confirmed this refund yet. Its amount remains reserved."}</p>
-      <button disabled={!!checking} onClick={() => void check(payment.requestId)}>{checking === payment.requestId ? "Checking PayPal…" : "Check with PayPal"}</button>
+      {payment.creditReturn ? <button className="primary" disabled={!!checking} onClick={() => void retry(payment.requestId)}>Return studio credit</button> : <button disabled={!!checking} onClick={() => void check(payment.requestId)}>{checking === payment.requestId ? "Checking PayPal…" : "Check with PayPal"}</button>}
       {absent === payment.requestId && <button className="primary" disabled={!!checking} onClick={() => void retry(payment.requestId)}>Retry refund</button>}
     </div>)}
     {notice && <p role="status">{notice}</p>}

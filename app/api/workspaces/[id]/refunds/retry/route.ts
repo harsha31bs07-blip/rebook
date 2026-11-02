@@ -28,6 +28,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           () => repository.renewLock(id, owner));
       });
     }
+    if (requestId.startsWith("sync:")) {
+      return withWorkspaceLock(repository, id, async (owner) => {
+        const event = repository.latestMoneyEvents(id).find((item) => item.kind === "refund" && item.requestId === requestId);
+        if (!event) throw new StoreError(404, "Refund not found");
+        return executeRefund(id, { bookingId: event.bookingId, amount: event.amount, reason: "Class cancelled in the booking system" }, requestId, repository,
+          () => repository.renewLock(id, owner));
+      });
+    }
     // Approved-plan refunds retry through the plan, which keeps its results in step.
     const plan = repository.listPlans(id).find((item) => requestId.startsWith(`${item.id}:`));
     if (!plan) throw new StoreError(404, "Refund not found");

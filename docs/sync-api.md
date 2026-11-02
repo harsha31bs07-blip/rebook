@@ -94,13 +94,13 @@ All mutations reject while a recovery preview is open: `A recovery preview is op
 
 ### Inbound types (each object belongs in `events`)
 
-Create an active booking. Seat checks include active bookings, held checkouts and open waitlist offers. Full classes reject with `Class is full`; already-booked customers reject. `amount` defaults to the class price, or zero for an entitlement. No payment is created. Entitlements accept `kind: "pack" | "membership"`, optional `name`, `visitsLeft` (pack only), and date-only `expires`.
+Create an active booking. A paid booking is recorded as a simulated payment, because your system holds the money: if a recovery later refunds it, the feed reports the cancellation and amount for your system to apply. Seat checks include active bookings, held checkouts and open waitlist offers. Full classes reject with `Class is full`; already-booked customers reject. `amount` defaults to the class price, or zero for an entitlement. No payment is created. Entitlements accept `kind: "pack" | "membership"`, optional `name`, `visitsLeft` (pack only), and date-only `expires`.
 
 ```json
 { "eventId": "vendor-book-124", "type": "booking.created", "session": { "id": "s1" }, "customer": { "name": "Avery", "email": "avery@example.com" }, "entitlement": { "kind": "pack", "name": "Ten classes", "visitsLeft": 4, "expires": "2026-12-01" }, "amount": "0.00" }
 ```
 
-Cancel an active booking. After the entire batch has run, remaining free seats are offered to the waitlist, so a cancellation followed by its replacement booking in the same batch can use that seat. Cancellation does not refund or return visits; send a separate baseline event if the vendor changes the pack balance.
+Cancel an active booking. After the entire batch has run, remaining free seats are offered to the waitlist, so a cancellation followed by its replacement booking in the same batch can use that seat. Cancellation moves no money and returns no visits; send a separate baseline event if the vendor changes the pack balance. If Rebook itself holds the payment (a Rebook PayPal checkout or studio credit), the booking becomes `refund_pending` and appears under the owner's payments needing attention, where the owner releases the refund.
 
 ```json
 { "eventId": "vendor-cancel-125", "type": "booking.cancelled", "session": { "id": "s1" }, "customer": { "name": "Avery", "email": "avery@example.com" } }
@@ -130,7 +130,7 @@ Change class capacity (integer 1 through the current room’s capacity), then fi
 { "eventId": "vendor-capacity-129", "type": "session.capacity", "session": { "title": "Dance Flow", "start": "2026-11-10T23:00:00Z" }, "capacity": 20 }
 ```
 
-Cancel an upcoming class. It becomes unavailable in the booking catalog, customer alternatives and waitlist offers; all active bookings are cancelled, waiting entries dropped, open offers withdrawn and pending checkouts failed. Class details remain available for history and private customer links. No refund, pack return or other money operation runs, and no cancellation is echoed outbound. A checkout capture being reconciled rejects the event for retry. An open recovery preview rejects this event just like other inbound changes; retry the same ID after approval or discard. Cancellation is permanent for this session: later bookings, capacity changes and waitlist joins cannot reopen it.
+Cancel an upcoming class. It becomes unavailable in the booking catalog, customer alternatives and waitlist offers; all active bookings are cancelled, waiting entries dropped, open offers withdrawn and pending checkouts failed. Class details remain available for history and private customer links. No refund, pack return or other money operation runs, and no cancellation is echoed outbound. Bookings whose payment Rebook itself holds go to the owner's payments needing attention, as with `booking.cancelled`. A checkout capture being reconciled rejects the event for retry. An open recovery preview rejects this event just like other inbound changes; retry the same ID after approval or discard. Cancellation is permanent for this session: later bookings, capacity changes and waitlist joins cannot reopen it.
 
 ```json
 { "eventId": "vendor-class-cancel-130", "type": "session.cancelled", "session": { "id": "s1" } }

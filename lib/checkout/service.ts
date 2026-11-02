@@ -10,6 +10,7 @@ import { spendableCredit } from "../credits/balance";
 
 import { checkoutHoldsSeat, heldOffers, offerHoldsSeat } from "../waitlist/capacity";
 import { claimEntitlement } from "../waitlist/entitlement";
+import { executeRefund } from "../executor/refund";
 /** A usable pack or membership books the spot free on the offer page; only otherwise is the spot paid at checkout. */
 function waitlistEntitlement(state: State, offer: WaitlistOffer, session: Session, ledger: Parameters<typeof claimEntitlement>[1]) {
   const entry = state.waitlist?.find((item) => item.id === offer.entryId);
@@ -292,7 +293,24 @@ function leaveCapturing(row: CheckoutReservation, status: "pending" | "failed", 
 const settled = (workspaceId: string, orderId: string, repository: Repository) =>
   repository.checkoutByOrder(workspaceId, orderId)?.status === "confirmed" ? receipt(workspaceId, orderId, repository) : undefined;
 
+/** The buyer paid for a seat someone else got. Return it now; if that fails it stays with the owner to retry. */
+async function refundLostSeat(workspaceId: string, result: Receipt, repository: Repository): Promise<Receipt> {
+  const requestId = `waitlist:${result.bookingId}`;
+  if (repository.latestMoneyEvents(workspaceId).find((event) => event.kind === "refund" && event.requestId === requestId)?.status === "FAILED") {
+    try {
+      await withWorkspaceLock(repository, workspaceId, (owner) => executeRefund(workspaceId, { bookingId: result.bookingId, amount: result.amount, reason: "Waitlist spot no longer available" },
+        requestId, repository, () => repository.renewLock(workspaceId, owner)));
+    } catch { console.error("Lost-seat refund will wait for the owner"); }
+  }
+  return receipt(workspaceId, result.orderId!, repository);
+}
+
 export async function captureCheckout(workspaceId: string, orderId: string, repository = getRepository()): Promise<Receipt> {
+  const result = await settleCapture(workspaceId, orderId, repository);
+  return result.spotTaken ? refundLostSeat(workspaceId, result, repository) : result;
+}
+
+async function settleCapture(workspaceId: string, orderId: string, repository: Repository): Promise<Receipt> {
   return withWorkspaceLock(repository, workspaceId, async (owner) => {
     let row = repository.checkoutByOrder(workspaceId, orderId);
     if (!row) throw new StoreError(404, "Checkout not found");

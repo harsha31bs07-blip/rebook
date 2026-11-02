@@ -30,14 +30,16 @@ it.each([["FAILED", "failed"], ["DENIED", "failed"], ["BLOCKED", "failed"], ["RE
   expect(coverNeedsOwner(item)).toBe(true); expect(recoveryHandled(settled, [item])).toBe(false);
 });
 
-it.each([["REQUESTED", "being sent"], ["PENDING", "processing"], ["UNCLAIMED", "hasn't claimed"], ["ONHOLD", "on hold"]])("names a %s payout and keeps the recovery open without asking the owner to pay again", (status, word) => {
+it.each([["PENDING", "processing"], ["UNCLAIMED", "hasn't claimed"], ["ONHOLD", "on hold"]])("names a %s payout and keeps the recovery open without asking the owner to pay again", (status, word) => {
   const item = cover(payout(status));
   expect(coverLine(item)).toContain(word); expect(coverNeedsOwner(item)).toBe(false); expect(recoveryHandled(settled, [item])).toBe(false);
 });
 
 it("asks the owner to check a payout PayPal could not confirm", () => {
   const item = cover(payout("REQUESTED", "Check PayPal"));
-  expect(coverLine(item)).toContain("needs checking in PayPal"); expect(coverNeedsOwner(item)).toBe(true);
+  expect(coverLine(item)).toContain("PayPal hasn't confirmed"); expect(coverNeedsOwner(item)).toBe(true);
+  // A timeout leaves no error at all, and the owner still has to resolve it.
+  expect(coverNeedsOwner(cover(payout("REQUESTED")))).toBe(true); expect(recoveryHandled(settled, [cover(payout("REQUESTED"))])).toBe(false);
 });
 
 it("stops counting someone no longer teaching the class, unless their money is still moving", () => {

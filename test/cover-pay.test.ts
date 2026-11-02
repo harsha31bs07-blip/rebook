@@ -17,6 +17,8 @@ import { pausedSessionIds } from "../lib/checkout/service";
 import { coverAttendees, coverFee, payRule } from "../lib/recovery/pay-rules";
 import { PATCH as payRulePatch } from "../app/api/workspaces/[id]/instructors/[instructorId]/pay/route";
 import { request } from "../lib/paypal/client";
+import { renameInstructor } from "../lib/recovery/cover-pay";
+import { resetWorkspace } from "../lib/demo/createWorkspace";
 
 let repository: Repository, directory: string, workspaceId: string, planId: string, sessionId: string, token: string;
 let payouts: (init: RequestInit) => Response | Promise<Response>;
@@ -168,7 +170,7 @@ it("validates owner pay-rule edits, updates unpaid links, and resets to the stud
 it("updates FAILED links but leaves pending and paid links and payout amounts untouched", async () => {
   await approved(true);
   payouts = () => Response.json({ name: "INSUFFICIENT_FUNDS" }, { status: 422 });
-  await payCover(workspaceId, planId, sessionId, repository);
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 422, message: expect.stringContaining("declined") });
   expect(payoutRows()[0].status).toBe("FAILED");
   expect((await patchRule({ perClass: "40.00" })).status).toBe(200);
   expect(repository.listCoverLinks(workspaceId)[0].fee).toBe("40.00");
@@ -220,7 +222,8 @@ it("replays the same PayPal-Request-Id after a lost response instead of paying t
   await approved(true);
   payouts = () => { throw new Error("socket hang up"); };
   await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
-  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1 });
+  // A timeout is not a PayPal answer, and the owner still has to be told to check it.
+  expect(payoutRows()[0]).toMatchObject({ status: "REQUESTED", attempt: 1, error: expect.stringContaining("Check it in PayPal") });
   payouts = () => created("BATCH-ORIGINAL");
   await payCover(workspaceId, planId, sessionId, repository);
   expect(payoutRows()[0]).toMatchObject({ status: "PENDING", batchId: "BATCH-ORIGINAL", attempt: 1 });
@@ -322,7 +325,7 @@ it("parses malformed PayPal error details defensively without logging the struct
 it("marks a definitive PayPal rejection failed and pays again with a new request id", async () => {
   await approved(true);
   payouts = () => Response.json({ name: "INSUFFICIENT_FUNDS", message: "No funds" }, { status: 422 });
-  await payCover(workspaceId, planId, sessionId, repository);
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 422 });
   expect(payoutRows()[0]).toMatchObject({ status: "FAILED", error: expect.stringContaining("INSUFFICIENT_FUNDS") });
   payouts = () => created("BATCH-2");
   await payCover(workspaceId, planId, sessionId, repository);
@@ -516,4 +519,18 @@ it("migrates an older database that allowed one cover link per class, keeping ev
   const sql = (migrated as unknown as { db: DatabaseSync }).db.prepare("SELECT sql FROM sqlite_master WHERE name = 'cover_links'").get() as { sql: string };
   expect(sql.sql).not.toContain("UNIQUE(plan_id, session_id)");
   expect((migrated as unknown as { db: DatabaseSync }).db.prepare("SELECT id FROM cover_links").all()).toEqual([{ id: "old" }]);
+});
+
+it("changes only the instructor's name in a customer's message", () => {
+  const body = "Hi Samantha Sam,\n\nSam will teach Yoga at Sam's Studio. Samuel is at the desk. Thanks, Sam's Studio";
+  expect(renameInstructor(body, "Sam's Studio", "Sam", "Jordan")).toBe("Hi Samantha Sam,\n\nJordan will teach Yoga at Sam's Studio. Samuel is at the desk. Thanks, Sam's Studio");
+  expect(renameInstructor("No greeting: A.J (Sam) teaches", "Studio", "A.J", "Jo")).toBe("No greeting: Jo (Sam) teaches");
+});
+
+it("won't reset away a payout PayPal hasn't confirmed", async () => {
+  await approved(true);
+  payouts = () => { throw new Error("socket hang up"); };
+  await expect(payCover(workspaceId, planId, sessionId, repository)).rejects.toMatchObject({ status: 502 });
+  await expect(resetWorkspace(workspaceId, { repository })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("cover payout") });
+  expect(payoutRows()).toHaveLength(1);
 });

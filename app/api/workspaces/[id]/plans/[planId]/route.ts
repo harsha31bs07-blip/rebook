@@ -28,6 +28,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const state = stored.basis ?? workspace.state;
     const { basis, ...plan } = stored;
     void basis;
-    return { plan, explanation: await explainPlan(plan, state), messages: draftCustomerMessages(plan, state), sessions: state.sessions };
+    return { plan, explanation: await explainPlan(plan, state), messages: draftCustomerMessages(plan, state, repository.listLedger(id)), sessions: state.sessions };
   });
 }

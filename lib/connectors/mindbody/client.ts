@@ -40,7 +40,11 @@ export class MindbodyClient {
   private async staffToken(): Promise<string> {
     if (this.token && this.tokenUntil > Date.now()) return this.token;
     if (!this.username || !this.password) throw new MindbodyError(401, "Mindbody staff credentials are required.");
-    const result = await this.request<{ AccessToken: string }>("usertoken/issue", staffLogin(this.username, this.password), false);
+    const result = await this.request<{ AccessToken: string }>("usertoken/issue", staffLogin(this.username, this.password), false).catch((error) => {
+      // Mindbody's wording ("Staff user was not found") reads like a fault in Rebook; a refused sign-in changes nothing here.
+      if (error instanceof MindbodyError && error.upstreamStatus >= 400 && error.upstreamStatus < 500 && error.upstreamStatus !== 429) throw new MindbodyError(error.upstreamStatus, "Mindbody isn't accepting our sign-in right now. Nothing was changed. Please try again later.");
+      throw error;
+    });
     if (!result.AccessToken) throw new MindbodyError(401, "Mindbody did not issue a staff token.");
     this.token = result.AccessToken; this.tokenUntil = Date.now() + 30 * 60_000;
     this.usedTokens.add(this.token);

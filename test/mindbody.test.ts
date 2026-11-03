@@ -81,3 +81,10 @@ it("bounds calls, never forwards secrets in Mindbody errors, and does not leak t
   const unreachable = new MindbodyClient({ apiKey: "secret", fetch: async () => { throw new Error("secret"); } });
   await expect(unreachable.list("site/sites", "Sites")).rejects.toThrow("Mindbody could not be reached");
 });
+
+it("explains a refused sign-in plainly, whatever Mindbody's own wording", async () => {
+  const client = new MindbodyClient({ apiKey: "key", username: "staff@example.com", password: "secret", sleep: async () => {}, fetch: async () => Response.json({ Error: { Message: "Staff user was not found for this site." } }, { status: 403 }) });
+  const failure = await client.request("class/classes").catch((error: unknown) => error) as { message: string; upstreamStatus: number };
+  expect(failure.message).toBe("Mindbody isn't accepting our sign-in right now. Nothing was changed. Please try again later.");
+  expect(failure.upstreamStatus).toBe(403);
+});

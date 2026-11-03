@@ -61,3 +61,11 @@ it("uses wrapping controls and existing mobile spacing without fixed widths", ()
   expect(css).toMatch(/\.import-fields\s*\{[^}]*flex-wrap:\s*wrap/);
   expect(renderToStaticMarkup(renderSync())).toContain("min-width:0;overflow-wrap:anywhere");
 });
+
+it("offers another way in when the Mindbody import fails", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Mindbody isn't accepting our sign-in right now. Nothing was changed. Please try again later." }, { status: 502 })));
+  await click(renderImport(), "Import from Mindbody (sandbox)");
+  await vi.waitFor(() => expect(renderToStaticMarkup(renderImport())).toContain("You can still try a sample week here, or the live demo."));
+  const html = renderToStaticMarkup(renderImport());
+  expect(html).toContain("sign-in right now"); expect(html).not.toContain("Staff user");
+});

@@ -32,7 +32,7 @@ export default function ImportPage({ enabled = false }: { enabled?: boolean }) {
   async function importMindbody() {
     setBusy("Reading Mindbody's sandbox week…"); setError("");
     try { setMindbody(await post("/api/import/mindbody", {})); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to import Mindbody."); }
+    catch (cause) { setError(`${cause instanceof Error ? cause.message : "Unable to import Mindbody."} You can still try a sample week here, or the live demo.`); }
     finally { setBusy(""); }
   }
 

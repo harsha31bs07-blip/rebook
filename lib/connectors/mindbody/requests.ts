@@ -23,6 +23,6 @@ export function oneOff(session: Session, mapping: MindbodyLink["sessions"][strin
     StartTime: clock(start.minutesOfDay), EndTime: clock(end.minutesOfDay),
     ...Object.fromEntries(days.map((day, index) => [`Day${day}`, index === start.weekday])),
     StaffId: mapping.staffId, StaffPayRate: 1, ...(mapping.resourceId === undefined ? {} : { ResourceId: mapping.resourceId }),
-    MaxCapacity: session.capacity, WebCapacity: session.capacity, WaitlistCapacity: 10, BookingStatus: "PaymentRequired",
+    MaxCapacity: session.capacity, WebCapacity: session.capacity, WaitlistCapacity: Math.min(10, session.capacity), BookingStatus: "PaymentRequired",
     AllowOpenEnrollment: false, AllowDateForwardEnrollment: false };
 }

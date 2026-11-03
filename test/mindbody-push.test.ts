@@ -13,6 +13,7 @@ import { replan } from "../lib/solver/replan";
 import { executePlan } from "../lib/executor/executePlan";
 import { askNextCover, respondToCover } from "../lib/recovery/cover-pay";
 import { customerChoice, submitChoice } from "../lib/choices/service";
+import { oneOff } from "../lib/connectors/mindbody/requests";
 
 let directory: string, repository: Repository, api: ReturnType<typeof sandbox>, id: string, changes: SyncChange[];
 const state = () => repository.requireWorkspace(id).state;
@@ -158,4 +159,9 @@ it("keeps failures pending, acknowledges only success, sanitizes errors and hold
   expect([...repository.syncAcks(id)]).toEqual(["good"]);
   repository.acquireMindbodyLock(id, "other"); await expect(pushToMindbody(id, repository, api.client)).rejects.toThrow("already running");
   repository.releaseMindbodyLock(id, "other");
+});
+it("never asks Mindbody for a waitlist larger than a small class, which it rejects", () => {
+  const mapping = { classId: 1, descriptionId: 2, locationId: 3, staffId: 4 }, base = { id: "s", classType: "yoga" as const, title: "Yoga", capacity: 6, price: "20.00", roomId: "r", instructorId: "i", start: "2026-11-09T14:00:00.000Z", end: "2026-11-09T15:00:00.000Z" };
+  expect(oneOff(base, mapping, "America/New_York")).toMatchObject({ MaxCapacity: 6, WaitlistCapacity: 6 });
+  expect(oneOff({ ...base, capacity: 20 }, mapping, "America/New_York")).toMatchObject({ MaxCapacity: 20, WaitlistCapacity: 10 });
 });

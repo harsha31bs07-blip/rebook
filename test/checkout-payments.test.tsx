@@ -478,6 +478,8 @@ it.each(["confirmed", "uncertain", "restart", "404", "422", "429", "500", "netwo
     expect(store.getItem(checkoutKey)).toBeNull(); expect(alert()).toBe("Server payment message");
   } else {
     expect(store.getItem(checkoutKey)).not.toBeNull();
+    // A lost answer never shows the browser's own error text.
+    if (answer === "network") { expect(alert()).toContain("check its status before paying again"); expect(alert()).not.toContain("Response lost"); }
     const retry = find(tree, (element) => element.props.children === "Check payment status");
     fetchMock.mockImplementation(async () => Response.json(recoveryReceipt));
     await (retry.props.onClick as () => Promise<void>)(); await settleBooking();

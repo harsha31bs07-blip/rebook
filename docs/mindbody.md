@@ -1,6 +1,6 @@
 # Mindbody sandbox connector
 
-Rebook maps Mindbody Public API v6 to the [sync API](sync-api.md). The connector is restricted to the free, shared sandbox studio (SiteId `-99`). Unit tests use trimmed, anonymised responses recorded from that sandbox on October 30, 2026, and make no network requests. The full loop was also verified live against the sandbox (`MINDBODY_LIVE=1 npx vitest run test/mindbody-live.test.ts`): import, an instructor swap, a class moved to a new time with its customers, an on-time removal returning a pack visit, and a booking made in Mindbody arriving in Rebook without echoing Rebook's own writes.
+Rebook maps Mindbody Public API v6 to the [sync API](sync-api.md). The connector is restricted to the free, shared sandbox studio (SiteId `-99`). Unit tests use trimmed, anonymised responses recorded from that sandbox on October 30, 2026, and make no network requests. The full loop was also verified live against the sandbox (`MINDBODY_LIVE=1 npx vitest run test/mindbody-live.test.ts`): import, an instructor swap, a class moved to a new time with its customers, an on-time removal returning a pack visit, a booking made in Mindbody arriving in Rebook without echoing Rebook's own writes. On November 3, 2026 a class cancelled directly in Mindbody was also pulled live: it left the schedule, stayed cancelled on the next pull, and a real sandbox payment held by Rebook went to the owner to refund.
 
 ## Run locally
 

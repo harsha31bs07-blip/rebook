@@ -34,7 +34,11 @@ async function capturePayment(id: string, handle: CaptureHandle) {
     const receipt = await request<Receipt>(`/api/bookings/${id}/checkout/orders/${handle.orderId}/capture`, { method: "POST" });
     remember(storageKey);
     return receipt;
-  } catch (cause) { if (restartCapture(cause)) remember(storageKey); throw cause; }
+  } catch (cause) {
+    if (restartCapture(cause)) remember(storageKey);
+    // The answer never arrived, so the money may have moved: say that, not the browser's "Failed to fetch".
+    throw cause instanceof CheckoutError ? cause : new CheckoutError("We couldn't confirm your payment yet. Please check its status before paying again.", undefined, 503);
+  }
 }
 function classTitle(title: string) { return title.replace(/\bhiit\b/gi, "HIIT"); }
 export function CreditPayment({ id, token, remaining, session, customer, availability, validate, onSuccess, onLockChange, onInvalid }: {
